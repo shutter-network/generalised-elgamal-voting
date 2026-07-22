@@ -1,0 +1,161 @@
+# Database-backend deployment: every service speaks HTTP to the uniform
+# data-layer service, which writes to Postgres. See RUNNING.md.
+#
+#   python scripts/gen_deploy_env.py          # once: writes deploy/.env
+#   docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env up --build
+#
+# All identities come from deploy/.env (see .env.example for the full list).
+name: geg-db
+
+x-image: &image
+  build:
+    context: ..
+    dockerfile: Dockerfile
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: geg
+      POSTGRES_PASSWORD: geg
+      POSTGRES_DB: geg
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geg -d geg"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The one uniform data-layer service (GEG_DATA_LAYER=database → Postgres).
+  # Every other component talks to it over HTTP.
+  data-layer:
+    <<: *image
+    command: ["python", "-m", "geg.services.data_layer"]
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_DSN: postgresql://geg:geg@postgres:5432/geg
+      DATA_LAYER_PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Committee: three keyper processes. Each holds its own identity + encrypted
+  # state; content-signs its DKG/decryption writes and POSTs them to data-layer.
+  keyper1:
+    <<: *image
+    command: ["python", "-m", "geg.services.keyper"]
+    environment:
+      KEYPER_SIGNING_KEY: ${KEYPER1_KEY}
+      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
+      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      KEYPER_PORT: "8100"
+      KEYPER_STATE_DIR: /keyper-state
+      COORDINATOR_URL: http://coordinator:8400
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+    volumes:
+      - keyper1-state:/keyper-state
+    depends_on: [data-layer]
+
+  keyper2:
+    <<: *image
+    command: ["python", "-m", "geg.services.keyper"]
+    environment:
+      KEYPER_SIGNING_KEY: ${KEYPER2_KEY}
+      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
+      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      KEYPER_PORT: "8100"
+      KEYPER_STATE_DIR: /keyper-state
+      COORDINATOR_URL: http://coordinator:8400
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+    volumes:
+      - keyper2-state:/keyper-state
+    depends_on: [data-layer]
+
+  keyper3:
+    <<: *image
+    command: ["python", "-m", "geg.services.keyper"]
+    environment:
+      KEYPER_SIGNING_KEY: ${KEYPER3_KEY}
+      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
+      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      KEYPER_PORT: "8100"
+      KEYPER_STATE_DIR: /keyper-state
+      COORDINATOR_URL: http://coordinator:8400
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+    volumes:
+      - keyper3-state:/keyper-state
+    depends_on: [data-layer]
+
+  # Coordinator: watches for Registered elections, discovers keyper endpoints from
+  # the config, bootstraps their tokens, and drives the DKG over HTTP.
+  coordinator:
+    <<: *image
+    command: ["python", "-m", "geg.services.coordinator"]
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+      COORDINATOR_PORT: "8400"
+      AUTO_DKG_POLL_S: "2.0"
+    ports:
+      - "8400:8400"
+    depends_on: [keyper1, keyper2, keyper3]
+
+  # Tally aggregator: on votingEnd, publishes the aggregate, triggers keypers to
+  # decrypt, recovers + publishes the result. Hardening profile on.
+  tally-aggregator:
+    <<: *image
+    command: ["python", "-m", "geg.services.tally_aggregator"]
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
+      TALLY_HARDENED: "1"
+      TALLY_POLL_S: "2.0"
+    depends_on: [keyper1, keyper2, keyper3]
+
+  # Ballot gateway: public ingress; on-by-default filter, non-authoritative.
+  gateway:
+    <<: *image
+    command: ["python", "-m", "geg.services.gateway"]
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      GATEWAY_PORT: "8200"
+      GATEWAY_FILTER: "1"
+    ports:
+      - "8200:8200"
+    depends_on: [data-layer]
+
+  # Admin service — HTTP register/cancel on :8300, admin-only (ADMIN_API_TOKEN).
+  # `up` runs `serve`; the CLI still works as a one-shot, e.g.
+  #   docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env \
+  #     run --rm admin register --config /config/sample-election.json
+  # or over HTTP:
+  #   curl -H "Authorization: Bearer $ADMIN_API_TOKEN" -H 'content-type: application/json' \
+  #     -d "{\"config\": $(cat deploy/sample-election.json)}" http://127.0.0.1:8300/elections
+  admin:
+    <<: *image
+    entrypoint: ["python", "-m", "geg.services.admin"]
+    command: ["serve"]
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      ADMIN_PORT: "8300"
+    ports:
+      - "8300:8300"
+    volumes:
+      - ./sample-election.json:/config/sample-election.json:ro
+    depends_on: [data-layer]
+
+volumes:
+  keyper1-state:
+  keyper2-state:
+  keyper3-state:

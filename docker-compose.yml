@@ -1,0 +1,19 @@
+# Dedicated Postgres for the geg database data-layer adapter.
+# Isolated from any other local Postgres: non-default port 5433, throwaway creds.
+#   docker compose up -d      # start
+#   docker compose down -v    # stop + wipe
+services:
+  geg-postgres:
+    image: postgres:16-alpine
+    container_name: geg-postgres
+    environment:
+      POSTGRES_USER: geg
+      POSTGRES_PASSWORD: geg
+      POSTGRES_DB: geg
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geg -d geg"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

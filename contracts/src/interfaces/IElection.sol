@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {IKeyperSet} from "./IKeyperSet.sol";
+import {VotingTypes} from "../VotingTypes.sol";
+
+interface IElection is IAccessControl {
+    event DKGVoteRegistered(address indexed keyper, bytes pkElection);
+    event DKGResultPublished(bytes pkElection, bytes[] committeePKs);
+    event VoteSubmitted(bytes32 indexed pseudonym, uint256 indexed ballotIndex);
+    event AggregatePublished(uint256 indexed electionId);
+    event DecryptionSharePosted(uint8 indexed keyperIndex);
+    event ResultPublished(uint256[] tally, uint8[] keyperIndices);
+    event FeesWithdrawn(address indexed recipient, uint256 amount);
+    event ElectionCancelled(uint256 indexed electionId);
+
+    function VOTE_PROXY_ROLE() external view returns (bytes32);
+    function TALLY_AGGREGATOR_ROLE() external view returns (bytes32);
+
+    function electionId() external view returns (uint256);
+    function keyperSet() external view returns (IKeyperSet);
+    function votingStart() external view returns (uint64);
+    function votingEnd() external view returns (uint64);
+    function tallyDeadline() external view returns (uint64);
+    function selfSubmitFee() external view returns (uint256);
+    function numCandidates() external view returns (uint32);
+    function budget() external view returns (uint32);
+
+    function cancelElection() external;
+    function isCancelled() external view returns (bool);
+
+    // forge-lint: disable-next-line(mixed-case-function)
+    function voteDKGResult(bytes calldata pkElection, bytes[] calldata committeePKs) external;
+    // forge-lint: disable-next-line(mixed-case-function)
+    function voteDKGResultSigned(bytes calldata pkElection, bytes[] calldata committeePKs, bytes calldata keyperSig)
+        external;
+    // forge-lint: disable-next-line(mixed-case-function)
+    function isDKGFinalized() external view returns (bool);
+
+    function submitVote(VotingTypes.Ballot calldata ballot) external payable;
+    function getNumBallots() external view returns (uint256);
+    function getBallot(bytes32 pseudonym) external view returns (VotingTypes.Ballot memory ballot);
+    function getBallots(uint256 startIndex, uint256 count) external view returns (VotingTypes.Ballot[] memory ballots);
+
+    function publishAggregate(VotingTypes.EncryptedTally calldata encryptedTally) external;
+    function getAggregate() external view returns (VotingTypes.EncryptedTally memory encryptedTally);
+
+    function submitDecryptionShare(bytes[] calldata shares, VotingTypes.DLEQProof[] calldata proofs) external;
+    function submitDecryptionShareSigned(
+        bytes[] calldata shares, VotingTypes.DLEQProof[] calldata proofs, bytes calldata keyperSig
+    ) external;
+    function getDecryptionShares() external view returns (VotingTypes.DecryptionShare[] memory shares);
+
+    function publishResult(uint256[] calldata totals, uint8[] calldata keyperIndices) external;
+    function isResultFinalized() external view returns (bool);
+    function getResult() external view returns (VotingTypes.ElectionResult memory result);
+    function getPhase() external view returns (uint8 phase);
+    function getElection()
+        external
+        view
+        returns (VotingTypes.ElectionConfigView memory config, VotingTypes.DKGResult memory dkgResult);
+    function withdrawFees(address payable recipient) external returns (uint256 amount);
+}

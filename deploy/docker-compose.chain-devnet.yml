@@ -1,0 +1,195 @@
+# Blockchain-backend deployment against a local Anvil DEVNET. See RUNNING.md.
+# For a real chain use docker-compose.chain.yml (external RPC, pre-deployed
+# registry, no devnet tools) — this file additionally runs anvil + funds accounts +
+# deploys a fresh registry, which only make sense on a throwaway devnet.
+#
+# Chain authorization is by tx sender, so — unlike the database backend — each
+# actor holds its OWN Ethereum key and submits its own transactions:
+#   * admin      → register/cancel (is the on-chain adminAddr)
+#   * aggregator → publishAggregate/publishResult
+#   * gateway    → submitVote
+# Keypers are the exception (Option A): they hold no chain key. They content-sign
+# their DKG/decryption writes and POST them to the data-layer service, which runs
+# a RELAYER account that pays gas and sends the ...Signed tx; the contract
+# ecrecovers the keyper as the on-chain author.
+#
+# Ordered bring-up (RUNNING.md has the copy-paste version):
+#   forge build                                          # in contracts/ (artifacts)
+#   VOTING_START_OFFSET=110 VOTING_DURATION=120 python scripts/gen_deploy_env.py
+#   docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env up -d anvil
+#   docker compose ... run --rm fund                     # fund the generated accounts
+#   docker compose ... run --rm deploy-registry          # prints GEG_REGISTRY_ADDRESS → put in .env
+#   docker compose ... up -d                             # start the stack
+#   docker compose ... run --rm admin register --config /config/sample-election.json
+name: geg-chain-devnet
+
+x-image: &image
+  build:
+    context: ..
+    dockerfile: Dockerfile
+
+x-chain-env: &chain-env
+  GEG_DATA_LAYER: blockchain
+  GEG_CHAIN_RPC: http://anvil:8545
+  GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:-}
+
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:latest
+    # --block-time: mine a block every second so block.timestamp tracks wall-clock.
+    # Without interval mining Anvil only stamps a block per tx, so the chain's "now"
+    # freezes between txs and time-gated calls (voting window, tally) misbehave.
+    entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--block-time", "1"]
+    ports:
+      - "8545:8545"
+
+  # --- one-shot tools (profile: tools; not started by `up`) ---------------- #
+
+  fund:
+    <<: *image
+    profiles: ["tools"]
+    command: ["python", "scripts/fund_anvil.py"]
+    environment:
+      GEG_CHAIN_RPC: http://anvil:8545
+      ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
+      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
+      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
+      GEG_RELAYER_KEY: ${GEG_RELAYER_KEY}
+
+  deploy-registry:
+    <<: *image
+    profiles: ["tools"]
+    command: ["python", "scripts/deploy_registry.py"]
+    environment:
+      GEG_CHAIN_RPC: http://anvil:8545
+      ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
+      GEG_CONTRACTS_OUT: /contracts-out
+    volumes:
+      - ../contracts/out:/contracts-out:ro
+
+  # --- long-running services ----------------------------------------------- #
+
+  # Data-layer service in relayer mode: public reads + relays keyper meta-tx
+  # writes (pays gas). Privileged writes are NOT routed here (they'd lack the
+  # role and revert) — admin/aggregator/gateway submit their own txs directly.
+  data-layer:
+    <<: *image
+    command: ["python", "-m", "geg.services.data_layer"]
+    environment:
+      GEG_DATA_LAYER: blockchain
+      GEG_CHAIN_RPC: http://anvil:8545
+      GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:-}
+      DATA_LAYER_PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on: [anvil]
+
+  keyper1:
+    <<: *image
+    command: ["python", "-m", "geg.services.keyper"]
+    environment:
+      KEYPER_SIGNING_KEY: ${KEYPER1_KEY}
+      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
+      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      KEYPER_PORT: "8100"
+      KEYPER_STATE_DIR: /keyper-state
+      COORDINATOR_URL: http://coordinator:8400
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+    volumes:
+      - keyper1-state:/keyper-state
+    depends_on: [data-layer]
+
+  keyper2:
+    <<: *image
+    command: ["python", "-m", "geg.services.keyper"]
+    environment:
+      KEYPER_SIGNING_KEY: ${KEYPER2_KEY}
+      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
+      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      KEYPER_PORT: "8100"
+      KEYPER_STATE_DIR: /keyper-state
+      COORDINATOR_URL: http://coordinator:8400
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+    volumes:
+      - keyper2-state:/keyper-state
+    depends_on: [data-layer]
+
+  keyper3:
+    <<: *image
+    command: ["python", "-m", "geg.services.keyper"]
+    environment:
+      KEYPER_SIGNING_KEY: ${KEYPER3_KEY}
+      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
+      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      KEYPER_PORT: "8100"
+      KEYPER_STATE_DIR: /keyper-state
+      COORDINATOR_URL: http://coordinator:8400
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+    volumes:
+      - keyper3-state:/keyper-state
+    depends_on: [data-layer]
+
+  coordinator:
+    <<: *image
+    command: ["python", "-m", "geg.services.coordinator"]
+    environment:
+      <<: *chain-env
+      COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+      COORDINATOR_PORT: "8400"
+      GEG_RELAYER_KEY: ${GEG_RELAYER_KEY}
+      AUTO_DKG_POLL_S: "2.0"
+    ports:
+      - "8400:8400"
+    depends_on: [keyper1, keyper2, keyper3]
+
+  tally-aggregator:
+    <<: *image
+    command: ["python", "-m", "geg.services.tally_aggregator"]
+    environment:
+      <<: *chain-env
+      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
+      TALLY_HARDENED: "1"
+      TALLY_POLL_S: "2.0"
+    depends_on: [keyper1, keyper2, keyper3]
+
+  gateway:
+    <<: *image
+    command: ["python", "-m", "geg.services.gateway"]
+    environment:
+      <<: *chain-env
+      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
+      GATEWAY_PORT: "8200"
+      GATEWAY_FILTER: "1"
+    ports:
+      - "8200:8200"
+    depends_on: [data-layer]
+
+  # Admin service — HTTP register/cancel on :8300 (admin-only, ADMIN_API_TOKEN).
+  # `up` runs `serve`; register still works as a one-shot CLI:
+  #   docker compose ... run --rm admin register --config /config/sample-election.json
+  # Registering deploys the KeyperSet + Election, so it needs the Foundry artifacts.
+  admin:
+    <<: *image
+    entrypoint: ["python", "-m", "geg.services.admin"]
+    command: ["serve"]
+    environment:
+      <<: *chain-env
+      ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
+      ADMIN_PORT: "8300"
+      GEG_CONTRACTS_OUT: /contracts-out
+    ports:
+      - "8300:8300"
+    volumes:
+      - ./sample-election.json:/config/sample-election.json:ro
+      - ../contracts/out:/contracts-out:ro
+    depends_on: [data-layer]
+
+volumes:
+  keyper1-state:
+  keyper2-state:
+  keyper3-state:

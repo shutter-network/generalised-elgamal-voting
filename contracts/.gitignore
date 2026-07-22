@@ -1,0 +1,14 @@
+# Foundry
+out/
+cache/
+broadcast/
+*.env
+.env
+
+# Dependencies (openzeppelin-contracts, forge-std) are git submodules under lib/
+# (see /.gitmodules). Fetch them with `git submodule update --init` before building;
+# `offline = true` then builds without any further network access.
+
+# Editor
+.vscode/
+.idea/

@@ -1,0 +1,38 @@
+{
+  "electionId": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "numCandidates": 3,
+  "budget": 3,
+  "mode": "exact",
+  "variant": "A",
+  "weighted": true,
+  "maxWeight": 10,
+  "duplicatePolicy": "last-wins",
+  "votingStart": 1784746465,
+  "votingEnd": 1784746825,
+  "tallyDeadline": 1784750425,
+  "threshold": {
+    "t": 1,
+    "n": 3
+  },
+  "keypers": [
+    {
+      "signingKey": "0xba5d8122420fec1b973e75e2d407889f37cf452f",
+      "endpoint": "http://keyper1:8100"
+    },
+    {
+      "signingKey": "0x2888c6e48974e45cbd45c1f86963f4df45ece615",
+      "endpoint": "http://keyper2:8100"
+    },
+    {
+      "signingKey": "0xd411d9a28c7962ba5f15c7d83694ee9aedd8e37e",
+      "endpoint": "http://keyper3:8100"
+    }
+  ],
+  "eligibilityKey": "0x929f9ce92783c80ce5cc1c9117123abe0c25f57111a7842d637a830f8a70291cc1ab800f8319f38b1fa75dbde42db998",
+  "aggregatorKey": "0xe5ecf406475fce1b1ecae5c6c550977db860735a",
+  "gatewayKeys": [
+    "0x30aac92e63ab77bdbc4d39bb4cb46e32b2f1e0c7"
+  ],
+  "adminKey": "0x8e6dc71508c7b99c4fb100dde92caaf261349bdf",
+  "protocolVersion": "v1"
+}

@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.env
+
+# Internal engineering / design docs — not published with the repo
+docs/
+.ai/

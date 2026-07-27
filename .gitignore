@@ -8,6 +8,21 @@ build/
 .DS_Store
 .env
 
+# Shared keyper-token hand-off dir (bind-mounted into coordinator/tally-aggregator).
+# Holds secret bootstrap tokens — never commit.
+token-store/
+
+# Keyper encrypted-state bind dirs (docker-compose.keyper.yml). Fernet-encrypted
+# keyper secrets — never commit.
+keyper-state*/
+
+# Per-operator keyper env (holds the keyper's private key) — but keep the template.
+.env.keyper*
+!.env.keyper.example
+
 # Internal engineering / design docs — not published with the repo
 docs/
 .ai/
+
+# Generated sample election config (gen_deploy_env.py output; stale + tied to gitignored keys).
+deploy/sample-election.json

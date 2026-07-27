@@ -155,16 +155,52 @@ def test_keypers_write_dkg_through_coordinator_relay(tmp_path):
 
     try:
         relay_url = serve(build_coordinator_app(dl, api_token=TOKEN))
-        submitter = CoordinatorClient(relay_url, TOKEN)
+        submitter = CoordinatorClient(relay_url, "")  # NO pre-shared token — bootstrap pushes it
         keyper_urls = {}
         for i in range(1, N + 1):
             app = build_keyper_app(keypers[i - 1], dl, coordinator.identity,
                                    clock=lambda: 0, state_dir=tmp_path / f"k{i}", submitter=submitter)
             keyper_urls[i] = serve(app)
 
-        api_tokens, _peer = coord.bootstrap_keypers(coordinator, keyper_urls)
+        # Coordinator pushes the relay bearer via /auth/bootstrap; the keyper applies
+        # it to its write client, so the relayed writes authenticate.
+        api_tokens, _peer = coord.bootstrap_keypers(coordinator, keyper_urls, relay_token=TOKEN)
+        assert submitter.token == TOKEN                              # received over bootstrap, not pre-shared
         assert coord.run_dkg_http(eid, keyper_urls, api_tokens, dl)   # writes flow keyper→relay→dl
         assert dl.get_finalized_key(eid) is not None
     finally:
         for srv in servers:
             srv.shutdown()
+
+
+def test_relay_token_persists_across_restart(tmp_path):
+    """The bootstrap-pushed relay token is persisted (Fernet) and reapplied to the
+    write client on restart — no re-bootstrap needed to keep relaying."""
+    dl = InMemoryDataLayer(clock=ManualClock(0))
+    coordinator = Signer.generate()
+    keyper = Signer.generate()
+    state = tmp_path / "k"
+    servers = []
+
+    def serve(app):
+        srv = make_server("127.0.0.1", 0, app, threaded=True)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        servers.append(srv)
+        return f"http://127.0.0.1:{srv.server_port}"
+
+    try:
+        # First boot: client has no token; coordinator bootstraps and pushes the relay token.
+        sub1 = CoordinatorClient("http://unused", "")
+        url = serve(build_keyper_app(keyper, dl, coordinator.identity, clock=lambda: 0,
+                                     state_dir=state, submitter=sub1))
+        coord.bootstrap_keypers(coordinator, {1: url}, relay_token=TOKEN)
+        assert sub1.token == TOKEN
+    finally:
+        for srv in servers:
+            srv.shutdown()
+
+    # Restart: brand-new app + brand-new client (empty token), SAME state dir. The
+    # persisted relay token is reloaded and applied — without any re-bootstrap.
+    sub2 = CoordinatorClient("http://unused", "")
+    build_keyper_app(keyper, dl, coordinator.identity, clock=lambda: 0, state_dir=state, submitter=sub2)
+    assert sub2.token == TOKEN

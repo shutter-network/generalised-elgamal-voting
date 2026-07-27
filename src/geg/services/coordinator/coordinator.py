@@ -36,7 +36,7 @@ class AutoDKG:
     def __init__(self, data_layer: ElectionDataLayer, coordinator, *, clock,
                  poll_interval_s: float = 2.0, backoff_base_s: float = 10.0,
                  backoff_cap_s: float = 300.0, endpoints: dict[str, str] | None = None,
-                 logger: logging.Logger | None = None):
+                 token_store=None, relay_token: str | None = None, logger: logging.Logger | None = None):
         self.dl = data_layer
         self.coordinator = coordinator  # authz.Signer (the pinned coordinator identity)
         self.clock = clock
@@ -46,6 +46,13 @@ class AutoDKG:
         # Address-keyed endpoint override for backends that don't store endpoints
         # (e.g. blockchain) — see geg.services.dkg_coordinator.keyper_urls_from.
         self.endpoints = endpoints or {}
+        # Shared store the coordinator writes minted keyper tokens to, so other
+        # admin-plane services (the tally aggregator's /decrypt trigger) can reuse
+        # them without re-bootstrapping. The coordinator is the sole bootstrapper.
+        self.token_store = token_store
+        # Write-relay bearer pushed to keypers via /auth/bootstrap (so they need no
+        # pre-shared relay token). Equals the token this coordinator's relay gates on.
+        self.relay_token = relay_token
         self.log = logger or logging.getLogger("geg.coordinator")
         self._finalized: set[str] = set()
         self._failed: set[str] = set()
@@ -61,8 +68,10 @@ class AutoDKG:
         """Bootstrap this committee's tokens once (cached by the committee's URLs)."""
         key = tuple(sorted(urls.items()))
         if key not in self._tokens_by_committee:
-            api_tokens, _peer = coord.bootstrap_keypers(self.coordinator, urls)
+            api_tokens, _peer = coord.bootstrap_keypers(self.coordinator, urls, relay_token=self.relay_token)
             self._tokens_by_committee[key] = api_tokens
+            if self.token_store is not None:
+                self.token_store.write(urls, api_tokens)  # hand off to the tally aggregator
             self.log.info("op=bootstrap status=ok committee=%d", len(urls))
         return self._tokens_by_committee[key]
 
@@ -290,15 +299,22 @@ def main() -> None:
 
     from geg.core.authz import Signer
     from geg.services.common.backend import data_layer_for_service
+    from geg.services.common.token_store import TokenStore
 
     logging.basicConfig(level=logging.INFO)
     coordinator = Signer.from_sk(int(os.environ["COORDINATOR_SIGNING_KEY"], 16))
     # On chain the coordinator relays keyper writes as the gas-paying relayer; on
     # http backends the relayer key is ignored (writes go via HttpDataLayerClient).
     dl = data_layer_for_service(os.environ.get("GEG_RELAYER_KEY"))
+    # The coordinator is the sole keyper bootstrapper; it writes minted tokens to a
+    # shared volume for the tally aggregator to read (GEG_TOKEN_STORE).
+    store_dir = os.environ.get("GEG_TOKEN_STORE")
+    relay_token = os.environ.get("COORDINATOR_API_TOKEN")  # pushed to keypers via bootstrap
     watcher = AutoDKG(
         dl, coordinator, clock=lambda: int(_time.time()),
         poll_interval_s=float(os.environ.get("AUTO_DKG_POLL_S", "2.0")),
+        token_store=TokenStore(store_dir) if store_dir else None,
+        relay_token=relay_token,
     )
     logging.getLogger("geg.coordinator").info("op=start coordinator_identity=%s", coordinator.identity.hex())
     threading.Thread(target=watcher.run_forever, daemon=True).start()

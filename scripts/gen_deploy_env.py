@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
 """Generate a consistent deployment identity set + sample election config.
 
-The docker-compose deployments (RUNNING.md) need a *coherent* set of secp256k1
-identities: each keyper's ``KEYPER_SIGNING_KEY`` must match the ``signing_key`` in
-the election config, and the coordinator's key must match the ``COORDINATOR_IDENTITY``
-the keypers pin. Hand-authoring that is error-prone, so this generates it all:
+**Local / testing convenience — NOT a production tool.** It mints ALL identities
+(including the keypers' private keys) in one place so a single machine can run the
+whole stack for demos and the RUNNING.md walkthroughs. A real deployment does the
+opposite: each keyper operator holds their own key on their own machine and only
+shares their address; the admin builds the election config from those addresses via
+proper key management, and fills a real ``deploy/.env`` from ``.env.example`` by
+hand. Do not use the keys this emits for anything real — they are throwaway.
+
+Its reason to exist is *coherence*: these secp256k1 identities are cross-referential
+and hand-authoring them consistently is error-prone — each keyper's
+``KEYPER_SIGNING_KEY`` must match its ``signing_key`` in the election config, the
+coordinator's key must produce the ``COORDINATOR_IDENTITY`` keypers pin, and the
+eligibility private key must match the config's eligibility public key. This wires
+it all up in one shot:
 
     python scripts/gen_deploy_env.py
 
 Writes (under ``deploy/``, relative to repo root):
-  * ``.env``               — all private keys + derived addresses for compose
+  * ``.env``                 — admin/operator-stack keys + tokens (+ chain relayer)
+  * ``.env.keyper{1,2,3}``   — one self-contained env per keyper stack (its key,
+                               pinned coordinator address, port, state dir)
   * ``sample-election.json`` — a valid §7.2 config envelope wiring the keyper
                                endpoints/addresses, admin/aggregator/gateway
                                identities, and a fresh eligibility key
 
-The eligibility *private* key is printed (not stored in the config) — whoever runs
-the eligibility service / issues voter attestations needs it. Voting window is set
-relative to "now" so the sample is immediately registrable.
+The eligibility *private* key goes in ``.env`` (whoever issues voter attestations
+needs it). Voting window is set relative to "now" so the sample is immediately
+registrable.
 """
 
 from __future__ import annotations
@@ -27,6 +39,7 @@ import secrets
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from eth_account import Account
 
@@ -55,6 +68,16 @@ def main() -> None:
     relayer_sk, relayer_addr = _key()
     keypers = [_key() for _ in range(N_KEYPERS)]
 
+    # Keyper endpoints (config.keypers[].endpoint). Keypers run as SEPARATE stacks
+    # now, so these must be URLs everyone can reach — NOT internal Docker DNS.
+    # Default: host-published ports for local split testing (keyper N at
+    # host.docker.internal:810N). Override with KEYPER_ENDPOINTS=url1,url2,url3 for a
+    # real multi-machine deploy (each operator's public URL).
+    _ep_override = [u.strip() for u in os.environ.get("KEYPER_ENDPOINTS", "").split(",") if u.strip()]
+
+    def _keyper_endpoint(idx0: int) -> str:
+        return _ep_override[idx0] if _ep_override else f"http://host.docker.internal:{8101 + idx0}"
+
     elig_sk, elig_vk = schnorr.keygen()
     elig_pub = g1_to_compressed(elig_vk)
 
@@ -80,7 +103,7 @@ def main() -> None:
         tally_deadline=voting_end + tally_dur,
         threshold=Threshold(t=T, n=N_KEYPERS),
         keypers=tuple(
-            KeyperIdentity(signing_key=bytes.fromhex(addr[2:]), endpoint=f"http://keyper{i + 1}:8100")
+            KeyperIdentity(signing_key=bytes.fromhex(addr[2:]), endpoint=_keyper_endpoint(i))
             for i, (_sk, addr) in enumerate(keypers)
         ),
         eligibility_key=elig_pub,
@@ -92,6 +115,8 @@ def main() -> None:
 
     out = REPO / "deploy"
     out.mkdir(exist_ok=True)
+
+    coordinator_api_token = secrets.token_urlsafe(32)  # shared: coordinator relay ↔ keypers
 
     (out / "sample-election.json").write_text(json.dumps(codecs.enc_config(cfg), indent=2) + "\n")
 
@@ -105,21 +130,14 @@ def main() -> None:
         "# Bearer token for the admin HTTP service (:8300).",
         f"ADMIN_API_TOKEN={secrets.token_urlsafe(32)}",
         f"AGGREGATOR_SIGNING_KEY={agg_sk}",
-        "# Aggregator address (20-byte) that keypers pin as a trusted bootstrapper.",
-        f"AGGREGATOR_IDENTITY={agg_addr[2:].lower()}",
         f"GATEWAY_SIGNING_KEY={gw_sk}",
         f"COORDINATOR_SIGNING_KEY={coord_sk}",
-        "# Coordinator address (20-byte) that keypers pin.",
-        f"COORDINATOR_IDENTITY={coord_addr[2:].lower()}",
+        f"# Coordinator address keypers pin (give to operators out-of-band): {coord_addr.lower()}",
         "# Bearer token keypers present to the coordinator's write-relay endpoints.",
-        f"COORDINATOR_API_TOKEN={secrets.token_urlsafe(32)}",
+        f"COORDINATOR_API_TOKEN={coordinator_api_token}",
         "",
-        "# Keyper identities (KEYPERn_KEY matches config keypers[n].signing_key).",
-    ]
-    for i, (sk, addr) in enumerate(keypers, start=1):
-        env_lines.append(f"# keyper{i} address {addr}")
-        env_lines.append(f"KEYPER{i}_KEY={sk}")
-    env_lines += [
+        "# Keypers run as SEPARATE stacks — their private keys + the pinned coordinator",
+        "# address live in deploy/.env.keyper{1,2,3} (also generated), NOT here.",
         "",
         "# Blockchain backend only: relayer that pays gas for keyper meta-tx writes.",
         f"# relayer address {relayer_addr}",
@@ -135,8 +153,30 @@ def main() -> None:
     ]
     (out / ".env").write_text("\n".join(env_lines))
 
+    # Per-keyper operator env files (one self-contained env per keyper stack) — this
+    # is where each keyper's private key + the pinned coordinator address live. The
+    # admin URLs default to host.docker.internal (correct for local split testing); a
+    # real operator on their own machine edits them, or starts from .env.keyper.example.
+    keyper_env_files = []
+    for i, (sk, _addr) in enumerate(keypers):
+        port = urlparse(_keyper_endpoint(i)).port or 8100  # match this keyper's config endpoint
+        (out / f".env.keyper{i + 1}").write_text("\n".join([
+            f"# keyper{i + 1} operator env — generated by gen_deploy_env.py.",
+            f"KEYPER_SIGNING_KEY={sk}",
+            f"COORDINATOR_IDENTITY={coord_addr.lower()}",
+            "# (relay bearer token is NOT here — the coordinator pushes it via /auth/bootstrap)",
+            "GEG_DATA_LAYER_URL=http://host.docker.internal:8000",
+            "COORDINATOR_URL=http://host.docker.internal:8400",
+            f"KEYPER_PORT={port}",
+            f"KEYPER_STATE_DIR_HOST=./keyper-state{i + 1}",
+            "",
+        ]))
+        keyper_env_files.append(f".env.keyper{i + 1}")
+
     print(f"wrote {out/'.env'}")
     print(f"wrote {out/'sample-election.json'}")
+    for f in keyper_env_files:
+        print(f"wrote {out/f}")
     print(f"admin={admin_addr} aggregator={agg_addr} gateway={gw_addr}")
     print(f"coordinator={coord_addr} relayer={relayer_addr}")
     for i, (_sk, addr) in enumerate(keypers, start=1):

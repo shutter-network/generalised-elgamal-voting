@@ -20,12 +20,19 @@ system, not for testing correctness.
 ## The model in one picture
 
 ```
-  admin / gateway / aggregator ─▶ uniform data-layer service ─▶ Postgres | Blockchain
-                                    (GEG_DATA_LAYER=database|blockchain)
-                                          ▲ reads
-  keypers ─▶ coordinator ───────────────┘ writes (relays keyper DKG/decryption)
-             (also drives the DKG ceremony)
+  ADMIN / OPERATOR STACK                              KEYPER STACKS (one per operator)
+  admin / gateway / aggregator ─▶ data-layer ─▶ DB|Chain      keyper 1
+                                     ▲ reads                  keyper 2   ◀─ driven over HTTP by
+  coordinator ────────────────────┘ writes (relays)  ◀──────▶ keyper 3      the coordinator/aggregator
+  (sole keyper bootstrapper; drives DKG)                     (hold only their own key)
 ```
+
+**Keypers now run as separate stacks** (`docker-compose.keyper.yml`), one per
+operator — they are independent entities. The admin/operator stack
+(`docker-compose.{db,chain-devnet,chain}.yml`) holds everything else. The
+coordinator and aggregator reach each keyper by the URL in the election config
+(public, or `host.docker.internal` for local testing) — there is no shared Docker
+network between the stacks. See **"Keypers (run separately)"** below.
 
 * **Database backend** — every component speaks HTTP to the one data-layer
   service, which verifies the caller's signature and writes to Postgres. Keypers
@@ -58,15 +65,53 @@ python scripts/gen_deploy_env.py     # writes deploy/.env + deploy/sample-electi
 `deploy/.env` holds every private key (git-ignored — don't commit it);
 `deploy/sample-election.json` is a valid §7.2 config envelope wired to the
 generated keyper endpoints/addresses. See `deploy/.env.example` for the full
-variable list.
+variable list. `gen_deploy_env.py` writes each keyper's endpoint as
+`http://host.docker.internal:810N` (local split); set
+`KEYPER_ENDPOINTS=url1,url2,url3` before running it for a real multi-machine deploy.
+
+---
+
+## Keypers (run separately)
+
+Keypers are **independent operators**, each running `docker-compose.keyper.yml` on
+their own machine — they hold only their own signing key. A keyper is
+backend-agnostic: it just speaks HTTP to the admin's data-layer (reads) and
+coordinator (write-relay), pins the coordinator's address, and is driven over HTTP.
+Start the keypers **before** registering an election so the coordinator can reach
+them for the DKG.
+
+**Local testing (all three on one host).** `gen_deploy_env.py` writes a
+self-contained env per keyper — `deploy/.env.keyper1/2/3` (each: its key, port
+810N, state dir, and the shared coordinator id/token/URLs). Start each as its own
+stack (distinct compose project → own network, mirroring separate machines):
+
+```bash
+for n in 1 2 3; do
+  docker compose -p keyper$n -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper$n up -d --build
+done
+```
+
+**Real operator (own machine).** Fill in your own env and bring up one keyper:
+
+```bash
+cp deploy/.env.keyper.example deploy/.env.keyper     # your key + admin's coordinator id/token + public URLs
+docker compose -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper up -d --build
+```
+
+Onboarding is one-time and needs a single pre-shared value: share your keyper's
+**public URL** with the admin (it goes into `config.keypers[].endpoint`) and receive
+`COORDINATOR_IDENTITY` from them out of band. No tokens to mint or hold — the
+coordinator installs both your inbound bearer token **and** your relay token over the
+sealed, signed `/auth/bootstrap` channel once it can reach your `/status`.
 
 ---
 
 ## Database backend
 
 ```bash
-# build + start postgres, the data-layer service, 3 keypers, the coordinator,
-# the tally aggregator, and the gateway
+# build + start the admin/operator stack: postgres, data-layer, coordinator,
+# tally-aggregator, gateway, api. (Keypers are SEPARATE — start them first, per
+# "Keypers (run separately)" above.)
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env up --build -d
 
 # register the sample election (admin CLI, one-shot)
@@ -101,20 +146,23 @@ This stack has been driven through a **complete election by hand** (register →
 producing an identical result to the blockchain backend — same services, same wire
 format, only the data layer differs.
 
-Tear down (wipes keyper state + DB):
+Tear down the admin stack (DB + token-store), then the keyper stacks:
 
 ```bash
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env down -v
+for n in 1 2 3; do docker compose -p keyper$n -f deploy/docker-compose.keyper.yml down; done
+rm -rf deploy/keyper-state* token-store            # encrypted keyper state + shared tokens
 ```
 
 ### Ports
 | Service | Port |
 |---|---|
 | data-layer | 8000 |
-| keypers | 8100 (internal) |
+| keypers | separate stacks, host-published (local: 8101–8103) |
 | gateway | 8200 |
 | admin | 8300 |
 | coordinator | 8400 |
+| public read API | 8500 |
 
 ### Admin API (admin-only)
 
@@ -168,8 +216,12 @@ docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env 
 docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env run --rm deploy-registry
 #   → prints GEG_REGISTRY_ADDRESS=0x...   (paste it into deploy/.env)
 
-# 5. start the stack (data-layer reads, coordinator=relayer, keypers, aggregator, gateway)
+# 5. start the admin stack (data-layer reads, coordinator=relayer, aggregator,
+#    gateway, api), then the keyper stacks (separate — see "Keypers (run separately)").
 docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env up -d
+for n in 1 2 3; do
+  docker compose -p keyper$n -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper$n up -d --build
+done
 
 # 6. register the election on chain (admin submits its own tx → becomes adminAddr)
 docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env \

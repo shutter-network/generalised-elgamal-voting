@@ -101,17 +101,18 @@ class TallyAggregatorDaemon:
     ``Tallying`` and drive aggregate → trigger keypers (HTTP) → finalize, until a
     result exists or the election goes ``Void`` at ``tally_deadline``.
 
-    Holds only the ``aggregator`` identity: it signs the aggregate/result writes
-    **and** bootstraps + triggers the keypers over HTTP with that same key. The
-    keypers pin the aggregator's address as a trusted bootstrapper (alongside the
-    coordinator's), so the aggregator never needs the coordinator's key. By tally
-    time DKG is finished, so re-bootstrapping the committee is harmless. Elections
+    Holds the ``aggregator`` identity to sign the aggregate/result writes. To
+    trigger keyper decryption it does **not** bootstrap the keypers — the
+    **coordinator** is the sole bootstrapper and hands off the keyper api-tokens via
+    a shared :class:`~geg.services.common.token_store.TokenStore`, which this daemon
+    only **reads**. That keeps the keyper's single token slot owned by one writer
+    (no churn) and means the keypers need not trust the aggregator at all. Elections
     are processed **nearest-deadline first**.
     """
 
     def __init__(self, data_layer: ElectionDataLayer, aggregator: Signer, *, clock,
                  hardened: bool = False, poll_interval_s: float = 2.0,
-                 endpoints: dict[str, str] | None = None, logger=None):
+                 endpoints: dict[str, str] | None = None, token_store=None, logger=None):
         import logging
         self.dl = data_layer
         self.aggregator = aggregator
@@ -121,23 +122,25 @@ class TallyAggregatorDaemon:
         # Address-keyed endpoint override for backends that don't store endpoints
         # (e.g. blockchain) — see geg.services.dkg_coordinator.keyper_urls_from.
         self.endpoints = endpoints or {}
+        # Read-only handle on the shared store the coordinator wrote keyper tokens to.
+        self.token_store = token_store
         self.log = logger or logging.getLogger("geg.tally_aggregator")
         self._done: set[str] = set()
         self._void: set[str] = set()
-        self._tokens_by_committee: dict[tuple, dict] = {}
 
     def _keyper_urls(self, config) -> dict[int, str]:
         from geg.services.coordinator import dkg_coordinator as coord
 
         return coord.keyper_urls_from(config, self.endpoints)
 
-    def _ensure_bootstrapped(self, urls: dict[int, str]) -> dict[int, str]:
-        from geg.services.coordinator import dkg_coordinator as coord
-        key = tuple(sorted(urls.items()))
-        if key not in self._tokens_by_committee:
-            api_tokens, _peer = coord.bootstrap_keypers(self.aggregator, urls)
-            self._tokens_by_committee[key] = api_tokens
-        return self._tokens_by_committee[key]
+    def _decrypt_tokens(self, urls: dict[int, str]) -> dict[int, str]:
+        """Read the coordinator-minted keyper api-tokens from the shared store."""
+        if self.token_store is None:
+            raise RuntimeError("no token store configured; cannot obtain keyper tokens")
+        tokens = self.token_store.read(urls)
+        if tokens is None:
+            raise RuntimeError("keyper tokens not in shared store yet (coordinator has not bootstrapped this committee)")
+        return tokens
 
     def _process(self, election_id: bytes, rec, now: int) -> str:
         from geg.services.coordinator import dkg_coordinator as coord
@@ -159,11 +162,12 @@ class TallyAggregatorDaemon:
         # 1. Publish the aggregate (idempotent).
         publish_aggregate(self.dl, election_id, self.aggregator, clock=self.clock)
 
-        # 2. Trigger keypers over HTTP (best-effort; keypers self-guard via §8.2).
+        # 2. Trigger keypers over HTTP with the coordinator-minted tokens read from
+        #    the shared store (best-effort; keypers self-guard via §8.2).
         urls = self._keyper_urls(rec.config)
         if all(urls.values()):
             try:
-                api_tokens = self._ensure_bootstrapped(urls)
+                api_tokens = self._decrypt_tokens(urls)
                 coord.trigger_decrypt_http(election_id, urls, api_tokens, hardened=self.hardened)
             except Exception as err:  # noqa: BLE001
                 self.log.error("op=trigger status=error election=%s err=%s", eid_hex, err)
@@ -217,12 +221,13 @@ class TallyAggregatorDaemon:
 def main() -> None:
     """Run the tally aggregator daemon against the database data-layer microservice.
 
-    Env: ``AGGREGATOR_SIGNING_KEY`` (hex secp256k1 — the aggregatorKey identity, the
-    tx sender for publishAggregate/publishResult on chain, **and** the key it uses to
-    bootstrap/trigger keypers — the keypers pin its address as a trusted
-    bootstrapper), ``GEG_DATA_LAYER``, ``GEG_DATA_LAYER_URL`` (http backends),
-    ``TALLY_POLL_S``, ``TALLY_HARDENED`` (0/1). Keyper URLs come from the election
-    config (stored in the data layer on every backend), not from env.
+    Env: ``AGGREGATOR_SIGNING_KEY`` (hex secp256k1 — the aggregatorKey identity and
+    the tx sender for publishAggregate/publishResult on chain), ``GEG_TOKEN_STORE``
+    (the shared volume the coordinator wrote keyper tokens to; read-only here),
+    ``GEG_DATA_LAYER``, ``GEG_DATA_LAYER_URL`` (http backends), ``TALLY_POLL_S``,
+    ``TALLY_HARDENED`` (0/1). It does **not** bootstrap keypers — the coordinator is
+    the sole bootstrapper. Keyper URLs come from the election config (stored in the
+    data layer on every backend), not from env.
     """
     import logging
     import os
@@ -230,15 +235,18 @@ def main() -> None:
 
     from geg.core.authz import Signer
     from geg.services.common.backend import data_layer_for_service
+    from geg.services.common.token_store import TokenStore
 
     logging.basicConfig(level=logging.INFO)
     aggregator_key = os.environ["AGGREGATOR_SIGNING_KEY"]
     aggregator = Signer.from_sk(int(aggregator_key, 16))
     dl = data_layer_for_service(aggregator_key)
+    store_dir = os.environ.get("GEG_TOKEN_STORE")
     daemon = TallyAggregatorDaemon(
         dl, aggregator, clock=lambda: int(_time.time()),
         hardened=os.environ.get("TALLY_HARDENED", "0") == "1",
         poll_interval_s=float(os.environ.get("TALLY_POLL_S", "2.0")),
+        token_store=TokenStore(store_dir) if store_dir else None,
     )
     daemon.run_forever()
 

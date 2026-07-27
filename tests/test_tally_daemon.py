@@ -22,6 +22,7 @@ from geg.crypto.points import g1_to_compressed, g2_from_compressed
 from geg.envelopes.types import BallotEnvelope, Ciphertext
 from geg.ports.eligibility import AttestationRequest
 from geg.services import gateway
+from geg.services.common.token_store import TokenStore
 from geg.services.coordinator import AutoDKG
 from geg.services.keyper import build_keyper_app
 from geg.services.tally_aggregator import TallyAggregatorDaemon
@@ -42,11 +43,14 @@ class World:
         self.keyper_signers = [Signer.generate() for _ in range(N)]
         elig_sk, _ = schnorr.keygen()
         self.elig = StubEligibilityService(elig_sk)
+        # Shared store: the coordinator writes keyper tokens, the aggregator reads them.
+        self.token_store = TokenStore(tmp_path / "tokens")
         self._servers = []
         self.urls = {}
         for i in range(1, N + 1):
+            # Keypers trust only the coordinator to bootstrap them (sole bootstrapper).
             app = build_keyper_app(self.keyper_signers[i - 1], self.dl,
-                                   {self.coordinator.identity, self.aggregator.identity},
+                                   self.coordinator.identity,
                                    clock=self.clock, state_dir=tmp_path / f"k{i}")
             srv = make_server("127.0.0.1", 0, app, threaded=True)
             threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -94,14 +98,14 @@ def world(tmp_path):
 def test_tally_daemon_full_pipeline(world):
     w = world
     eid = w.register()
-    AutoDKG(w.dl, w.coordinator, clock=w.clock).scan_once()  # finalize DKG
+    AutoDKG(w.dl, w.coordinator, clock=w.clock, token_store=w.token_store).scan_once()  # finalize DKG + write tokens
 
     w.clock.set(1500)
     gateway.submit_ballot(w.dl, eid, w.voter_ballot(eid, [3, 0, 0], b"\x01" * 32, 2), clock=w.clock)
     gateway.submit_ballot(w.dl, eid, w.voter_ballot(eid, [0, 3, 0], b"\x02" * 32, 5), clock=w.clock)
 
     w.clock.set(2500)  # Tallying
-    daemon = TallyAggregatorDaemon(w.dl, w.aggregator, clock=w.clock, hardened=True)
+    daemon = TallyAggregatorDaemon(w.dl, w.aggregator, clock=w.clock, hardened=True, token_store=w.token_store)
     outcomes = daemon.scan_once()
 
     assert outcomes[eid.hex()] == "tallied"

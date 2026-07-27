@@ -111,11 +111,15 @@ def ensure_dkg(
 #  HTTP driver — drive a multi-operator keyper deployment over the wire
 # --------------------------------------------------------------------------- #
 
-def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, timeout: float = 10.0):
+def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, relay_token: str | None = None,
+                      timeout: float = 10.0):
     """Mint api/peer tokens and install them via each keyper's /auth/bootstrap.
 
     Fetches each keyper's X25519 encryption pubkey (/status), seals a per-keyper
     token bundle to it, signs it with the coordinator identity, and posts it.
+    ``relay_token`` (the coordinator's write-relay bearer) is pushed inside the same
+    sealed+signed payload so keypers need not pre-share it — they receive it here and
+    use it for their DKG-result / decryption-share POSTs back to the relay.
     Returns ``(api_tokens, peer_tokens)`` keyed by keyper index.
     """
     enc = {i: requests.get(url.rstrip("/") + "/status", timeout=timeout).json()["encryptionPubkey"]
@@ -126,6 +130,7 @@ def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, timeout: floa
         payload = {
             "api_token": api_tokens[i],
             "peer_token": peer_tokens[i],
+            "relay_token": relay_token,
             "peers": {str(j): {"url": keyper_urls[j], "token": peer_tokens[j]} for j in keyper_urls if j != i},
             "nonce": secrets.token_hex(16),
             "timestamp": int(time.time()),

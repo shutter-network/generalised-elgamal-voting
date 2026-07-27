@@ -115,8 +115,9 @@ def load_or_create_x25519(fernet: Fernet, state_dir: pathlib.Path, logger: loggi
     return key
 
 
-def save_bootstrap_tokens(fernet: Fernet, api_token: str, peer_token: str, peers: dict, state_dir: pathlib.Path) -> None:
-    payload = {"api_token": api_token, "peer_token": peer_token, "peers": peers}
+def save_bootstrap_tokens(fernet: Fernet, api_token: str, peer_token: str, peers: dict,
+                          state_dir: pathlib.Path, relay_token: str | None = None) -> None:
+    payload = {"api_token": api_token, "peer_token": peer_token, "peers": peers, "relay_token": relay_token}
     _write_atomic(_ensure(state_dir) / "bootstrap_tokens.enc", fernet.encrypt(json.dumps(payload).encode()))
 
 

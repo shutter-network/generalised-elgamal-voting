@@ -84,54 +84,6 @@ services:
       - "8000:8000"
     depends_on: [anvil]
 
-  keyper1:
-    <<: *image
-    command: ["python", "-m", "geg.services.keyper"]
-    environment:
-      KEYPER_SIGNING_KEY: ${KEYPER1_KEY}
-      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
-      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
-      GEG_DATA_LAYER_URL: http://data-layer:8000
-      KEYPER_PORT: "8100"
-      KEYPER_STATE_DIR: /keyper-state
-      COORDINATOR_URL: http://coordinator:8400
-      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
-    volumes:
-      - keyper1-state:/keyper-state
-    depends_on: [data-layer]
-
-  keyper2:
-    <<: *image
-    command: ["python", "-m", "geg.services.keyper"]
-    environment:
-      KEYPER_SIGNING_KEY: ${KEYPER2_KEY}
-      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
-      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
-      GEG_DATA_LAYER_URL: http://data-layer:8000
-      KEYPER_PORT: "8100"
-      KEYPER_STATE_DIR: /keyper-state
-      COORDINATOR_URL: http://coordinator:8400
-      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
-    volumes:
-      - keyper2-state:/keyper-state
-    depends_on: [data-layer]
-
-  keyper3:
-    <<: *image
-    command: ["python", "-m", "geg.services.keyper"]
-    environment:
-      KEYPER_SIGNING_KEY: ${KEYPER3_KEY}
-      COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY}
-      AGGREGATOR_IDENTITY: ${AGGREGATOR_IDENTITY}
-      GEG_DATA_LAYER_URL: http://data-layer:8000
-      KEYPER_PORT: "8100"
-      KEYPER_STATE_DIR: /keyper-state
-      COORDINATOR_URL: http://coordinator:8400
-      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
-    volumes:
-      - keyper3-state:/keyper-state
-    depends_on: [data-layer]
-
   coordinator:
     <<: *image
     command: ["python", "-m", "geg.services.coordinator"]
@@ -142,9 +94,18 @@ services:
       COORDINATOR_PORT: "8400"
       GEG_RELAYER_KEY: ${GEG_RELAYER_KEY}
       AUTO_DKG_POLL_S: "2.0"
+      GEG_TOKEN_STORE: /token-store   # sole bootstrapper: writes keyper tokens here
     ports:
       - "8400:8400"
-    depends_on: [keyper1, keyper2, keyper3]
+    volumes:
+      - ../token-store:/token-store
+    # Local split only: lets this service reach the separately-deployed keyper
+    # stacks over host-published ports (http://host.docker.internal:810N). Provided
+    # automatically on Docker Desktop (Mac/Windows); required on Linux. Unused in
+    # production, where the config's keyper URLs are real public addresses.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: [data-layer]
 
   tally-aggregator:
     <<: *image
@@ -154,7 +115,12 @@ services:
       AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
       TALLY_HARDENED: "1"
       TALLY_POLL_S: "2.0"
-    depends_on: [keyper1, keyper2, keyper3]
+      GEG_TOKEN_STORE: /token-store   # reads keyper tokens the coordinator wrote
+    volumes:
+      - ../token-store:/token-store:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: [data-layer]
 
   gateway:
     <<: *image
@@ -166,6 +132,18 @@ services:
       GATEWAY_FILTER: "1"
     ports:
       - "8200:8200"
+    depends_on: [data-layer]
+
+  # Public read-only API (frontend / external integrators). Backend-blind: reads
+  # through the data-layer service, so it is identical on db and chain. CORS-enabled.
+  api:
+    <<: *image
+    command: ["python", "-m", "geg.services.api"]
+    environment:
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      API_PORT: "8500"
+    ports:
+      - "8500:8500"
     depends_on: [data-layer]
 
   # Admin service — HTTP register/cancel on :8300 (admin-only, ADMIN_API_TOKEN).
@@ -188,8 +166,3 @@ services:
       - ./sample-election.json:/config/sample-election.json:ro
       - ../contracts/out:/contracts-out:ro
     depends_on: [data-layer]
-
-volumes:
-  keyper1-state:
-  keyper2-state:
-  keyper3-state:

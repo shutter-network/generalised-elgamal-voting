@@ -145,7 +145,7 @@ class ChainDaemonWorld:
         # Keypers hold no chain key: they READ via the data-layer service and POST
         # their signed writes to the coordinator relay.
         keyper_reads = HttpDataLayerClient(self.data_layer_url)
-        submitter = CoordinatorClient(self.coordinator_url, TOKEN)
+        submitter = CoordinatorClient(self.coordinator_url, "")  # relay token pushed via bootstrap
         self.keyper_urls = {}
         for i in range(1, N + 1):
             app = build_keyper_app(self.keyper_signers[i - 1], keyper_reads, self.coordinator.identity,
@@ -189,7 +189,7 @@ def test_full_election_over_chain_daemons(world):
 
     # DKG over HTTP: coordinator bootstraps the committee, sequences the ceremony;
     # keypers POST their signed result to the coordinator relay, which meta-tx's it to chain.
-    api_tokens, _peer = coord.bootstrap_keypers(w.coordinator, w.keyper_urls)
+    api_tokens, _peer = coord.bootstrap_keypers(w.coordinator, w.keyper_urls, relay_token=TOKEN)
     assert coord.run_dkg_http(ELECTION_ID, w.keyper_urls, api_tokens, HttpDataLayerClient(w.data_layer_url))
     assert w.admin_dl.get_finalized_key(ELECTION_ID) is not None
 

@@ -72,8 +72,17 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     installed = {
         "api_token": tokens.get("api_token"),
         "peer_token": tokens.get("peer_token"),
+        "relay_token": tokens.get("relay_token"),  # keyper→coordinator relay bearer (pushed via bootstrap)
         "peers": tokens.get("peers", {}),
     }
+
+    def _apply_relay_token() -> None:
+        # The relay bearer is pushed over /auth/bootstrap (not pre-shared), so point
+        # the write client (CoordinatorClient) at it. Reloaded from state on restart.
+        if submitter is not data_layer and hasattr(submitter, "token") and installed["relay_token"]:
+            submitter.token = installed["relay_token"]
+
+    _apply_relay_token()
     persist.start_prune_loop(completed, fernet, state_dir, log, lock)
 
     # -- helpers ------------------------------------------------------------ #
@@ -144,7 +153,12 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             installed["api_token"] = str(payload["api_token"])
             installed["peer_token"] = str(payload["peer_token"])
             installed["peers"] = dict(payload["peers"])
-            persist.save_bootstrap_tokens(fernet, installed["api_token"], installed["peer_token"], installed["peers"], state_dir)
+            relay = payload.get("relay_token")
+            if relay:  # pushed by the coordinator so keypers need no pre-shared relay token
+                installed["relay_token"] = str(relay)
+                _apply_relay_token()
+            persist.save_bootstrap_tokens(fernet, installed["api_token"], installed["peer_token"],
+                                          installed["peers"], state_dir, relay_token=installed["relay_token"])
         log.info("op=bootstrap status=installed peers=%d", len(installed["peers"]))
         return jsonify(ok=True)
 
@@ -284,13 +298,14 @@ def main() -> None:
 
     Env: ``KEYPER_SIGNING_KEY`` (hex secp256k1 scalar — this keyper's Ethereum
     identity, whose 20-byte address is its committee identity), ``COORDINATOR_IDENTITY``
-    (hex 20-byte address the keyper pins for bootstrap auth) and, optionally,
-    ``AGGREGATOR_IDENTITY`` (the tally aggregator's address — pinned so it can
-    bootstrap/trigger decryption with its own key), ``GEG_DATA_LAYER_URL``
-    (the uniform data-layer service — used for **reads** only), ``COORDINATOR_URL`` +
-    ``COORDINATOR_API_TOKEN`` (where the keyper POSTs its signed DKG result /
-    decryption shares — the coordinator relays them; if unset, writes go directly to
-    the data layer), ``KEYPER_STATE_DIR``, ``KEYPER_HOST``/``KEYPER_PORT``.
+    (hex 20-byte address the keyper pins for bootstrap auth — the coordinator is the
+    **sole** bootstrapper), ``GEG_DATA_LAYER_URL``
+    (the uniform data-layer service — used for **reads** only), ``COORDINATOR_URL``
+    (where the keyper POSTs its signed DKG result / decryption shares — the
+    coordinator relays them; if unset, writes go directly to the data layer). The
+    relay bearer token is **not** an env var: the coordinator pushes it over
+    ``/auth/bootstrap`` and it persists in state. ``KEYPER_STATE_DIR``,
+    ``KEYPER_HOST``/``KEYPER_PORT``.
     """
     import os
     import time
@@ -301,20 +316,17 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
     signer = Signer.from_sk(int(os.environ["KEYPER_SIGNING_KEY"], 16))
+    # The coordinator is the sole keyper bootstrapper; pin only its identity.
     trusted_identities = {bytes.fromhex(os.environ["COORDINATOR_IDENTITY"].removeprefix("0x"))}
-    agg_identity = os.environ.get("AGGREGATOR_IDENTITY")
-    if agg_identity:
-        trusted_identities.add(bytes.fromhex(agg_identity.removeprefix("0x")))
     data_layer = HttpDataLayerClient(os.environ["GEG_DATA_LAYER_URL"])
     state_dir = os.environ.get("KEYPER_STATE_DIR", "/keyper-state")
 
     # Writes go to the coordinator relay when configured; otherwise directly to the
-    # data layer (reads always use the data-layer handle).
+    # data layer (reads always use the data-layer handle). The relay bearer token is
+    # NOT pre-shared — the coordinator pushes it over /auth/bootstrap, and the keyper
+    # applies it to this client (persisted, so it survives restart). Start empty.
     coordinator_url = os.environ.get("COORDINATOR_URL")
-    submitter = (
-        CoordinatorClient(coordinator_url, os.environ.get("COORDINATOR_API_TOKEN", ""))
-        if coordinator_url else None
-    )
+    submitter = CoordinatorClient(coordinator_url, "") if coordinator_url else None
 
     app = build_keyper_app(signer, data_layer, trusted_identities,
                            clock=lambda: int(time.time()), state_dir=state_dir, submitter=submitter)

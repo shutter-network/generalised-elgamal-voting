@@ -59,8 +59,9 @@ class AutoDKG:
         # Address-keyed endpoint override for backends that don't store endpoints
         # (e.g. blockchain) — see geg.services.dkg_coordinator.keyper_urls_from.
         self.endpoints = endpoints or {}
-        # Coordinator-private persistence for the minted keyper tokens: reloaded on
-        # restart so the committee is not re-bootstrapped.
+        # Coordinator-private persistence for the minted keyper credentials, keyed by
+        # keyper (stable per-keyper tokens): reloaded on restart so keypers are not
+        # re-bootstrapped, and never churned when committees overlap.
         self.token_store = token_store
         # Write-relay bearer pushed to keypers via /auth/bootstrap (so they need no
         # pre-shared relay token). Equals the token this coordinator's relay gates on.
@@ -76,22 +77,51 @@ class AutoDKG:
     def _keyper_urls(self, config) -> dict[int, str]:
         return coord.keyper_urls_from(config, self.endpoints)
 
-    def _ensure_bootstrapped(self, urls: dict[int, str]) -> dict[int, str]:
-        """Return this committee's tokens (cached → persisted → freshly bootstrapped)."""
+    def _bootstrap(self, urls: dict[int, str]) -> dict[int, str]:
+        """Full ``/auth/bootstrap`` of the committee: reuse-or-mint each keyper's stable
+        credential and install it + this committee's peer map on every member. Used to
+        drive the DKG (the ceremony needs the correct peer map). Returns
+        ``{index → api_token}`` and caches it."""
+        api_tokens, _peer = coord.bootstrap_keypers(
+            self.coordinator, urls, relay_token=self.relay_token, token_store=self.token_store)
+        self._tokens_by_committee[tuple(sorted(urls.items()))] = api_tokens
+        self.log.info("op=bootstrap status=ok committee=%d", len(urls))
+        return api_tokens
+
+    def _committee_tokens(self, urls: dict[int, str]) -> dict[int, str]:
+        """Return ``{index → api_token}`` for this committee — the cheap path used by the
+        tally (no peer map needed). Served from the in-memory cache, else reassembled
+        from the per-keyper store; only if a member has no stable credential yet (or
+        there is no store) does it fall back to a full :meth:`_bootstrap`."""
         key = tuple(sorted(urls.items()))
         if key in self._tokens_by_committee:
             return self._tokens_by_committee[key]
-        if self.token_store is not None:  # reload across restart, skip re-bootstrap
-            persisted = self.token_store.read(urls)
-            if persisted is not None:
-                self._tokens_by_committee[key] = persisted
-                return persisted
-        api_tokens, _peer = coord.bootstrap_keypers(self.coordinator, urls, relay_token=self.relay_token)
-        self._tokens_by_committee[key] = api_tokens
         if self.token_store is not None:
-            self.token_store.write(urls, api_tokens)  # persist for restart
-        self.log.info("op=bootstrap status=ok committee=%d", len(urls))
-        return api_tokens
+            assembled: dict[int, str] = {}
+            for i, url in urls.items():
+                cred = self.token_store.get(url)
+                if cred is None:
+                    break
+                assembled[i] = cred["api_token"]
+            else:  # every member had a persisted credential — reuse without re-installing
+                self._tokens_by_committee[key] = assembled
+                return assembled
+        return self._bootstrap(urls)
+
+    def _rebootstrap_one(self, urls: dict[int, str], i: int) -> str | None:
+        """401 safety net: re-install keyper ``i``'s stable credential (+ this committee's
+        peer map) and return its api_token. Per-keyper credentials mean this never
+        disturbs the other members, so it can't ping-pong between concurrent elections."""
+        try:
+            api_tokens, _peer = coord.bootstrap_keypers(
+                self.coordinator, urls, relay_token=self.relay_token,
+                token_store=self.token_store, install={i})
+            self._tokens_by_committee[tuple(sorted(urls.items()))] = api_tokens
+            self.log.info("op=rebootstrap status=ok keyper=%d committee=%d", i, len(urls))
+            return api_tokens[i]
+        except Exception as err:  # noqa: BLE001
+            self.log.error("op=rebootstrap status=error keyper=%d err=%s", i, err)
+            return None
 
     # -- scan --------------------------------------------------------------- #
 
@@ -134,8 +164,10 @@ class AutoDKG:
             return "no_endpoints"
 
         try:
-            api_tokens = self._ensure_bootstrapped(urls)
-            if coord.run_dkg_http(election_id, urls, api_tokens, self.dl):
+            # DKG needs the correct peer map installed → full bootstrap before the ceremony.
+            api_tokens = self._bootstrap(urls)
+            if coord.run_dkg_http(election_id, urls, api_tokens, self.dl,
+                                  rebootstrap=lambda i: self._rebootstrap_one(urls, i)):
                 self.log.info("op=dkg status=finalized election=%s", eid_hex)
                 return "finalized"
         except Exception as err:  # noqa: BLE001 — retried next poll
@@ -156,18 +188,19 @@ class AutoDKG:
             self.log.error("op=tally status=error election=%s reason=missing_keyper_endpoints", eid_hex)
             return "no_endpoints"
         try:
-            api_tokens = self._ensure_bootstrapped(urls)
+            api_tokens = self._committee_tokens(urls)
         except Exception as err:  # noqa: BLE001
             self.log.error("op=tally status=bootstrap_error election=%s err=%s", eid_hex, err)
             return "error"
+        rebootstrap = lambda i: self._rebootstrap_one(urls, i)  # noqa: E731 — 401 safety net
 
         # 1. Trigger keypers to aggregate (best-effort; the quorum is the real gate).
-        coord.trigger_aggregate_http(election_id, urls, api_tokens)
+        coord.trigger_aggregate_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
         # 2. Gate on the canonical aggregate — no quorum yet → retry next poll.
         if self.dl.get_aggregate(election_id) is None:
             return "collecting_aggregate"
         # 3. Trigger keypers to decrypt (best-effort; keypers self-guard via §8.2).
-        coord.trigger_decrypt_http(election_id, urls, api_tokens)
+        coord.trigger_decrypt_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
         # 4. Recover + publish the result (signed by the coordinator = result publisher).
         result = tally.finalize(self.dl, election_id, self.coordinator, clock=self.clock)
         if result is not None:

@@ -127,6 +127,31 @@ def test_distributed_dkg_then_decrypt_then_tally(world):
     assert list(result.totals) == [6, 15, 0]  # [2*3, 5*3, 0]
 
 
+def test_aggregate_after_quorum_is_benign_not_500(world):
+    """A keyper whose (byte-identical) aggregate lands *after* the t+1 quorum froze the
+    canonical aggregate must get a clean 200, not a 500. With n>t+1 this is normal: the
+    last keyper's submission is simply not needed."""
+    w = world
+    api_tokens = _bootstrap_and_dkg(w)
+    w.clock.set(1500)
+    submit_ballot(w.dl, ELECTION_ID, w.voter_ballot([3, 0, 0], b"\x01" * 32, weight=2), clock=w.clock)
+    w.clock.set(2500)
+
+    def post_aggregate(i):
+        return requests.post(w.keyper_urls[i] + "/aggregate", json={"electionId": ELECTION_ID.hex()},
+                             headers={"Authorization": f"Bearer {api_tokens[i]}"})
+
+    # First two keypers reach the t+1 (=2) quorum → aggregate canonical and frozen.
+    assert post_aggregate(1).status_code == 200
+    assert post_aggregate(2).status_code == 200
+    assert w.dl.get_aggregate(ELECTION_ID) is not None
+
+    # The third keyper's tardy, byte-identical submission is now a benign no-op.
+    r = post_aggregate(3)
+    assert r.status_code == 200, r.text
+    assert "already finalized" in r.json().get("note", "")
+
+
 # --------------------------------------------------------------------------- #
 #  Auth (fail-closed) + P2P confidentiality routing
 # --------------------------------------------------------------------------- #

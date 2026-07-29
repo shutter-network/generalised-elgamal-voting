@@ -27,6 +27,7 @@ from flask import Flask, abort, jsonify, request
 from geg.core import write_auth
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
 from geg.crypto.points import g2_from_compressed, g2_to_compressed
+from geg.ports.data_layer import ImmutabilityError
 from . import keyper_bootstrap as boot
 from . import keyper_persistence as persist
 from .keyper import KeyperService
@@ -34,6 +35,21 @@ from .keyper import KeyperService
 _OPEN = {"/status", "/health", "/auth/bootstrap"}
 _PEER = {"/dkg/receive_commitments", "/dkg/receive_share"}
 _SECRET_RETENTION_BUFFER_S = 86_400  # keep the share ~1 day past tally_deadline
+
+
+def _is_benign_write_conflict(err: Exception) -> bool:
+    """True if a keyper write lost a benign race: the artifact it is submitting is
+    already canonical/recorded, so its (byte-identical) contribution wasn't needed.
+
+    Happens when the ``t+1`` quorum finalizes the aggregate (or enough decryption
+    shares land) just before this keyper's submission — expected with a committee
+    larger than the threshold. A **direct** write raises :class:`ImmutabilityError`;
+    a write **via the coordinator relay** surfaces the same as an HTTP ``409``. Either
+    way it is not a fault — distinct from a real 4xx/5xx, which still propagates."""
+    if isinstance(err, ImmutabilityError):
+        return True
+    resp = getattr(err, "response", None)  # requests.HTTPError from the relay
+    return resp is not None and resp.status_code == 409
 
 
 def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir,
@@ -283,7 +299,14 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             return jsonify(ok=False, reason=str(err)), 409
         if produced is not None:  # None = already submitted (idempotent)
             artifact, sig = produced
-            submitter.submit_aggregate(eid, artifact, sig)  # direct or via coordinator relay
+            try:
+                submitter.submit_aggregate(eid, artifact, sig)  # direct or via coordinator relay
+            except Exception as err:  # noqa: BLE001
+                if not _is_benign_write_conflict(err):
+                    raise
+                # The t+1 quorum finalized the (identical) aggregate before this
+                # submission landed — canonical already; this keyper wasn't needed.
+                return jsonify(ok=True, note="aggregate already finalized by quorum"), 200
         return jsonify(ok=True)
 
     # -- partial decryption (§8.2 preconditions enforced by KeyperService) -- #
@@ -305,7 +328,13 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             return jsonify(ok=False, reason=str(err)), 409
         if produced is not None:  # None = already submitted (idempotent)
             share, sig = produced
-            submitter.submit_decryption_share(eid, share, sig)  # direct or via coordinator relay
+            try:
+                submitter.submit_decryption_share(eid, share, sig)  # direct or via coordinator relay
+            except Exception as err:  # noqa: BLE001
+                if not _is_benign_write_conflict(err):
+                    raise
+                # Enough shares already recorded before this one landed — benign.
+                return jsonify(ok=True, note="decryption share already recorded"), 200
         return jsonify(ok=True)
 
     return app

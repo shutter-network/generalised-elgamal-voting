@@ -1,12 +1,17 @@
-"""Coordinator-private keyper-token persistence.
+"""Coordinator-private keyper-credential persistence.
 
-The keyper bootstrap api-tokens are minted by the **coordinator** (the sole
-bootstrapper) and installed on the keypers. This file-backed store lets the
-coordinator **persist** those tokens (keyed by committee = the keyper URL set) to
-its private volume, so a restart reloads them instead of re-bootstrapping the
-committee. Because the coordinator is the only bootstrapper *and* the only reader,
-the keyper's single token slot is never overwritten by anyone else — the stored
-token always matches what the keyper currently accepts.
+The keyper bootstrap tokens are minted by the **coordinator** (the sole
+bootstrapper) and installed on the keypers. This file-backed store persists them to
+the coordinator's private volume, keyed by **keyper URL** — the stable identity of a
+keyper endpoint.
+
+Each entry is a per-``(coordinator, keyper)`` **channel credential**
+(``{api_token, peer_token}``): minted once and reused across every committee/election
+that keyper joins, never rotated by a new committee. This is what keeps two
+overlapping concurrent committees (e.g. ``{k1,k2,k3}`` then ``{k2,k3,k4}``) from
+churning a shared keyper's single token slot — the shared keyper keeps the same
+token, so the first election's coordinator→keyper calls keep authenticating. On
+restart the coordinator reloads these instead of re-bootstrapping.
 
 Tokens are stored in plaintext on an internal, non-committed volume (consistent
 with ``COORDINATOR_API_TOKEN`` living in ``.env``). Encrypt-at-rest is a possible
@@ -20,13 +25,9 @@ import os
 import pathlib
 
 
-def _committee_key(urls: dict[int, str]) -> str:
-    """Stable string key for a committee (its index→URL map)."""
-    return "|".join(f"{i}={urls[i]}" for i in sorted(urls))
-
-
 class TokenStore:
-    """File-backed committee→api-tokens map on the coordinator's private volume."""
+    """File-backed ``keyper-URL → {api_token, peer_token}`` map on the coordinator's
+    private volume."""
 
     def __init__(self, directory: str | os.PathLike):
         self._dir = pathlib.Path(directory)
@@ -38,16 +39,16 @@ class TokenStore:
         except (FileNotFoundError, ValueError):
             return {}
 
-    def write(self, urls: dict[int, str], api_tokens: dict[int, str]) -> None:
-        """Record this committee's api-tokens (atomic; merges with other committees)."""
+    def get(self, url: str) -> dict | None:
+        """Return this keyper's ``{api_token, peer_token}``, or ``None`` if unminted."""
+        entry = self._load().get(url)
+        return dict(entry) if entry else None
+
+    def put(self, url: str, api_token: str, peer_token: str) -> None:
+        """Record this keyper's stable credential (atomic; merges with other keypers)."""
         self._dir.mkdir(parents=True, exist_ok=True)
         data = self._load()
-        data[_committee_key(urls)] = {str(i): t for i, t in api_tokens.items()}
+        data[url] = {"api_token": api_token, "peer_token": peer_token}
         tmp = self._file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data))
         tmp.replace(self._file)  # atomic on the same filesystem
-
-    def read(self, urls: dict[int, str]) -> dict[int, str] | None:
-        """Return this committee's api-tokens, or ``None`` if not yet written."""
-        entry = self._load().get(_committee_key(urls))
-        return {int(i): t for i, t in entry.items()} if entry else None

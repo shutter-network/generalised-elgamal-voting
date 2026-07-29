@@ -25,7 +25,7 @@
   },
   {
     "type": "function",
-    "name": "TALLY_AGGREGATOR_ROLE",
+    "name": "RESULT_PUBLISHER_ROLE",
     "inputs": [],
     "outputs": [
       {
@@ -246,7 +246,7 @@
             "internalType": "bytes"
           },
           {
-            "name": "tallyAggregator",
+            "name": "resultPublisher",
             "type": "address",
             "internalType": "address"
           },

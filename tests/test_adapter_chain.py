@@ -94,7 +94,7 @@ class ChainEnv:
         self._Adapter = BlockchainDataLayer
         self.accounts = {
             "admin": Account.from_key(ANVIL_KEYS[0]),
-            "aggregator": Account.from_key(ANVIL_KEYS[1]),
+            "result_publisher": Account.from_key(ANVIL_KEYS[1]),
             "gateway": Account.from_key(ANVIL_KEYS[2]),
             "keyper1": Account.from_key(ANVIL_KEYS[3]),
             "keyper2": Account.from_key(ANVIL_KEYS[4]),
@@ -118,7 +118,7 @@ class ChainEnv:
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self._addr(f"keyper{i}"), endpoint=f"http://keyper{i}:8100")
                           for i in range(1, N + 1)),
-            eligibility_key=_b(48, 0xE1), aggregator_key=self._addr("aggregator"),
+            eligibility_key=_b(48, 0xE1), result_publisher_key=self._addr("result_publisher"),
             gateway_keys=(self._addr("gateway"),), admin_key=self._addr("admin"), protocol_version="v1",
         )
 
@@ -213,7 +213,7 @@ def test_register_and_get_round_trip(env):
 
 def test_register_unauthorized_rejected(env):
     with pytest.raises(WriteAuthorizationError):
-        env.dl("aggregator").register_election(env.config, b"")  # not registry admin
+        env.dl("result_publisher").register_election(env.config, b"")  # not registry admin
 
 
 def test_register_assigns_sequential_ids(env):
@@ -249,7 +249,7 @@ def test_cancel_unauthorized_rejected(env):
     env.register()
     env.warp(500)
     with pytest.raises(WriteAuthorizationError):
-        env.dl("aggregator").cancel_election(ELECTION_ID, b"")
+        env.dl("result_publisher").cancel_election(ELECTION_ID, b"")
 
 
 # --------------------------------------------------------------------------- #
@@ -348,7 +348,7 @@ def test_share_submit_idempotent_and_authz(env):
     env.dl("keyper1").submit_decryption_share(ELECTION_ID, share1, env.share_sig("keyper1", share1))  # idempotent
     assert len(env.reader().list_decryption_shares(ELECTION_ID)) == 1
     with pytest.raises(WriteAuthorizationError):
-        env.dl("aggregator").submit_decryption_share(ELECTION_ID, share1, env.share_sig("aggregator", share1))
+        env.dl("result_publisher").submit_decryption_share(ELECTION_ID, share1, env.share_sig("result_publisher", share1))
 
 
 def test_share_keyper_index_must_match_signer(env):
@@ -369,7 +369,7 @@ def test_aggregate_quorum_authz_idempotent_and_read(env):
 
     # Non-keyper signer rejected (aggregate is a keyper write now, meta-tx ecrecover).
     with pytest.raises(WriteAuthorizationError):
-        env.dl("aggregator").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("aggregator", agg))
+        env.dl("result_publisher").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("result_publisher", agg))
 
     other = AggregateArtifact(
         election_id=ELECTION_ID,
@@ -400,7 +400,7 @@ def test_result_authz_and_read(env):
     result = _b_result()
     with pytest.raises(WriteAuthorizationError):
         env.dl("keyper1").publish_result(ELECTION_ID, result, b"")
-    env.dl("aggregator").publish_result(ELECTION_ID, result, b"")
+    env.dl("result_publisher").publish_result(ELECTION_ID, result, b"")
     got = env.reader().get_result(ELECTION_ID)
     assert got is not None and tuple(got.totals) == (1, 1, 1)
 

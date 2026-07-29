@@ -32,7 +32,7 @@ abstract contract ElectionBase is AccessControl, IElection {
     error UnauthorizedKeyper(address account);
 
     bytes32 public constant VOTE_PROXY_ROLE = keccak256("VOTE_PROXY_ROLE");
-    bytes32 public constant TALLY_AGGREGATOR_ROLE = keccak256("TALLY_AGGREGATOR_ROLE");
+    bytes32 public constant RESULT_PUBLISHER_ROLE = keccak256("RESULT_PUBLISHER_ROLE");
 
     uint256 internal constant G2_COMPRESSED_LENGTH = 96;
 
@@ -65,7 +65,7 @@ abstract contract ElectionBase is AccessControl, IElection {
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
     address public immutable adminAddr;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    address public immutable tallyAggregatorAddr;
+    address public immutable resultPublisherAddr;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
     address public immutable voteProxyAddr;
 
@@ -97,7 +97,7 @@ abstract contract ElectionBase is AccessControl, IElection {
 
     constructor(address admin, uint256 electionId_, IKeyperSet keyperSet_, VotingTypes.ElectionParams memory params) {
         if (
-            admin == address(0) || address(keyperSet_) == address(0) || params.tallyAggregator == address(0)
+            admin == address(0) || address(keyperSet_) == address(0) || params.resultPublisher == address(0)
                 || params.voteProxy == address(0) || params.votingEnd <= params.votingStart || params.numCandidates == 0
                 || params.budget == 0 || params.tallyDeadline < params.votingEnd || params.maxWeight == 0
                 || (!params.weighted && params.maxWeight != 1)
@@ -106,7 +106,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         }
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(TALLY_AGGREGATOR_ROLE, params.tallyAggregator);
+        _grantRole(RESULT_PUBLISHER_ROLE, params.resultPublisher);
         _grantRole(VOTE_PROXY_ROLE, params.voteProxy);
 
         electionId = electionId_;
@@ -123,7 +123,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         maxWeight = params.maxWeight;
         duplicatePolicy = params.duplicatePolicy;
         adminAddr = admin;
-        tallyAggregatorAddr = params.tallyAggregator;
+        resultPublisherAddr = params.resultPublisher;
         voteProxyAddr = params.voteProxy;
         protocolVersion = params.protocolVersion;
         wrPublicKey = params.pkWR;
@@ -174,7 +174,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         config.pkWR = wrPublicKey;
         config.cancelled = cancelled;
         config.adminAddr = adminAddr;
-        config.tallyAggregator = tallyAggregatorAddr;
+        config.resultPublisher = resultPublisherAddr;
         config.voteProxy = voteProxyAddr;
 
         dkgResult.pkElection = electionPublicKey;

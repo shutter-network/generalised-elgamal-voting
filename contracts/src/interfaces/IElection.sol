@@ -17,7 +17,7 @@ interface IElection is IAccessControl {
     event ElectionCancelled(uint256 indexed electionId);
 
     function VOTE_PROXY_ROLE() external view returns (bytes32);
-    function TALLY_AGGREGATOR_ROLE() external view returns (bytes32);
+    function RESULT_PUBLISHER_ROLE() external view returns (bytes32);
 
     function electionId() external view returns (uint256);
     function keyperSet() external view returns (IKeyperSet);

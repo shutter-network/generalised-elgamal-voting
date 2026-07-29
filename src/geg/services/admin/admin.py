@@ -10,7 +10,7 @@ and an admin-only HTTP service (``serve``) a frontend can drive. The committee f
 an election — keyper identities **and their URLs** — is part of the register config,
 so a new election can name a different or partly-replaced keyper set (k1,k2,k3 vs
 k2,k3,k4); on the database backend those URLs are stored and read back by the
-coordinator/aggregator (no env needed).
+coordinator (no env needed).
 
 Auth is model **A** (DESIGN note): the service holds ``ADMIN_SIGNING_KEY`` and the
 HTTP endpoints are gated by a fail-closed bearer token (``ADMIN_API_TOKEN``). Model

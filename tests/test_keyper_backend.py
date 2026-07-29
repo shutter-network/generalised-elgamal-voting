@@ -42,7 +42,7 @@ class World:
         self.dl = InMemoryDataLayer(clock=self.clock)
         self.coordinator = Signer.generate()
         self.admin = Signer.generate()
-        self.aggregator = Signer.generate()
+        self.result_publisher = Signer.generate()
         self.gateway = Signer.generate()
         self.keyper_signers = [Signer.generate() for _ in range(N)]
         elig_sk, _ = schnorr.keygen()
@@ -53,7 +53,7 @@ class World:
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1000, voting_end=2000, tally_deadline=3000, threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint="") for i in range(N)),
-            eligibility_key=self.elig.eligibility_key, aggregator_key=self.aggregator.identity,
+            eligibility_key=self.elig.eligibility_key, result_publisher_key=self.result_publisher.identity,
             gateway_keys=(self.gateway.identity,), admin_key=self.admin.identity, protocol_version="v1",
         )
         self.dl.register_election(self.config, self.admin.sign_register(self.config))
@@ -120,8 +120,8 @@ def test_distributed_dkg_then_decrypt_then_tally(world):
     w.clock.set(2500)
     coord.trigger_aggregate_http(ELECTION_ID, w.keyper_urls, api_tokens)
     assert w.dl.get_aggregate(ELECTION_ID) is not None  # t+1 keypers agreed → canonical
-    coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens, hardened=True)
-    result = agg.finalize(w.dl, ELECTION_ID, w.aggregator, clock=w.clock)
+    coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens)
+    result = agg.finalize(w.dl, ELECTION_ID, w.result_publisher, clock=w.clock)
 
     assert result is not None
     assert list(result.totals) == [6, 15, 0]  # [2*3, 5*3, 0]

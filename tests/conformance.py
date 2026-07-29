@@ -70,7 +70,7 @@ class ConformanceBackend(ABC):
     """The two-seam abstraction the conformance tests drive.
 
     ``config`` carries backend-appropriate identities. ``dl(role)`` returns the
-    adapter authorized to write as ``role`` (``"admin"``, ``"aggregator"``,
+    adapter authorized to write as ``role`` (``"admin"``, ``"result_publisher"``,
     ``"gateway"``, ``"keyper1".."keyperN"``, ``"outsider"``); ``reader()`` is a
     public read handle. ``sig(role, op)`` is the credential to pass for that write.
     """
@@ -144,7 +144,7 @@ class SignatureBackend(ConformanceBackend):
         self._clock = clock
         self._signers = {
             "admin": Signer.generate(),
-            "aggregator": Signer.generate(),
+            "result_publisher": Signer.generate(),
             "gateway": Signer.generate(),
             "outsider": Signer.generate(),
         }
@@ -169,7 +169,7 @@ class SignatureBackend(ConformanceBackend):
                 for i in range(1, N + 1)
             ),
             eligibility_key=_b(48, 0xE1),
-            aggregator_key=self._signers["aggregator"].identity,
+            result_publisher_key=self._signers["result_publisher"].identity,
             gateway_keys=(self._signers["gateway"].identity,),
             admin_key=self._signers["admin"].identity,
             protocol_version="SHUTTER-VOTE-v1",
@@ -220,7 +220,7 @@ class DataLayerConformance:
 
     def test_register_rejects_unauthorized_writer(self, backend):
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("aggregator").register_election(backend.config, backend.register_sig("aggregator"))
+            backend.dl("result_publisher").register_election(backend.config, backend.register_sig("result_publisher"))
 
     def test_register_assigns_sequential_ids(self, backend):
         # Ids are backend-assigned (registry-style), so each call yields a new id.
@@ -253,7 +253,7 @@ class DataLayerConformance:
         backend.register()
         backend.set_time(500)
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("aggregator").cancel_election(ELECTION_ID, backend.sig("aggregator", "cancel"))
+            backend.dl("result_publisher").cancel_election(ELECTION_ID, backend.sig("result_publisher", "cancel"))
 
     # -- ballots: ordering, sequence, pagination --------------------------- #
 
@@ -322,7 +322,7 @@ class DataLayerConformance:
         backend.register()
         share = backend.share(1)
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("aggregator").submit_decryption_share(ELECTION_ID, share, backend.share_sig("aggregator", share))
+            backend.dl("result_publisher").submit_decryption_share(ELECTION_ID, share, backend.share_sig("result_publisher", share))
 
     def test_share_keyper_index_must_match_signer(self, backend):
         backend.register()
@@ -341,9 +341,9 @@ class DataLayerConformance:
         backend.register()
         agg = backend.aggregate()
 
-        # Non-keyper (aggregator) cannot submit the aggregate — it is a keyper write now.
+        # Non-keyper (result_publisher) cannot submit the aggregate — it is a keyper write now.
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("aggregator").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("aggregator", agg))
+            backend.dl("result_publisher").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("result_publisher", agg))
 
         # One keyper is not a quorum (t+1 = 2): not yet canonical.
         backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))
@@ -390,7 +390,7 @@ class DataLayerConformance:
         assert backend.reader().get_result(ELECTION_ID) is None
         with pytest.raises(WriteAuthorizationError):
             backend.dl("admin").publish_result(ELECTION_ID, backend.result(), backend.sig("admin", "result"))
-        backend.dl("aggregator").publish_result(ELECTION_ID, backend.result(), backend.sig("aggregator", "result"))
+        backend.dl("result_publisher").publish_result(ELECTION_ID, backend.result(), backend.sig("result_publisher", "result"))
         assert backend.reader().get_result(ELECTION_ID) == backend.result()
 
     # -- capability --------------------------------------------------------- #

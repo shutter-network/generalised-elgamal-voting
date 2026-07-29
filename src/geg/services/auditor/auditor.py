@@ -5,7 +5,7 @@ from the stored submissions, independently re-derive the admitted set and the
 weighted aggregate, re-verify every decryption share's DLEQ, and recombine +
 re-run BSGS to check the published result. Any mismatch is publishable evidence.
 Detection is guaranteed even against a malicious data layer / gateway /
-aggregator (v1 has no in-protocol challenge; §3).
+coordinator (v1 has no in-protocol challenge; §3).
 """
 
 from __future__ import annotations

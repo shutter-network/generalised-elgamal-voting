@@ -6,7 +6,7 @@ registered once by the admin service and is **immutable after ``voting_start``**
 server-side on the database adapter).
 
 Every field here is a pure datum; nothing in this module performs I/O or crypto.
-Identities (``eligibility_key``, ``aggregator_key``, ``gateway_keys``,
+Identities (``eligibility_key``, ``result_publisher_key``, ``gateway_keys``,
 ``admin_key``, and each keyper's signing identity) are opaque ``bytes`` — the
 data-layer adapter decides how to interpret them (a 20-byte Ethereum address on
 the chain adapter, a 48-byte compressed-G1 key on a signature-checking database
@@ -62,9 +62,9 @@ class Threshold:
 class KeyperIdentity:
     """One committee member: a signing identity plus a P2P endpoint (DESIGN.md §4.1).
 
-    ``signing_key`` is the opaque identity the data layer checks DKG-result and
-    decryption-share writes against; ``endpoint`` is where the DKG coordinator and
-    the aggregator reach this keyper over HTTP.
+    ``signing_key`` is the opaque identity the data layer checks DKG-result,
+    aggregate, and decryption-share writes against; ``endpoint`` is where the
+    coordinator reaches this keyper over HTTP.
     """
 
     signing_key: bytes
@@ -79,7 +79,7 @@ class ElectionConfig:
     ``thresholdELGamal/src/eth_client.py::get_election``): this generalised config
     adds ``mode``, ``variant``, ``weighted``, ``max_weight``, ``duplicate_policy``,
     ``tally_deadline``, per-keyper endpoints, and the explicit authorization
-    identities (``eligibility_key``, ``aggregator_key``, ``gateway_keys``,
+    identities (``eligibility_key``, ``result_publisher_key``, ``gateway_keys``,
     ``admin_key``) plus ``protocol_version``.
     """
 
@@ -97,7 +97,7 @@ class ElectionConfig:
     threshold: Threshold
     keypers: tuple[KeyperIdentity, ...]  # n keyper identities + endpoints
     eligibility_key: bytes  # public key attestations must verify against
-    aggregator_key: bytes  # identity authorized to publish aggregate + result
+    result_publisher_key: bytes  # identity authorized to publish aggregate + result
     gateway_keys: tuple[bytes, ...]  # authorized ballot writers (empty = open writes)
     admin_key: bytes  # identity authorized to register/cancel
     protocol_version: str  # crypto suite + wire format version (DESIGN.md §7)

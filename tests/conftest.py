@@ -77,7 +77,7 @@ class Env:
                 KeyperIdentity(signing_key=bytes([i]) * 20, endpoint=f"http://k{i}") for i in range(self.n)
             ),
             eligibility_key=self.elig_vk_bytes,
-            aggregator_key=b"\xa1" * 20,
+            result_publisher_key=b"\xa1" * 20,
             gateway_keys=(b"\x91" * 20,),
             admin_key=b"\xad" * 20,
             protocol_version="SHUTTER-VOTE-v1",
@@ -170,7 +170,7 @@ class FullEnv:
     clock: ManualClock
     dl: object
     admin: object  # authz.Signer
-    aggregator: object
+    result_publisher: object
     gateway: object
     keyper_signers: list
     elig: object  # StubEligibilityService
@@ -209,7 +209,7 @@ def build_full_env(dl, clock) -> FullEnv:
 
     n, t = 3, 1
     admin = Signer.generate()
-    aggregator = Signer.generate()
+    result_publisher = Signer.generate()
     gateway = Signer.generate()
     keyper_signers = [Signer.generate() for _ in range(n)]
     elig_sk, _ = schnorr.keygen()
@@ -232,14 +232,14 @@ def build_full_env(dl, clock) -> FullEnv:
             KeyperIdentity(signing_key=keyper_signers[i].identity, endpoint=f"http://k{i}") for i in range(n)
         ),
         eligibility_key=elig.eligibility_key,
-        aggregator_key=aggregator.identity,
+        result_publisher_key=result_publisher.identity,
         gateway_keys=(gateway.identity,),
         admin_key=admin.identity,
         protocol_version="SHUTTER-VOTE-v1",
     )
     keypers = [KeyperService(i, keyper_signers[i - 1], dl, clock=clock) for i in range(1, n + 1)]
     return FullEnv(
-        clock=clock, dl=dl, admin=admin, aggregator=aggregator, gateway=gateway,
+        clock=clock, dl=dl, admin=admin, result_publisher=result_publisher, gateway=gateway,
         keyper_signers=keyper_signers, elig=elig, keypers=keypers, config=config, n=n, t=t,
     )
 

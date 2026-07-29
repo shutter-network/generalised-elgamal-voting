@@ -227,10 +227,10 @@ class InMemoryDataLayer(ElectionDataLayer):
         st = self._get(election_id)
         return [st.shares_by_keyper[i] for i in sorted(st.shares_by_keyper)]
 
-    def publish_result(self, election_id, result: ResultArtifact, aggregator_sig) -> None:
+    def publish_result(self, election_id, result: ResultArtifact, result_publisher_sig) -> None:
         st = self._get(election_id)
-        if not authz.verify_request(st.config.aggregator_key, aggregator_sig, "result", election_id):
-            raise WriteAuthorizationError("publish_result: bad aggregator signature")
+        if not authz.verify_request(st.config.result_publisher_key, result_publisher_sig, "result", election_id):
+            raise WriteAuthorizationError("publish_result: bad result-publisher signature")
         if st.result is not None:
             if st.result != result:
                 raise ImmutabilityError("result already published (append-only)")

@@ -2,9 +2,9 @@
 
 A deterministic function from the data layer's ordered ballot list + election
 config + eligibility key to an **admitted set** and typed **exclusion reasons**.
-This is the authoritative definition of which ballots the tally counts; it is
-reused by the tally aggregator, the keyper hardening profile, and the auditor,
-and it is reproducible by anyone from public data alone.
+This is the authoritative definition of which ballots the tally counts; each keyper
+runs it to produce its aggregate submission, the auditor runs it to re-derive the
+tally, and it is reproducible by anyone from public data alone.
 
 Verification is authoritative here (at tally time), not at the gateway. Each
 ballot is validated independently; then the duplicate policy is applied over the
@@ -61,8 +61,7 @@ def validate_ballot(sb: StoredBallot, config: ElectionConfig, mpk) -> ExclusionR
     """Public single-ballot validity check (no duplicate handling).
 
     Returns ``None`` if the ballot is independently valid, else the
-    :class:`ExclusionReason`. Reused by the keyper hardening profile and the
-    auditor. ``mpk`` is a decoded G2 point.
+    :class:`ExclusionReason`. ``mpk`` is a decoded G2 point.
     """
     env = sb.envelope
     att = env.attestation

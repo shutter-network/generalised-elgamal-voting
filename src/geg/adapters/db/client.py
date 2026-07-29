@@ -154,10 +154,10 @@ class HttpDataLayerClient(ElectionDataLayer):
         d = self._get(f"/elections/{self._eid(election_id)}/shares")
         return [codecs.dec_decryption_share(s) for s in d["shares"]]
 
-    def publish_result(self, election_id, result, aggregator_sig) -> None:
+    def publish_result(self, election_id, result, result_publisher_sig) -> None:
         self._post(f"/elections/{self._eid(election_id)}/result", {
             "result": codecs.enc_result(result),
-            "aggregatorSig": codecs.enc_bytes(aggregator_sig),
+            "resultPublisherSig": codecs.enc_bytes(result_publisher_sig),
         })
 
     def get_result(self, election_id):

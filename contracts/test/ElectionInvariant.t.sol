@@ -13,7 +13,7 @@ contract ElectionHandler is Test {
     address private voter1 = address(0xCA57);
     address private voter2 = address(0xCA58);
     address private voteProxy = address(0x970);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private keyper1 = address(0x1001);
     address private keyper2 = address(0x1002);
     address private keyper3 = address(0x1003);
@@ -78,7 +78,7 @@ contract ElectionHandler is Test {
         keyperIndices[1] = 1;
 
         vm.warp(votingEnd);
-        vm.prank(tallyAggregator);
+        vm.prank(resultPublisher);
         try election.publishResult(totals, keyperIndices) {} catch {}
     }
 
@@ -161,7 +161,7 @@ contract ElectionHandler is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: bytes(""),
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

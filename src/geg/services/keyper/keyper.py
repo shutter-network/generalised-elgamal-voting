@@ -1,11 +1,13 @@
 """Keyper service (DESIGN.md §2, §5.3, §8.2).
 
-A committee member: participates in the fresh per-election DKG and produces
+A committee member: participates in the fresh per-election DKG, re-derives and
+submits the deterministic aggregate (canonical at the t+1 quorum), and produces
 precondition-guarded partial decryptions of the canonical aggregate. Keypers are
-triggered automatically by the aggregator but **never trust the trigger** — before
-producing shares a keyper re-derives the necessary facts from the data layer
-itself (§8.2). An optional **hardening profile** (a MAY in v1) removes the admin
-from the individual-ballot privacy trust base.
+triggered automatically by the coordinator but **never trust the trigger** — before
+producing shares a keyper re-derives the necessary facts from the data layer itself
+(§8.2). Aggregate integrity comes from the **t+1 keyper quorum** (a bogus aggregate
+can't become canonical under the threshold assumption), so decryption needs no
+separate honesty re-check.
 
 The DKG round exchange here is in-process (driven by the coordinator); a
 multi-operator deployment wraps the same round methods behind authenticated P2P
@@ -15,8 +17,8 @@ HTTP (§5.3), which is a transport concern, not a protocol one.
 from __future__ import annotations
 
 from geg.core import write_auth
-from geg.core.admission import StoredBallot, admit, validate_ballot
-from geg.core.aggregation import aggregate_points, build_aggregate_artifact
+from geg.core.admission import StoredBallot, admit
+from geg.core.aggregation import build_aggregate_artifact
 from geg.core.authz import Signer
 from geg.crypto import proofs
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
@@ -126,7 +128,7 @@ class KeyperService:
 
     # -- partial decryption with §8.2 preconditions ------------------------ #
 
-    def produce_decryption_share(self, election_id: bytes, *, hardened: bool = False):
+    def produce_decryption_share(self, election_id: bytes):
         """Check §8.2 and produce this keyper's signed decryption share.
 
         Returns ``(share, signature)`` to submit, or ``None`` if this keyper already
@@ -134,6 +136,10 @@ class KeyperService:
         if any precondition fails. All reads are against ``self.dl`` (the data layer);
         the caller decides where to *write* the result (directly, or via the
         coordinator relay), so this method never writes.
+
+        The aggregate it decrypts is **canonical only at the t+1 byte-identical keyper
+        quorum** (`get_aggregate`), so a bogus aggregate can't reach it under the
+        threshold assumption — no separate honesty re-check is needed here.
         """
         rec = self.dl.get_election(election_id)  # raises if unknown → precondition 1
         cfg = rec.config
@@ -150,8 +156,8 @@ class KeyperService:
         if rec.finalized_key is None:
             raise KeyperRefusal("refuse: no finalized key")
 
-        # Precondition 2: a canonical aggregate exists (published under aggregatorKey,
-        # which the data layer enforced at write time).
+        # Precondition 2: a canonical aggregate exists — i.e. reached the t+1 keyper
+        # quorum (get_aggregate returns it only then), the integrity guarantee.
         agg = self.dl.get_aggregate(election_id)
         if agg is None:
             raise KeyperRefusal("refuse: no aggregate published")
@@ -160,9 +166,6 @@ class KeyperService:
         mine = [s for s in self.dl.list_decryption_shares(election_id) if s.keyper_index == self.index]
         if mine:
             return None
-
-        if hardened:
-            self._verify_aggregate_honesty(cfg, rec.finalized_key.pk_election, agg)
 
         entries = []
         for j, ct in enumerate(agg.aggregates):
@@ -181,7 +184,7 @@ class KeyperService:
         sig = write_auth.sign_decryption_share(self.signer.private_key, election_id, sigmas, dleq_proofs)
         return share, sig
 
-    def decrypt_and_submit(self, election_id: bytes, *, hardened: bool = False) -> bool:
+    def decrypt_and_submit(self, election_id: bytes) -> bool:
         """Produce the share (§8.2) and write it directly via ``self.dl``.
 
         **In-process test/simulation path only** (driven by
@@ -191,58 +194,9 @@ class KeyperService:
         :meth:`produce_decryption_share` — only the write transport differs. Idempotent:
         a keyper that already submitted is a no-op.
         """
-        produced = self.produce_decryption_share(election_id, hardened=hardened)
+        produced = self.produce_decryption_share(election_id)
         if produced is None:
             return True  # already submitted
         share, sig = produced
         self.dl.submit_decryption_share(election_id, share, sig)
         return True
-
-    def _verify_aggregate_honesty(self, cfg, pk_election_bytes: bytes, agg) -> None:
-        """Hardening profile (§8.2): defeat the 'exclude everyone but Alice' attack.
-
-        (a) Recompute the homomorphic sum over the published admitted set (pure EC
-            addition, no proof verification) and refuse on mismatch.
-        (b) Re-verify only the excluded ballots, refusing if a valid ballot was
-            excluded. In an honest election exclusions are near zero, so this is
-            cheap; the gateway filter bounds the flood risk.
-        """
-        mpk = g2_from_compressed(pk_election_bytes)
-        n = self.dl.count_ballots(cfg.election_id)
-        ballots = self.dl.list_ballots(cfg.election_id, 0, n)
-        by_seq = dict(enumerate(ballots))
-
-        # (a) sum over admitted set must match the published aggregate.
-        admitted = [
-            _WeightedBallot(by_seq[s], by_seq[s].attestation.weight)
-            for s in agg.admitted
-            if s in by_seq
-        ]
-        if len(admitted) != len(agg.admitted):
-            raise KeyperRefusal("refuse: admitted set references unknown ballots")
-        recomputed = aggregate_points(admitted, cfg.num_candidates)
-        published = [(g2_from_compressed(ct.c1), g2_from_compressed(ct.c2)) for ct in agg.aggregates]
-        for (rc1, rc2), (pc1, pc2) in zip(recomputed, published):
-            if not (rc1 == pc1 and rc2 == pc2):
-                raise KeyperRefusal("refuse: recomputed aggregate does not match published aggregate")
-
-        # (b) every excluded ballot must genuinely be invalid.
-        for exclusion in agg.exclusions:
-            env = by_seq.get(exclusion.sequence_number)
-            if env is None:
-                continue
-            reason = validate_ballot(StoredBallot(exclusion.sequence_number, env), cfg, mpk)
-            if reason is None:
-                raise KeyperRefusal(
-                    f"refuse: ballot {exclusion.sequence_number} was excluded but is valid"
-                )
-
-
-class _WeightedBallot:
-    """Minimal admitted-ballot shape for ``aggregate_points`` (envelope + weight)."""
-
-    __slots__ = ("envelope", "weight")
-
-    def __init__(self, envelope, weight: int):
-        self.envelope = envelope
-        self.weight = weight

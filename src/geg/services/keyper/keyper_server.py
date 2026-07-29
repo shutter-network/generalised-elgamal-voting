@@ -41,11 +41,10 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     """Build a keyper Flask app bound to one committee identity (`signer`).
 
     ``trusted_identities`` is the pinned set of bootstrapper addresses the keyper
-    accepts on ``/auth/bootstrap`` — a single 20-byte address or an iterable
-    (typically the coordinator *and* the tally aggregator, so each drives the keyper
-    signing with its own key). ``state_dir`` is this keyper's private encrypted-state
-    directory. Reads go to
-    ``data_layer``; **writes** (DKG result, decryption shares) go to ``submitter`` —
+    accepts on ``/auth/bootstrap`` — a single 20-byte address or an iterable (the
+    coordinator, the sole keyper bootstrapper). ``state_dir`` is this keyper's private
+    encrypted-state directory. Reads go to
+    ``data_layer``; **writes** (DKG result, aggregate, decryption shares) go to ``submitter`` —
     which defaults to ``data_layer`` (direct write, in-process/simple deployments) or
     is a :class:`~geg.services.coordinator.CoordinatorClient` that POSTs the signed
     artifacts to the coordinator relay (the multi-operator path). Either way the
@@ -301,7 +300,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         ks.dkg.combined_share = entry.combined_share
         ks.dkg.public_key_share = entry.public_key_share
         try:
-            produced = ks.produce_decryption_share(eid, hardened=bool(body.get("hardened", False)))
+            produced = ks.produce_decryption_share(eid)
         except Exception as err:  # noqa: BLE001 — refusal / precondition failure
             return jsonify(ok=False, reason=str(err)), 409
         if produced is not None:  # None = already submitted (idempotent)

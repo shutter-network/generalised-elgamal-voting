@@ -7,14 +7,14 @@
 #   GEG_REGISTRY_ADDRESS  the address of the already-deployed ElectionRegistry
 #   the actor keys        in deploy/.env (see .env.example)
 #
-# Chain authorization is by tx sender: admin/aggregator/gateway each submit their
-# own transactions from their own keys; keypers hold no key — their content-signed
-# DKG/decryption writes are relayed by the data-layer service (Option A relayer,
-# GEG_RELAYER_KEY, which only pays gas).
+# Chain authorization is by tx sender: admin/gateway each submit their own txs; the
+# coordinator relays keyper content-signed DKG/aggregate/decryption writes (pays gas)
+# AND sends publishResult (it holds RESULT_PUBLISHER_ROLE). Keypers hold no chain key.
+# The coordinator's COORDINATOR_SIGNING_KEY is that funded chain account.
 #
 # One-time, out of band (NOT in this compose): deploy the ElectionRegistry once per
 # chain (scripts/deploy_registry.py or PublishElection is per-election), fund every
-# actor + the relayer with real ETH, and set GEG_REGISTRY_ADDRESS in deploy/.env.
+# actor + the coordinator with real ETH, and set GEG_REGISTRY_ADDRESS in deploy/.env.
 #
 # Bring-up:
 #   docker compose -f deploy/docker-compose.chain.yml --env-file deploy/.env up -d --build
@@ -33,9 +33,9 @@ x-chain-env: &chain-env
   GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:?set GEG_REGISTRY_ADDRESS to the deployed registry}
 
 services:
-  # Data-layer service in relayer mode: public reads + relays keyper meta-tx writes
-  # (pays gas). Privileged writes are not routed here — admin/aggregator/gateway
-  # submit their own txs directly.
+  # Data-layer service: public read surface on chain. Privileged writes are not
+  # routed here — admin/gateway submit their own txs; keyper meta-tx are relayed by
+  # the coordinator.
   data-layer:
     <<: *image
     command: ["python", "-m", "geg.services.data_layer"]
@@ -46,6 +46,10 @@ services:
     ports:
       - "8000:8000"
 
+  # The single keyper-facing orchestrator: drives DKG, then the tally (trigger
+  # aggregate → quorum → decrypt → recover + publishResult), and relays keyper
+  # meta-tx. COORDINATOR_SIGNING_KEY is the funded chain relayer AND result publisher
+  # (holds RESULT_PUBLISHER_ROLE).
   coordinator:
     <<: *image
     command: ["python", "-m", "geg.services.coordinator"]
@@ -55,33 +59,16 @@ services:
       COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
       COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
       COORDINATOR_PORT: "8400"
-      GEG_RELAYER_KEY: ${GEG_RELAYER_KEY:?set GEG_RELAYER_KEY (gas payer for keyper writes)}
-      AUTO_DKG_POLL_S: "12.0"
-      GEG_TOKEN_STORE: /token-store   # sole bootstrapper: writes keyper tokens here
+      COORDINATOR_POLL_S: "12.0"
+      COORDINATOR_STATE_DIR: /coordinator-state   # private token persistence (restart-safe)
     ports:
       - "8400:8400"
     volumes:
-      - ../token-store:/token-store
+      - ../coordinator-state:/coordinator-state
     # Local split only: lets this service reach the separately-deployed keyper
     # stacks over host-published ports (http://host.docker.internal:810N). Provided
     # automatically on Docker Desktop (Mac/Windows); required on Linux. Unused in
     # production, where the config's keyper URLs are real public addresses.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on: [data-layer]
-
-  tally-aggregator:
-    <<: *image
-    command: ["python", "-m", "geg.services.tally_aggregator"]
-    restart: unless-stopped
-    environment:
-      <<: *chain-env
-      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
-      TALLY_HARDENED: "1"
-      TALLY_POLL_S: "12.0"
-      GEG_TOKEN_STORE: /token-store   # reads keyper tokens the coordinator wrote
-    volumes:
-      - ../token-store:/token-store:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on: [data-layer]

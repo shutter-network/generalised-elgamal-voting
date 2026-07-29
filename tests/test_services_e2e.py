@@ -1,9 +1,9 @@
 """End-to-end service flows on the in-memory adapter (DESIGN.md §2, §8).
 
-Drives a full election through the actual services — admin → DKG coordinator →
-gateway → tally aggregator → keypers → auditor — plus the security-relevant
-negative cases (keyper preconditions, hardening profile, gateway filter, admin
-lead-time gate, auditor tamper detection).
+Drives a full election through the actual services — admin → coordinator (DKG +
+tally) → gateway → keypers → auditor — plus the security-relevant negative cases
+(keyper preconditions, gateway filter, admin lead-time gate, auditor tamper
+detection).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_full_single_choice_election(full_env):
 
     # Tally.
     fe.clock.set(2_500)
-    result = agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock)
+    result = agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
     assert result is not None
     # candidate totals: cand0=3, cand1=6, cand2=3
     assert list(result.totals) == [3, 6, 3]
@@ -65,20 +65,10 @@ def test_full_weighted_election(full_env):
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32, weight=2), clock=fe.clock)
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([0, 3, 0], b"\x02" * 32, weight=5), clock=fe.clock)
     fe.clock.set(2_500)
-    result = agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock)
+    result = agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
     # [2*3, 5*3, 0] = [6, 15, 0]
     assert list(result.totals) == [6, 15, 0]
     assert auditor.audit(fe.dl, fe.config.election_id).ok
-
-
-def test_hardened_keypers_full_flow(full_env):
-    fe = full_env
-    _register_and_dkg(fe)
-    fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)
-    fe.clock.set(2_500)
-    result = agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock, hardened=True)
-    assert list(result.totals) == [1, 1, 1]
 
 
 # --------------------------------------------------------------------------- #
@@ -130,7 +120,7 @@ def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
     assert fe.dl.count_ballots(fe.config.election_id) == 2
 
     fe.clock.set(2_500)
-    result = agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock)
+    result = agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
     # only the good ballot counts
     assert list(result.totals) == [3, 0, 0]
     agg_artifact = fe.dl.get_aggregate(fe.config.election_id)
@@ -181,7 +171,7 @@ def test_auditor_detects_tampered_result(full_env):
     fe.clock.set(1_500)
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)
     fe.clock.set(2_500)
-    agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock)
+    agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
 
     # Forge a wrong result directly in storage (simulating a malicious data layer).
     stored = fe.dl._elections[fe.config.election_id]
@@ -207,86 +197,3 @@ def test_auditor_detects_tampered_aggregate(full_env):
     report = auditor.audit(fe.dl, fe.config.election_id)
     assert not report.aggregate_ok
     assert any("admitted set differs" in d for d in report.discrepancies)
-
-
-# --------------------------------------------------------------------------- #
-#  Hardening profile (§8.2): defeat the "exclude everyone but Alice" attack
-# --------------------------------------------------------------------------- #
-
-def _force_canonical_aggregate(fe, aggregate):
-    """Inject a (malicious) aggregate as canonical, simulating a colluding keyper
-    majority / malicious data layer: t+1 keypers appear to have submitted it, so the
-    quorum rule marks it canonical. The hardening profile (§8.2) is what catches it."""
-    stored = fe.dl._elections[fe.config.election_id]
-    needed = fe.config.threshold.t + 1
-    stored.aggregate_by_keyper = {i: aggregate for i in range(1, needed + 1)}
-
-
-def _malicious_isolate_alice(fe):
-    """Make canonical an aggregate that admits only Alice and falsely excludes Bob."""
-    from geg.core.admission import AdmittedBallot, StoredBallot
-    from geg.core.aggregation import aggregate_points
-    from geg.crypto.points import g2_to_compressed
-    from geg.envelopes.types import AggregateArtifact, Ciphertext, Exclusion, ExclusionReason
-
-    eid = fe.config.election_id
-    stored = list(fe.dl.list_ballots(eid, 0, fe.dl.count_ballots(eid)))
-    alice = AdmittedBallot(0, stored[0], stored[0].attestation.weight)
-    pts = aggregate_points([alice], fe.config.num_candidates)  # sum over Alice only
-    malicious = AggregateArtifact(
-        election_id=eid,
-        aggregates=tuple(Ciphertext(c1=g2_to_compressed(c1), c2=g2_to_compressed(c2)) for (c1, c2) in pts),
-        admitted=(0,),
-        exclusions=(Exclusion(sequence_number=1, reason=ExclusionReason.INVALID_PROOF),),  # false reason
-        total_admitted_weight=alice.weight,
-    )
-    _force_canonical_aggregate(fe, malicious)
-
-
-def test_naive_keyper_decrypts_isolation_attack_but_hardened_refuses(full_env):
-    fe = full_env
-    _register_and_dkg(fe)
-    fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock)  # Alice
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([0, 3, 0], b"\x02" * 32), clock=fe.clock)  # Bob
-    fe.clock.set(2_500)
-    _malicious_isolate_alice(fe)
-
-    # A naive keyper trusts the aggregator's published aggregate and would decrypt
-    # it (this is the admin/aggregator privacy trust assumption of §3).
-    assert fe.keypers[0].decrypt_and_submit(fe.config.election_id) is True
-
-    # A hardened keyper re-verifies the excluded ballot, finds Bob was valid, refuses.
-    with pytest.raises(KeyperRefusal, match="excluded but is valid"):
-        fe.keypers[1].decrypt_and_submit(fe.config.election_id, hardened=True)
-
-
-def test_hardened_keyper_refuses_aggregate_sum_mismatch(full_env):
-    """Aggregate whose ciphertexts don't match the sum over its own admitted set."""
-    from geg.crypto.points import g2_to_compressed
-    from geg.core.aggregation import aggregate_points
-    from geg.core.admission import AdmittedBallot
-    from geg.envelopes.types import AggregateArtifact, Ciphertext
-
-    fe = full_env
-    _register_and_dkg(fe)
-    fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([0, 3, 0], b"\x02" * 32), clock=fe.clock)
-    fe.clock.set(2_500)
-
-    eid = fe.config.election_id
-    stored = list(fe.dl.list_ballots(eid, 0, fe.dl.count_ballots(eid)))
-    # admitted set claims both, but ciphertexts are Alice-only → sum mismatch.
-    alice = AdmittedBallot(0, stored[0], stored[0].attestation.weight)
-    pts = aggregate_points([alice], fe.config.num_candidates)
-    malicious = AggregateArtifact(
-        election_id=eid,
-        aggregates=tuple(Ciphertext(c1=g2_to_compressed(c1), c2=g2_to_compressed(c2)) for (c1, c2) in pts),
-        admitted=(0, 1),
-        exclusions=(),
-        total_admitted_weight=2,
-    )
-    _force_canonical_aggregate(fe, malicious)
-    with pytest.raises(KeyperRefusal, match="does not match published aggregate"):
-        fe.keypers[0].decrypt_and_submit(eid, hardened=True)

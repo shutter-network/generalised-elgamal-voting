@@ -10,7 +10,7 @@ build/
 
 # Shared keyper-token hand-off dir (bind-mounted into coordinator/tally-aggregator).
 # Holds secret bootstrap tokens — never commit.
-token-store/
+coordinator-state/
 
 # Keyper encrypted-state bind dirs (docker-compose.keyper.yml). Fernet-encrypted
 # keyper secrets — never commit.

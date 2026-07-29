@@ -28,7 +28,7 @@ library VotingTypes {
         string protocolVersion;
         // forge-lint: disable-next-line(mixed-case-variable)
         bytes pkWR;
-        address tallyAggregator;
+        address resultPublisher;
         address voteProxy;
     }
 
@@ -90,7 +90,7 @@ library VotingTypes {
         bytes pkWR;
         bool cancelled;
         address adminAddr;
-        address tallyAggregator;
+        address resultPublisher;
         address voteProxy;
         // Per-keyper HTTP endpoints, index-aligned with keyperAddresses (from the KeyperSet).
         string[] keyperEndpoints;

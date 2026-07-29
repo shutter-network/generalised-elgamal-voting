@@ -34,7 +34,7 @@ def make_decrypt_transcript(election_id: bytes, candidate_index: int) -> Transcr
     """Freshly seed the decryption-share transcript (DESIGN.md §8.2).
 
     ``Transcript(SHUTTER-VOTE-DECRYPT-v1)`` with ``electionId`` (32 bytes) and
-    ``candidate`` (u16BE) appended. Prover (keyper) and verifier (aggregator /
+    ``candidate`` (u16BE) appended. Prover (keyper) and verifier (coordinator /
     auditor) MUST seed identically.
     """
     if len(election_id) != 32:

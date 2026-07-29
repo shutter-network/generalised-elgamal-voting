@@ -38,7 +38,7 @@ contract PublishElectionScriptTest is Test {
         vm.setEnv("DUPLICATE_POLICY", "1");
         vm.setEnv("PROTOCOL_VERSION", "geg-v1");
         vm.setEnv("PK_WR", "0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1");
-        vm.setEnv("TALLY_AGGREGATOR", vm.toString(address(0xA66)));
+        vm.setEnv("RESULT_PUBLISHER", vm.toString(address(0xA66)));
         vm.setEnv("VOTE_PROXY", vm.toString(address(0x970)));
         vm.setEnv("SELF_SUBMIT_FEE", "0");
 
@@ -56,7 +56,7 @@ contract PublishElectionScriptTest is Test {
 
         (VotingTypes.ElectionConfigView memory config,) = election.getElection();
         assertEq(config.protocolVersion, "geg-v1");
-        assertEq(config.tallyAggregator, address(0xA66));
+        assertEq(config.resultPublisher, address(0xA66));
         assertEq(config.voteProxy, address(0x970));
     }
 }

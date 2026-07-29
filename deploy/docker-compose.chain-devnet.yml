@@ -5,13 +5,13 @@
 #
 # Chain authorization is by tx sender, so — unlike the database backend — each
 # actor holds its OWN Ethereum key and submits its own transactions:
-#   * admin      → register/cancel (is the on-chain adminAddr)
-#   * aggregator → publishResult (the aggregate is keyper-submitted, not published here)
-#   * gateway    → submitVote
-# Keypers are the exception (Option A): they hold no chain key. They content-sign
-# their DKG/aggregate/decryption writes and POST them to the data-layer service, which runs
-# a RELAYER account that pays gas and sends the ...Signed tx; the contract
-# ecrecovers the keyper as the on-chain author.
+#   * admin       → register/cancel (is the on-chain adminAddr)
+#   * gateway     → submitVote
+#   * coordinator → relays keyper meta-tx (pays gas) AND sends publishResult
+#                   (holds RESULT_PUBLISHER_ROLE; the aggregate is keyper-submitted).
+# Keypers hold no chain key. They content-sign their DKG/aggregate/decryption writes
+# and POST them to the coordinator, which sends the ...Signed tx and pays gas; the
+# contract ecrecovers the keyper as the on-chain author.
 #
 # Ordered bring-up (RUNNING.md has the copy-paste version):
 #   forge build                                          # in contracts/ (artifacts)
@@ -49,12 +49,13 @@ services:
     <<: *image
     profiles: ["tools"]
     command: ["python", "scripts/fund_anvil.py"]
+    # Each account that sends its own txs on chain: admin (register), gateway
+    # (submitVote), coordinator (relays keyper meta-tx + sends publishResult).
     environment:
       GEG_CHAIN_RPC: http://anvil:8545
       ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
-      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
       GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
-      GEG_RELAYER_KEY: ${GEG_RELAYER_KEY}
+      COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
 
   deploy-registry:
     <<: *image
@@ -69,9 +70,9 @@ services:
 
   # --- long-running services ----------------------------------------------- #
 
-  # Data-layer service in relayer mode: public reads + relays keyper meta-tx
-  # writes (pays gas). Privileged writes are NOT routed here (they'd lack the
-  # role and revert) — admin/aggregator/gateway submit their own txs directly.
+  # Data-layer service: public read surface on chain. Privileged writes are NOT
+  # routed here — admin/gateway submit their own txs directly, and keyper meta-tx
+  # (DKG/aggregate/decrypt) are relayed by the coordinator (which pays gas).
   data-layer:
     <<: *image
     command: ["python", "-m", "geg.services.data_layer"]
@@ -84,6 +85,10 @@ services:
       - "8000:8000"
     depends_on: [anvil]
 
+  # The single keyper-facing orchestrator: drives DKG, then the tally (trigger
+  # aggregate → quorum → decrypt → recover + publishResult), and relays keyper
+  # meta-tx. Its COORDINATOR_SIGNING_KEY account is the funded chain relayer AND the
+  # result publisher (holds RESULT_PUBLISHER_ROLE).
   coordinator:
     <<: *image
     command: ["python", "-m", "geg.services.coordinator"]
@@ -92,32 +97,16 @@ services:
       COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
       COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
       COORDINATOR_PORT: "8400"
-      GEG_RELAYER_KEY: ${GEG_RELAYER_KEY}
-      AUTO_DKG_POLL_S: "2.0"
-      GEG_TOKEN_STORE: /token-store   # sole bootstrapper: writes keyper tokens here
+      COORDINATOR_POLL_S: "2.0"
+      COORDINATOR_STATE_DIR: /coordinator-state   # private token persistence (restart-safe)
     ports:
       - "8400:8400"
     volumes:
-      - ../token-store:/token-store
+      - ../coordinator-state:/coordinator-state
     # Local split only: lets this service reach the separately-deployed keyper
     # stacks over host-published ports (http://host.docker.internal:810N). Provided
     # automatically on Docker Desktop (Mac/Windows); required on Linux. Unused in
     # production, where the config's keyper URLs are real public addresses.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on: [data-layer]
-
-  tally-aggregator:
-    <<: *image
-    command: ["python", "-m", "geg.services.tally_aggregator"]
-    environment:
-      <<: *chain-env
-      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
-      TALLY_HARDENED: "1"
-      TALLY_POLL_S: "2.0"
-      GEG_TOKEN_STORE: /token-store   # reads keyper tokens the coordinator wrote
-    volumes:
-      - ../token-store:/token-store:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on: [data-layer]

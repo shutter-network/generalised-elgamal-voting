@@ -1,16 +1,12 @@
-"""Shared keyper-token store (coordinator writes, tally-aggregator reads).
+"""Coordinator-private keyper-token persistence.
 
 The keyper bootstrap api-tokens are minted by the **coordinator** (the sole
-bootstrapper) and installed on the keypers. Other admin-plane services that must
-call keyper endpoints — today the tally aggregator's ``/decrypt`` trigger — need
-those same tokens, but they run in separate processes with no access to the
-coordinator's in-memory cache.
-
-This is a tiny file-backed hand-off over a **shared volume**: the coordinator
-writes the tokens keyed by committee (the keyper URL set), and readers look them
-up by the same committee. Because the coordinator is the *only* bootstrapper, the
-keyper's single token slot is never overwritten by anyone else, so the stored
-token always matches what the keyper currently accepts — no re-bootstrap, no churn.
+bootstrapper) and installed on the keypers. This file-backed store lets the
+coordinator **persist** those tokens (keyed by committee = the keyper URL set) to
+its private volume, so a restart reloads them instead of re-bootstrapping the
+committee. Because the coordinator is the only bootstrapper *and* the only reader,
+the keyper's single token slot is never overwritten by anyone else — the stored
+token always matches what the keyper currently accepts.
 
 Tokens are stored in plaintext on an internal, non-committed volume (consistent
 with ``COORDINATOR_API_TOKEN`` living in ``.env``). Encrypt-at-rest is a possible
@@ -30,7 +26,7 @@ def _committee_key(urls: dict[int, str]) -> str:
 
 
 class TokenStore:
-    """File-backed committee→api-tokens map on a shared volume."""
+    """File-backed committee→api-tokens map on the coordinator's private volume."""
 
     def __init__(self, directory: str | os.PathLike):
         self._dir = pathlib.Path(directory)

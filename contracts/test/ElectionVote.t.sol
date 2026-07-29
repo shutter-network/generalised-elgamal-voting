@@ -17,7 +17,7 @@ contract ElectionVoteTest is Test {
     address private owner = address(0xA11CE);
     address private voter = address(0xCA57);
     address private voteProxy = address(0x970);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private keyper1 = address(0x1001);
     address private keyper2 = address(0x1002);
     address private keyper3 = address(0x1003);
@@ -271,7 +271,7 @@ contract ElectionVoteTest is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: PK_WR,
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

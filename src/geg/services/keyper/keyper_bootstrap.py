@@ -8,11 +8,9 @@ sx-monorepo's design:
     token bundle *to* a keyper's X25519 public key. Anyone can seal to a public
     key, so this proves nothing about the sender.
   - **authenticity** — a secp256k1 EIP-191 signature over the plaintext payload,
-    verified against the set of *pinned trusted-bootstrapper identities*. A keyper
-    trusts more than one driver: the coordinator (drives DKG) and the tally
-    aggregator (triggers decryption) each bootstrap with their **own** identity, so
-    neither has to hold the other's key. Any signer whose recovered address is in
-    the pinned set is accepted (same identity scheme geg uses for data-layer writes).
+    verified against the keyper's *pinned trusted-bootstrapper identities*. The
+    coordinator is the sole keyper bootstrapper: a signer whose recovered address is
+    in the pinned set is accepted (same identity scheme geg uses for data-layer writes).
 
 A :class:`NonceTracker` gives a bounded, TTL-based replay guard over bootstrap
 payloads.
@@ -46,7 +44,7 @@ def _payload_digest(payload: dict) -> bytes:
 
 
 def sign_payload(signer, payload: dict) -> bytes:
-    """A trusted bootstrapper (coordinator or aggregator) signs a bootstrap payload
+    """The trusted bootstrapper (the coordinator) signs a bootstrap payload
     with its secp256k1 identity (EIP-191).
 
     The key is passed as fixed 32-byte big-endian so a private key with a zero top

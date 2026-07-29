@@ -26,7 +26,7 @@ contract ScaffoldTest is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: bytes(""),
-            tallyAggregator: address(0xA66),
+            resultPublisher: address(0xA66),
             voteProxy: address(0x970)
         });
     }

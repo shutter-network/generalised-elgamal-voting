@@ -129,7 +129,7 @@ def gen_flow():
         variant=Variant.A, weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1000, voting_end=2000, tally_deadline=3000, threshold=Threshold(t=t, n=n),
         keypers=tuple(KeyperIdentity(signing_key=bytes([i]) * 20, endpoint="") for i in range(n)),
-        eligibility_key=elig_key, aggregator_key=b"\xa1" * 20, gateway_keys=(b"\x91" * 20,),
+        eligibility_key=elig_key, result_publisher_key=b"\xa1" * 20, gateway_keys=(b"\x91" * 20,),
         admin_key=b"\xad" * 20, protocol_version="SHUTTER-VOTE-v1",
     )
 

@@ -17,7 +17,7 @@ contract ElectionDKGTest is Test {
     address private keyper2 = address(0x1002);
     address private keyper3 = address(0x1003);
     address private outsider = address(0xBAD);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private voteProxy = address(0x970);
 
     function setUp() external {
@@ -203,7 +203,7 @@ contract ElectionDKGTest is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: bytes(""),
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

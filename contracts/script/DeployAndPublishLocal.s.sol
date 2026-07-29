@@ -37,7 +37,7 @@ contract DeployAndPublishLocalScript is Script {
             numCandidates: uint32(vm.envOr("NUM_CANDIDATES", uint256(3))),
             budget: uint32(vm.envOr("BUDGET", uint256(1))),
             pkWR: vm.envOr("PK_WR", bytes("")),
-            tallyAggregator: vm.envOr("TALLY_AGGREGATOR", admin),
+            resultPublisher: vm.envOr("RESULT_PUBLISHER", admin),
             voteProxy: vm.envOr("VOTE_PROXY", admin)
         });
     }

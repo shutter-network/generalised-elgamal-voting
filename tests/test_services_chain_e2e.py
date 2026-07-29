@@ -78,7 +78,7 @@ class ChainWorld:
         self.w3 = w3
         # Unified identities: every actor is an Ethereum secp256k1 Signer; its
         # BlockchainDataLayer is bound to that same account.
-        names = ["admin", "aggregator", "gateway", "keyper1", "keyper2", "keyper3"]
+        names = ["admin", "result_publisher", "gateway", "keyper1", "keyper2", "keyper3"]
         signers = {name: Signer.from_sk(int(ANVIL_KEYS[i], 16)) for i, name in enumerate(names)}
         self.signers = signers
         self.registry = deploy_registry(w3, signers["admin"].account)
@@ -93,17 +93,17 @@ class ChainWorld:
             return signers[role].identity
 
         self.admin_dl = BlockchainDataLayer(w3, self.registry, signers["admin"].account)
-        self.aggregator_dl = BlockchainDataLayer(w3, self.registry, signers["aggregator"].account)
+        self.result_publisher_dl = BlockchainDataLayer(w3, self.registry, signers["result_publisher"].account)
         self.gateway_dl = BlockchainDataLayer(w3, self.registry, signers["gateway"].account)
         self.admin_signer = signers["admin"]
-        self.aggregator_signer = signers["aggregator"]
+        self.result_publisher_signer = signers["result_publisher"]
 
         # Option A: keypers hold NO chain account and pay no gas. They content-sign
-        # their DKG result and decryption shares; the aggregator/coordinator acts as
+        # their DKG result and decryption shares; the result_publisher/coordinator acts as
         # the relayer that sends the ...Signed tx (pays gas), and the contract
-        # ecrecovers the keyper as the on-chain author. Here the aggregator account
+        # ecrecovers the keyper as the on-chain author. Here the result_publisher account
         # is that relayer, so every keyper's data layer is the relayer's adapter.
-        self.relayer_dl = BlockchainDataLayer(w3, self.registry, signers["aggregator"].account)
+        self.relayer_dl = BlockchainDataLayer(w3, self.registry, signers["result_publisher"].account)
         self.keypers = [
             KeyperService(i, signers[f"keyper{i}"], self.relayer_dl, clock=self.clock)
             for i in range(1, self.n + 1)
@@ -115,7 +115,7 @@ class ChainWorld:
             voting_start=self.base + 1000, voting_end=self.base + 2000, tally_deadline=self.base + 3000,
             threshold=Threshold(t=self.t, n=self.n),
             keypers=tuple(KeyperIdentity(signing_key=ab(f"keyper{i}"), endpoint="") for i in range(1, self.n + 1)),
-            eligibility_key=self.elig.eligibility_key, aggregator_key=ab("aggregator"),
+            eligibility_key=self.elig.eligibility_key, result_publisher_key=ab("result_publisher"),
             gateway_keys=(ab("gateway"),), admin_key=ab("admin"), protocol_version="v1",
         )
 
@@ -160,7 +160,7 @@ def test_full_weighted_election_over_chain(anvil_w3):
 
     # Tally: aggregate → trigger keypers → recover → publish, all on chain.
     world.warp(2500)
-    result = agg.run_tally(world.aggregator_dl, ELECTION_ID, world.aggregator_signer, world.keypers, clock=world.clock, hardened=True)
+    result = agg.run_tally(world.result_publisher_dl, ELECTION_ID, world.result_publisher_signer, world.keypers, clock=world.clock)
     assert result is not None
     # [2*3, 5*3, 0] = [6, 15, 0]
     assert list(result.totals) == [6, 15, 0]

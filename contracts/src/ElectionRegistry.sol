@@ -12,7 +12,7 @@ contract ElectionRegistry is AccessControl, IElectionRegistry {
     error InvalidKeyperSet();
 
     bytes32 public constant VOTE_PROXY_ROLE = keccak256("VOTE_PROXY_ROLE");
-    bytes32 public constant TALLY_AGGREGATOR_ROLE = keccak256("TALLY_AGGREGATOR_ROLE");
+    bytes32 public constant RESULT_PUBLISHER_ROLE = keccak256("RESULT_PUBLISHER_ROLE");
 
     uint256 public electionCount;
     mapping(uint256 => address) public elections;

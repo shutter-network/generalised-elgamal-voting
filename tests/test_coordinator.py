@@ -51,7 +51,7 @@ class KeyperWorld:
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint=self.urls[i + 1])
                           for i in range(N)),
-            eligibility_key=b"\xe1" * 48, aggregator_key=Signer.generate().identity,
+            eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
             gateway_keys=(Signer.generate().identity,), admin_key=self.admin.identity, protocol_version="v1",
         )
         return self.dl.register_election(config, self.admin.sign_register(config))
@@ -88,12 +88,13 @@ def test_watcher_bootstraps_the_keypers_itself(kw):
     assert requests.get(kw.urls[1] + "/status").json()["bootstrapped"] is True
 
 
-def test_watcher_skips_already_finalized(kw):
+def test_watcher_does_not_redrive_after_dkg(kw):
     eid = kw.register()
     watcher = kw.watcher()
     assert watcher.scan_once()[eid.hex()] == "finalized"
-    # Second pass: recognised as done, no re-trigger.
-    assert watcher.scan_once()[eid.hex()] == "already_finalized"
+    # Second pass: key finalized, election is KeyReady (pre-voting) → nothing to do
+    # until it reaches Tallying. The DKG is not re-driven.
+    assert watcher.scan_once()[eid.hex()] == "not_ready"
 
 
 def test_watcher_marks_dkg_failed_past_voting_start(kw):
@@ -133,5 +134,5 @@ def test_watcher_ignores_elections_not_needing_dkg(kw):
 
     fresh = kw.register()
     outcomes = kw.watcher().scan_once()
-    assert outcomes[done.hex()] == "already_finalized"
+    assert outcomes[done.hex()] == "not_ready"  # KeyReady: DKG done, not yet Tallying
     assert outcomes[fresh.hex()] == "finalized"

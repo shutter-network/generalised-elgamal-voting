@@ -174,12 +174,12 @@ def run_dkg_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: di
 
 
 def trigger_decrypt_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
-                         *, hardened: bool = False, timeout: float = 30.0) -> None:
+                         *, timeout: float = 30.0) -> None:
     """Trigger each keyper's /decrypt (best-effort; keypers self-guard via §8.2)."""
     for i, url in keyper_urls.items():
         try:
             requests.post(url.rstrip("/") + "/decrypt",
-                          json={"electionId": election_id.hex(), "hardened": hardened},
+                          json={"electionId": election_id.hex()},
                           headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
         except Exception:  # noqa: BLE001
             pass

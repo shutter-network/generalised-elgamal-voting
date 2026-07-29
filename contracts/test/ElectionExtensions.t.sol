@@ -16,7 +16,7 @@ contract ElectionExtensionsTest is Test {
 
     address private owner = address(0xA11CE);
     address private voteProxy = address(0x970);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private keyper1 = address(0x1001);
     address private keyper2 = address(0x1002);
     address private keyper3 = address(0x1003);
@@ -169,7 +169,7 @@ contract ElectionExtensionsTest is Test {
             duplicatePolicy: 1,
             protocolVersion: "v1",
             pkWR: bytes(""),
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

@@ -28,7 +28,7 @@ Contract of the port (DESIGN.md §5.1):
   writes are checked against identities in the election config; all reads are
   public. config/cancel → ``admin_key``; DKG results, decryption shares **and the
   aggregate** → registered keypers; ballots → ``gateway_keys`` (or open where direct
-  submission is enabled); result → ``aggregator_key``.
+  submission is enabled); result → ``result_publisher_key``.
 * **Capability tiers.** :meth:`verifiability_tier` returns 0 in v1 (availability
   only). Future tiers (inclusion receipts, append-only proofs) extend the port
   without breaking it.
@@ -217,9 +217,9 @@ class ElectionDataLayer(ABC):
 
     @abstractmethod
     def publish_result(
-        self, election_id: bytes, result: ResultArtifact, aggregator_sig: bytes
+        self, election_id: bytes, result: ResultArtifact, result_publisher_sig: bytes
     ) -> None:
-        """Publish the final result. Authorized: ``aggregator_key``."""
+        """Publish the final result. Authorized: ``result_publisher_key``."""
 
     @abstractmethod
     def get_result(self, election_id: bytes) -> ResultArtifact | None:

@@ -19,12 +19,13 @@ it all up in one shot:
     python scripts/gen_deploy_env.py
 
 Writes (under ``deploy/``, relative to repo root):
-  * ``.env``                 — admin/operator-stack keys + tokens (+ chain relayer)
+  * ``.env``                 — admin/operator-stack keys + tokens (the coordinator key
+                               doubles as the chain relayer + result publisher)
   * ``.env.keyper{1,2,3}``   — one self-contained env per keyper stack (its key,
                                pinned coordinator address, port, state dir)
   * ``sample-election.json`` — a valid §7.2 config envelope wiring the keyper
-                               endpoints/addresses, admin/aggregator/gateway
-                               identities, and a fresh eligibility key
+                               endpoints/addresses, admin/gateway/coordinator (result
+                               publisher) identities, and a fresh eligibility key
 
 The eligibility *private* key goes in ``.env`` (whoever issues voter attestations
 needs it). Voting window is set relative to "now" so the sample is immediately
@@ -62,10 +63,8 @@ def _key():
 
 def main() -> None:
     admin_sk, admin_addr = _key()
-    agg_sk, agg_addr = _key()
     gw_sk, gw_addr = _key()
-    coord_sk, coord_addr = _key()
-    relayer_sk, relayer_addr = _key()
+    coord_sk, coord_addr = _key()  # coordinator: bootstrap identity + result publisher + chain relayer
     keypers = [_key() for _ in range(N_KEYPERS)]
 
     # Keyper endpoints (config.keypers[].endpoint). Keypers run as SEPARATE stacks
@@ -107,7 +106,7 @@ def main() -> None:
             for i, (_sk, addr) in enumerate(keypers)
         ),
         eligibility_key=elig_pub,
-        aggregator_key=bytes.fromhex(agg_addr[2:]),
+        result_publisher_key=bytes.fromhex(coord_addr[2:]),  # the coordinator publishes the result
         gateway_keys=(bytes.fromhex(gw_addr[2:]),),
         admin_key=bytes.fromhex(admin_addr[2:]),
         protocol_version="v1",
@@ -129,19 +128,20 @@ def main() -> None:
         f"ADMIN_SIGNING_KEY={admin_sk}",
         "# Bearer token for the admin HTTP service (:8300).",
         f"ADMIN_API_TOKEN={secrets.token_urlsafe(32)}",
-        f"AGGREGATOR_SIGNING_KEY={agg_sk}",
         f"GATEWAY_SIGNING_KEY={gw_sk}",
+        "# Coordinator identity: the address keypers pin for bootstrap, the config's",
+        "# result_publisher_key (signs the result), AND — on chain — the funded account",
+        "# that relays keyper meta-tx and sends publishResult (holds RESULT_PUBLISHER_ROLE).",
         f"COORDINATOR_SIGNING_KEY={coord_sk}",
-        f"# Coordinator address keypers pin (give to operators out-of-band): {coord_addr.lower()}",
+        f"# coordinator address (give to keyper operators out-of-band): {coord_addr.lower()}",
         "# Bearer token keypers present to the coordinator's write-relay endpoints.",
         f"COORDINATOR_API_TOKEN={coordinator_api_token}",
         "",
         "# Keypers run as SEPARATE stacks — their private keys + the pinned coordinator",
         "# address live in deploy/.env.keyper{1,2,3} (also generated), NOT here.",
         "",
-        "# Blockchain backend only: relayer that pays gas for keyper meta-tx writes.",
-        f"# relayer address {relayer_addr}",
-        f"GEG_RELAYER_KEY={relayer_sk}",
+        "# Blockchain backend only (the coordinator's account above is the gas-paying",
+        "# relayer for keyper meta-tx and the result publisher):",
         "# GEG_CHAIN_RPC=http://anvil:8545",
         "# GEG_REGISTRY_ADDRESS=0x...   (set after deploying the registry — see RUNNING.md)",
         "",
@@ -177,8 +177,8 @@ def main() -> None:
     print(f"wrote {out/'sample-election.json'}")
     for f in keyper_env_files:
         print(f"wrote {out/f}")
-    print(f"admin={admin_addr} aggregator={agg_addr} gateway={gw_addr}")
-    print(f"coordinator={coord_addr} relayer={relayer_addr}")
+    print(f"admin={admin_addr} gateway={gw_addr}")
+    print(f"coordinator={coord_addr}  (result publisher + chain relayer)")
     for i, (_sk, addr) in enumerate(keypers, start=1):
         print(f"keyper{i}={addr}")
 

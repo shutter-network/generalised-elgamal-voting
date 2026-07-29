@@ -324,7 +324,7 @@ def enc_config(c: ElectionConfig) -> dict:
             {"signingKey": enc_bytes(k.signing_key), "endpoint": k.endpoint} for k in c.keypers
         ],
         "eligibilityKey": enc_bytes(c.eligibility_key),
-        "aggregatorKey": enc_bytes(c.aggregator_key),
+        "resultPublisherKey": enc_bytes(c.result_publisher_key),
         "gatewayKeys": [enc_bytes(g) for g in c.gateway_keys],
         "adminKey": enc_bytes(c.admin_key),
         "protocolVersion": c.protocol_version,
@@ -364,7 +364,7 @@ def dec_config(d: Any) -> ElectionConfig:
                 for i, k in enumerate(keypers)
             ),
             eligibility_key=dec_bytes(_req(d, "eligibilityKey"), name="eligibilityKey"),
-            aggregator_key=dec_bytes(_req(d, "aggregatorKey"), name="aggregatorKey"),
+            result_publisher_key=dec_bytes(_req(d, "resultPublisherKey"), name="resultPublisherKey"),
             gateway_keys=tuple(
                 dec_bytes(g, name=f"gatewayKeys[{i}]") for i, g in enumerate(_list(_req(d, "gatewayKeys"), name="gatewayKeys"))
             ),

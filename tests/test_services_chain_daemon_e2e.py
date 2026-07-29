@@ -11,7 +11,7 @@ over Anvil:
   result / decryption shares and write them through ``HttpDataLayerClient`` to the
   relayer service (Option A);
 * the **coordinator** bootstraps the committee and sequences the DKG over HTTP;
-* admin / aggregator / gateway submit their **own** chain txs (``msg.sender``
+* admin / result_publisher / gateway submit their **own** chain txs (``msg.sender``
   authz) via chain-direct adapters.
 
 This is the automated end-to-end the chain docker-compose stack was missing.
@@ -93,10 +93,10 @@ class ChainDaemonWorld:
         from geg.services.keyper import build_keyper_app
 
         self.w3 = w3
-        # Accounts: admin/aggregator/gateway submit their own txs; relayer pays gas
+        # Accounts: admin/result_publisher/gateway submit their own txs; relayer pays gas
         # for keyper writes; keyper identities sit in the KeyperSet (they never send).
         self.admin = Signer.from_sk(int(ANVIL_KEYS[0], 16))
-        self.aggregator = Signer.from_sk(int(ANVIL_KEYS[1], 16))
+        self.result_publisher = Signer.from_sk(int(ANVIL_KEYS[1], 16))
         self.gateway = Signer.from_sk(int(ANVIL_KEYS[2], 16))
         relayer = Account.from_key(ANVIL_KEYS[3])
         self.keyper_signers = [Signer.from_sk(int(ANVIL_KEYS[4 + i], 16)) for i in range(N)]
@@ -107,7 +107,7 @@ class ChainDaemonWorld:
         self.clock = lambda: chain_now(w3)
 
         self.admin_dl = BlockchainDataLayer(w3, self.registry, self.admin.account)
-        self.aggregator_dl = BlockchainDataLayer(w3, self.registry, self.aggregator.account)
+        self.result_publisher_dl = BlockchainDataLayer(w3, self.registry, self.result_publisher.account)
         self.gateway_dl = BlockchainDataLayer(w3, self.registry, self.gateway.account)
 
         elig_sk, _ = schnorr.keygen()
@@ -119,7 +119,7 @@ class ChainDaemonWorld:
             voting_start=self.base + 1000, voting_end=self.base + 2000, tally_deadline=self.base + 3000,
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint="") for i in range(N)),
-            eligibility_key=self.elig.eligibility_key, aggregator_key=self.aggregator.identity,
+            eligibility_key=self.elig.eligibility_key, result_publisher_key=self.result_publisher.identity,
             gateway_keys=(self.gateway.identity,), admin_key=self.admin.identity, protocol_version="v1",
         )
         # Admin registers directly on chain (deploys the KeyperSet from these keypers).
@@ -201,12 +201,12 @@ def test_full_election_over_chain_daemons(world):
 
     # Tally: coordinator triggers keypers to aggregate over HTTP (their signed
     # aggregates relayed to chain as meta-tx); the aggregate is canonical only at the
-    # t+1 byte-identical quorum. Then trigger decrypt, and the aggregator finalizes.
+    # t+1 byte-identical quorum. Then trigger decrypt, and the result_publisher finalizes.
     w.warp(2500)
     coord.trigger_aggregate_http(ELECTION_ID, w.keyper_urls, api_tokens)
     assert w.admin_dl.get_aggregate(ELECTION_ID) is not None  # t+1 keypers agreed → canonical
-    coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens, hardened=True)
-    result = agg.finalize(w.aggregator_dl, ELECTION_ID, w.aggregator, clock=w.clock)
+    coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens)
+    result = agg.finalize(w.result_publisher_dl, ELECTION_ID, w.result_publisher, clock=w.clock)
 
     assert result is not None
     assert list(result.totals) == [6, 15, 0]  # [2*3, 5*3, 0]

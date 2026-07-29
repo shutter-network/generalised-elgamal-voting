@@ -23,7 +23,7 @@ contract ElectionAdminTest is Test {
     address private voter = address(0xCA57);
     address payable private treasury = payable(address(0x777));
     address private voteProxy = address(0x970);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private keyper1 = address(0x1001);
     address private keyper2 = address(0x1002);
     address private keyper3 = address(0x1003);
@@ -148,7 +148,7 @@ contract ElectionAdminTest is Test {
         keyperIndices[1] = 1;
 
         vm.warp(votingEnd);
-        vm.prank(tallyAggregator);
+        vm.prank(resultPublisher);
         election.publishResult(totals, keyperIndices);
     }
 
@@ -200,7 +200,7 @@ contract ElectionAdminTest is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: bytes(""),
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

@@ -16,7 +16,7 @@ contract ElectionMetaTxTest is Test {
     KeyperSet private keyperSet;
 
     address private owner = address(0xA11CE);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private voteProxy = address(0x970);
     address private relayer = address(0xBEEF); // pays gas, is NOT a keyper
 
@@ -190,7 +190,7 @@ contract ElectionMetaTxTest is Test {
         return VotingTypes.ElectionParams({
             votingStart: votingStart, votingEnd: votingEnd, tallyDeadline: type(uint64).max, selfSubmitFee: 0,
             numCandidates: 3, budget: 1, mode: 0, variant: 0, weighted: false, maxWeight: 1, duplicatePolicy: 1,
-            protocolVersion: "v1", pkWR: bytes(""), tallyAggregator: tallyAggregator, voteProxy: voteProxy
+            protocolVersion: "v1", pkWR: bytes(""), resultPublisher: resultPublisher, voteProxy: voteProxy
         });
     }
 }

@@ -59,7 +59,7 @@ def _eid_num(election_id: bytes) -> int:
 def _decimalize_election_ids(obj):
     """Recursively rewrite every ``electionId`` hex field to its decimal id.
 
-    Option A: the public API speaks **decimal** election ids uniformly (top-level,
+    The public API speaks **decimal** election ids uniformly (top-level,
     lists, and inside every returned envelope); cryptographic byte-strings (keys,
     ciphertexts, proofs, signatures) stay ``0x``-hex. Lossless — a client rebuilds
     the canonical 32 bytes from the integer. (Envelopes returned here are therefore
@@ -109,7 +109,7 @@ def build_api_app(dl: ElectionDataLayer) -> Flask:
         return _parse_eid(request.view_args["eid"])
 
     def _reply(payload: dict):
-        """Serialize a response, decimalizing every election id (Option A)."""
+        """Serialize a response, decimalizing every election id."""
         return jsonify(_decimalize_election_ids(payload))
 
     def _int_arg(name: str, default: int) -> int:

@@ -5,9 +5,12 @@ modules and re-exports its public API; deployable ones expose ``__main__`` so
 
 * :mod:`geg.services.keyper` — DKG participation + §8.2-guarded decryption; the
   HTTP keyper process, token bootstrap, and encrypted state.
-* :mod:`geg.services.coordinator` — DKG watcher/driver + keyper-write relay
-  (``dkg_coordinator`` holds the ceremony primitives).
-* :mod:`geg.services.tally_aggregator` — admit → aggregate → trigger → recover.
+* :mod:`geg.services.coordinator` — the single keyper-facing orchestrator: DKG
+  watcher/driver **and** tally driver (trigger aggregate → quorum → decrypt →
+  recover + publish result) + keyper-write relay (``dkg_coordinator`` holds the
+  ceremony primitives).
+* :mod:`geg.services.tally_aggregator` — tally *library*: ``finalize`` (recover +
+  publish the result, called by the coordinator) plus the in-process test harness.
 * :mod:`geg.services.gateway` — ballot ingest with an on-by-default filter.
 * :mod:`geg.services.admin` — sole writer of election config (CLI + HTTP).
 * :mod:`geg.services.auditor` — re-verifies an election from public reads.

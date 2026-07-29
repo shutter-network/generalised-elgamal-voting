@@ -323,7 +323,7 @@ class BlockchainDataLayer(ElectionDataLayer):
         raw = election.functions.getDecryptionShares().call()
         return [codec.share_from_contract(s, election_id) for s in raw]
 
-    def publish_result(self, election_id, result, aggregator_sig) -> None:
+    def publish_result(self, election_id, result, result_publisher_sig) -> None:
         election = self._election(election_id)
         if election.functions.isResultFinalized().call():
             existing = self.get_result(election_id)
@@ -368,7 +368,7 @@ class BlockchainDataLayer(ElectionDataLayer):
             codec.DUP_TO_U8[config.duplicate_policy],
             config.protocol_version,
             config.eligibility_key,  # pkWR
-            Web3.to_checksum_address(config.aggregator_key),
+            Web3.to_checksum_address(config.result_publisher_key),
             Web3.to_checksum_address(config.gateway_keys[0]),
         )
 
@@ -394,7 +394,7 @@ class BlockchainDataLayer(ElectionDataLayer):
                 KeyperIdentity(signing_key=a, endpoint=e) for a, e in zip(keyper_addrs, keyper_endpoints)
             ),
             eligibility_key=bytes(v[16]),
-            aggregator_key=_addr_bytes(v[19]),
+            result_publisher_key=_addr_bytes(v[19]),
             gateway_keys=(_addr_bytes(v[20]),),
             admin_key=_addr_bytes(v[18]),
             protocol_version=str(v[12]),

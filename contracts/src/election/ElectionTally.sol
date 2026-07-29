@@ -69,7 +69,7 @@ abstract contract ElectionTally is ElectionBase {
 
     function publishResult(uint256[] calldata totals, uint8[] calldata keyperIndices)
         external
-        onlyRole(TALLY_AGGREGATOR_ROLE)
+        onlyRole(RESULT_PUBLISHER_ROLE)
     {
         _requireNotCancelled();
         if (!dkgFinalized) revert DKGNotFinalized();

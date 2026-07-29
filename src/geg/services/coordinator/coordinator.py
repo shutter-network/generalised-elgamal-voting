@@ -1,21 +1,24 @@
 """Coordinator service (DESIGN.md §2; sx-monorepo ``auto_dkg`` role, generalised).
 
-Two roles in one daemon:
+The **single keyper-facing orchestrator**. Two roles in one daemon:
 
-1. **DKG watcher/driver** (``AutoDKG``) — discovers ``Registered`` elections needing
-   a key **from the data layer** (any adapter) and drives the keyper DKG ceremony
-   over HTTP: bootstraps the committee's bearer tokens, then sequences the ceremony
-   nearest-``voting_start``-first. An election that reaches ``voting_start`` without a
-   key is terminally ``DKGFailed``.
+1. **Lifecycle watcher/driver** (``AutoDKG``) — discovers elections **from the data
+   layer** (any adapter) and drives each through its whole keyper-driven lifecycle:
+   ``Registered`` → run the DKG (bootstrap tokens, sequence the ceremony over HTTP,
+   nearest-``voting_start``-first; ``DKGFailed`` if ``voting_start`` passes with no
+   key); ``Tallying`` → trigger keypers to aggregate (canonical at the t+1 quorum),
+   then to decrypt, then recover + **publish the result** (it holds the
+   ``result_publisher_key``).
 
 2. **Keyper-write relay** (``build_coordinator_app``) — the single service keypers
-   submit their signed DKG results and decryption shares to (``POST /dkg-result`` /
-   ``/decryption-share``). The coordinator forwards each to the data layer via its
-   own ``dl``. On the **blockchain** backend that ``dl`` is bound to the relayer
-   account (``GEG_RELAYER_KEY``): the coordinator pays gas for the ``...Signed``
-   meta-tx while the contract ``ecrecover``s the keyper as author. So keypers never
-   hold a data-layer write handle or a chain key — they only talk to the coordinator
-   for writes (reads still go to the uniform data-layer service URL).
+   submit their signed DKG results, aggregates, and decryption shares to
+   (``POST /dkg-result`` / ``/aggregate`` / ``/decryption-share``). The coordinator
+   forwards each to the data layer via its own ``dl``. On the **blockchain** backend
+   that ``dl`` is bound to the coordinator's own account (``COORDINATOR_SIGNING_KEY``):
+   it pays gas for the ``...Signed`` meta-tx (the contract ``ecrecover``s the keyper as
+   author) *and* sends ``publishResult`` (it holds ``RESULT_PUBLISHER_ROLE``). Keypers
+   never hold a data-layer write handle or a chain key — they only talk to the
+   coordinator for writes (reads go to the uniform data-layer service URL).
 
 The relay is thin: it does not verify the keyper signature itself (the data layer /
 contract does, via recovery against the registered committee) — it only relays.
@@ -29,16 +32,26 @@ import time
 
 from geg.ports.data_layer import ElectionDataLayer
 from . import dkg_coordinator as coord
+from geg.services import tally_aggregator as tally  # finalize (recover + publish result)
 from geg.core.state import ElectionState, StateFacts, derive_state
 
 
 class AutoDKG:
+    """The sole keyper-facing orchestrator. Per poll it drives every election through
+    its whole keyper-driven lifecycle: ``Registered`` → run the DKG; ``Tallying`` →
+    trigger the keypers to aggregate (canonical at the t+1 quorum), then to decrypt,
+    then recover + publish the result. It bootstraps each committee's tokens once and
+    persists them privately. The coordinator is also the **result publisher**:
+    ``self.coordinator`` signs the ``"result"`` write on db and, on chain, its account
+    holds ``RESULT_PUBLISHER_ROLE`` (``config.result_publisher_key == coordinator address``)."""
+
     def __init__(self, data_layer: ElectionDataLayer, coordinator, *, clock,
                  poll_interval_s: float = 2.0, backoff_base_s: float = 10.0,
                  backoff_cap_s: float = 300.0, endpoints: dict[str, str] | None = None,
-                 token_store=None, relay_token: str | None = None, logger: logging.Logger | None = None):
+                 token_store=None, relay_token: str | None = None,
+                 logger: logging.Logger | None = None):
         self.dl = data_layer
-        self.coordinator = coordinator  # authz.Signer (the pinned coordinator identity)
+        self.coordinator = coordinator  # authz.Signer: pinned identity AND result publisher
         self.clock = clock
         self.poll_interval_s = poll_interval_s
         self.backoff_base_s = backoff_base_s
@@ -46,16 +59,15 @@ class AutoDKG:
         # Address-keyed endpoint override for backends that don't store endpoints
         # (e.g. blockchain) — see geg.services.dkg_coordinator.keyper_urls_from.
         self.endpoints = endpoints or {}
-        # Shared store the coordinator writes minted keyper tokens to, so other
-        # admin-plane services (the tally aggregator's /decrypt trigger) can reuse
-        # them without re-bootstrapping. The coordinator is the sole bootstrapper.
+        # Coordinator-private persistence for the minted keyper tokens: reloaded on
+        # restart so the committee is not re-bootstrapped.
         self.token_store = token_store
         # Write-relay bearer pushed to keypers via /auth/bootstrap (so they need no
         # pre-shared relay token). Equals the token this coordinator's relay gates on.
         self.relay_token = relay_token
         self.log = logger or logging.getLogger("geg.coordinator")
-        self._finalized: set[str] = set()
-        self._failed: set[str] = set()
+        self._done: set[str] = set()      # result published / Complete → terminal
+        self._failed: set[str] = set()    # DKGFailed / Void → terminal
         self._attempts: dict[str, dict] = {}
         self._tokens_by_committee: dict[tuple, dict] = {}
 
@@ -65,38 +77,53 @@ class AutoDKG:
         return coord.keyper_urls_from(config, self.endpoints)
 
     def _ensure_bootstrapped(self, urls: dict[int, str]) -> dict[int, str]:
-        """Bootstrap this committee's tokens once (cached by the committee's URLs)."""
+        """Return this committee's tokens (cached → persisted → freshly bootstrapped)."""
         key = tuple(sorted(urls.items()))
-        if key not in self._tokens_by_committee:
-            api_tokens, _peer = coord.bootstrap_keypers(self.coordinator, urls, relay_token=self.relay_token)
-            self._tokens_by_committee[key] = api_tokens
-            if self.token_store is not None:
-                self.token_store.write(urls, api_tokens)  # hand off to the tally aggregator
-            self.log.info("op=bootstrap status=ok committee=%d", len(urls))
-        return self._tokens_by_committee[key]
+        if key in self._tokens_by_committee:
+            return self._tokens_by_committee[key]
+        if self.token_store is not None:  # reload across restart, skip re-bootstrap
+            persisted = self.token_store.read(urls)
+            if persisted is not None:
+                self._tokens_by_committee[key] = persisted
+                return persisted
+        api_tokens, _peer = coord.bootstrap_keypers(self.coordinator, urls, relay_token=self.relay_token)
+        self._tokens_by_committee[key] = api_tokens
+        if self.token_store is not None:
+            self.token_store.write(urls, api_tokens)  # persist for restart
+        self.log.info("op=bootstrap status=ok committee=%d", len(urls))
+        return api_tokens
 
     # -- scan --------------------------------------------------------------- #
 
     def _process(self, election_id: bytes, rec, now: int) -> str:
         eid_hex = election_id.hex()
-        if rec.finalized_key is not None:
-            self._finalized.add(eid_hex)
-            return "already_finalized"
-
+        result_published = self.dl.get_result(election_id) is not None
         facts = StateFacts(
-            cancelled=rec.cancelled, key_finalized=False,
-            result_published=self.dl.get_result(election_id) is not None,
+            cancelled=rec.cancelled, key_finalized=rec.finalized_key is not None,
+            result_published=result_published,
         )
         state = derive_state(rec.config, facts, now)
 
+        if state is ElectionState.COMPLETE:
+            self._done.add(eid_hex)
+            return "complete"
         if state is ElectionState.DKG_FAILED:
             self._failed.add(eid_hex)
             self.log.warning("op=dkg status=failed election=%s (voting_start passed without a key)", eid_hex)
             return "dkg_failed"
-        if state is not ElectionState.REGISTERED:
-            return "not_ready"  # KeyReady/Voting/Tallying/Complete/Cancelled/Void
+        if state is ElectionState.VOID:
+            self._failed.add(eid_hex)
+            self.log.warning("op=tally status=void election=%s (no result by tally_deadline)", eid_hex)
+            return "void"
+        if state is ElectionState.REGISTERED:
+            return self._drive_dkg(election_id, rec, now)
+        if state is ElectionState.TALLYING:
+            return self._drive_tally(election_id, rec)
+        return "not_ready"  # KeyReady / Voting / Cancelled
 
-        # Registered → needs DKG. Back-off gate so we don't hammer between polls.
+    def _drive_dkg(self, election_id: bytes, rec, now: int) -> str:
+        eid_hex = election_id.hex()
+        # Back-off gate so we don't hammer between polls.
         att = self._attempts.setdefault(eid_hex, {"attempts": 0, "next_at": 0.0})
         if now < att["next_at"]:
             return "backing_off"
@@ -109,7 +136,6 @@ class AutoDKG:
         try:
             api_tokens = self._ensure_bootstrapped(urls)
             if coord.run_dkg_http(election_id, urls, api_tokens, self.dl):
-                self._finalized.add(eid_hex)
                 self.log.info("op=dkg status=finalized election=%s", eid_hex)
                 return "finalized"
         except Exception as err:  # noqa: BLE001 — retried next poll
@@ -118,6 +144,37 @@ class AutoDKG:
         att["attempts"] += 1
         att["next_at"] = now + min(self.backoff_cap_s, self.backoff_base_s * (2 ** (att["attempts"] - 1)))
         return "registered_retry"
+
+    def _drive_tally(self, election_id: bytes, rec) -> str:
+        """Tallying: trigger keypers to aggregate → gate on the canonical (quorum)
+        aggregate → trigger decrypt → recover + publish result. Idempotent per poll;
+        keypers self-guard on ``votingEnd`` and may override their aggregate until the
+        quorum finalizes, so transient divergence self-heals over successive polls."""
+        eid_hex = election_id.hex()
+        urls = self._keyper_urls(rec.config)
+        if any(not u for u in urls.values()):
+            self.log.error("op=tally status=error election=%s reason=missing_keyper_endpoints", eid_hex)
+            return "no_endpoints"
+        try:
+            api_tokens = self._ensure_bootstrapped(urls)
+        except Exception as err:  # noqa: BLE001
+            self.log.error("op=tally status=bootstrap_error election=%s err=%s", eid_hex, err)
+            return "error"
+
+        # 1. Trigger keypers to aggregate (best-effort; the quorum is the real gate).
+        coord.trigger_aggregate_http(election_id, urls, api_tokens)
+        # 2. Gate on the canonical aggregate — no quorum yet → retry next poll.
+        if self.dl.get_aggregate(election_id) is None:
+            return "collecting_aggregate"
+        # 3. Trigger keypers to decrypt (best-effort; keypers self-guard via §8.2).
+        coord.trigger_decrypt_http(election_id, urls, api_tokens)
+        # 4. Recover + publish the result (signed by the coordinator = result publisher).
+        result = tally.finalize(self.dl, election_id, self.coordinator, clock=self.clock)
+        if result is not None:
+            self._done.add(eid_hex)
+            self.log.info("op=tally status=finalized election=%s", eid_hex)
+            return "tallied"
+        return "collecting_shares"
 
     def scan_once(self) -> dict[str, str]:
         """One pass over the data layer; returns {election_id_hex: outcome}.
@@ -132,8 +189,8 @@ class AutoDKG:
         pending = []
         for election_id in self.dl.list_elections():
             eid_hex = election_id.hex()
-            if eid_hex in self._finalized:
-                outcomes[eid_hex] = "already_finalized"
+            if eid_hex in self._done:
+                outcomes[eid_hex] = "complete"
                 continue
             if eid_hex in self._failed:
                 outcomes[eid_hex] = "already_failed"
@@ -302,15 +359,21 @@ class CoordinatorClient:
 
 
 def main() -> None:
-    """Run the coordinator: DKG watcher/driver + keyper-write relay HTTP service.
+    """Run the coordinator: the single keyper-facing orchestrator + keyper-write relay.
+
+    One daemon drives every election end to end — DKG (Registered), then the tally
+    (Tallying: trigger keypers to aggregate → quorum → decrypt → recover + publish the
+    result).
 
     Env: ``COORDINATOR_SIGNING_KEY`` (hex secp256k1 — the coordinator identity keypers
-    pin as ``COORDINATOR_IDENTITY``), ``GEG_DATA_LAYER`` + ``GEG_DATA_LAYER_URL`` (http
-    backends), ``COORDINATOR_API_TOKEN`` (bearer token for the relay; fail-closed if
-    unset), ``COORDINATOR_HOST``/``COORDINATOR_PORT`` (default 8400), ``AUTO_DKG_POLL_S``,
-    and — on the blockchain backend — ``GEG_RELAYER_KEY`` (the coordinator is the
-    keyper-write relayer / gas payer). Keyper URLs come from the election config on
-    every backend (stored in the KeyperSet contract on chain), not from env.
+    pin as ``COORDINATOR_IDENTITY``, **and** the ``result_publisher_key``: it signs the
+    result write on db and, on chain, is the funded account that relays keyper meta-tx
+    *and* sends ``publishResult`` holding ``RESULT_PUBLISHER_ROLE``). ``GEG_DATA_LAYER`` +
+    ``GEG_DATA_LAYER_URL`` (http backends); ``COORDINATOR_API_TOKEN`` (relay bearer,
+    fail-closed if unset); ``COORDINATOR_STATE_DIR`` (private volume the minted keyper
+    tokens persist to, reloaded on restart); ``COORDINATOR_HOST``/``COORDINATOR_PORT``
+    (default 8400), ``COORDINATOR_POLL_S``. Keyper URLs come from the election config on
+    every backend (the KeyperSet contract on chain), not from env.
     """
     import os
     import threading
@@ -321,17 +384,18 @@ def main() -> None:
     from geg.services.common.token_store import TokenStore
 
     logging.basicConfig(level=logging.INFO)
-    coordinator = Signer.from_sk(int(os.environ["COORDINATOR_SIGNING_KEY"], 16))
-    # On chain the coordinator relays keyper writes as the gas-paying relayer; on
-    # http backends the relayer key is ignored (writes go via HttpDataLayerClient).
-    dl = data_layer_for_service(os.environ.get("GEG_RELAYER_KEY"))
-    # The coordinator is the sole keyper bootstrapper; it writes minted tokens to a
-    # shared volume for the tally aggregator to read (GEG_TOKEN_STORE).
-    store_dir = os.environ.get("GEG_TOKEN_STORE")
+    coordinator_key = os.environ["COORDINATOR_SIGNING_KEY"]
+    coordinator = Signer.from_sk(int(coordinator_key, 16))
+    # On chain the coordinator's own account is the funded relayer + result publisher
+    # (it holds RESULT_PUBLISHER_ROLE); on http backends the key is ignored (writes go
+    # via HttpDataLayerClient) and the coordinator signs the result request instead.
+    dl = data_layer_for_service(coordinator_key)
+    # Coordinator-private token persistence (reloaded on restart; not shared).
+    store_dir = os.environ.get("COORDINATOR_STATE_DIR")
     relay_token = os.environ.get("COORDINATOR_API_TOKEN")  # pushed to keypers via bootstrap
     watcher = AutoDKG(
         dl, coordinator, clock=lambda: int(_time.time()),
-        poll_interval_s=float(os.environ.get("AUTO_DKG_POLL_S", "2.0")),
+        poll_interval_s=float(os.environ.get("COORDINATOR_POLL_S", "2.0")),
         token_store=TokenStore(store_dir) if store_dir else None,
         relay_token=relay_token,
     )

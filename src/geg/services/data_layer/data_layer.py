@@ -3,7 +3,7 @@
 One Flask microservice that exposes the ``ElectionDataLayer`` port over HTTP (the
 §7.2 JSON envelopes) wrapping **any** backend adapter — in-memory, Postgres, or
 blockchain. A deployment picks the backend with ``GEG_DATA_LAYER`` and every
-component (keypers, gateway, aggregator, coordinator, admin) speaks the same HTTP
+component (keypers, gateway, coordinator, admin) speaks the same HTTP
 to it via :class:`geg.adapters.db.client.HttpDataLayerClient`, unchanged. The
 routes call only port methods, so the service is genuinely backend-agnostic.
 
@@ -17,16 +17,14 @@ the client maps back to the port's exception types:
 Backend semantics (``GEG_DATA_LAYER``):
 
 * ``memory`` / ``database`` — the store verifies each write's signature (request
-  sig for admin/aggregator/gateway; content sig + ``ecrecover`` for keypers) and
-  writes. Every route is a usable write path.
+  sig for admin/gateway and the coordinator's result write; content sig +
+  ``ecrecover`` for keyper writes) and writes. Every route is a usable write path.
 * ``blockchain`` — the service is the **public read surface** on chain, wrapping a
-  read-only :class:`~geg.adapters.chain.client.BlockchainDataLayer` (no gas key by
-  default). Keyper writes are relayed by the **coordinator** (which holds
-  ``GEG_RELAYER_KEY`` and sends the ``...Signed`` meta-tx; the contract ``ecrecover``s
-  the keyper — Option A), and admin/aggregator/gateway submit their own txs directly
-  (``msg.sender`` authz). So on-chain identity is never impersonated here. (Setting
-  ``GEG_RELAYER_KEY`` on this service is still allowed — it can relay too — but the
-  coordinator is the canonical keyper-write relayer.)
+  read-only :class:`~geg.adapters.chain.client.BlockchainDataLayer` (no write account).
+  Keyper writes are relayed by the **coordinator** (whose ``COORDINATOR_SIGNING_KEY``
+  account sends the ``...Signed`` meta-tx and pays gas; the contract ``ecrecover``s the
+  keyper), and admin/gateway submit their own txs directly (``msg.sender`` authz). So
+  on-chain identity is never impersonated here.
 """
 
 from __future__ import annotations
@@ -184,7 +182,7 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         body = request.get_json(force=True)
         dl.publish_result(
             _eid(), codecs.dec_result(body["result"]),
-            codecs.dec_bytes(body["aggregatorSig"], name="aggregatorSig"),
+            codecs.dec_bytes(body["resultPublisherSig"], name="resultPublisherSig"),
         )
         return "", 204
 
@@ -222,20 +220,17 @@ def _build_backend(clock):
         return store
 
     if backend in ("blockchain", "chain", "eth"):
-        from eth_account import Account
         from web3 import Web3
 
         from geg.adapters.chain.client import BlockchainDataLayer
 
         rpc = os.environ["GEG_CHAIN_RPC"]
         registry = os.environ["GEG_REGISTRY_ADDRESS"]
-        # The data-layer service is READ-ONLY on chain by default: keyper writes are
-        # relayed by the coordinator (which holds GEG_RELAYER_KEY), so no gas key is
-        # needed here. If GEG_RELAYER_KEY is set it can still relay (account=None else).
-        relayer_key = os.environ.get("GEG_RELAYER_KEY")
-        account = Account.from_key(relayer_key) if relayer_key else None
+        # The data-layer service is the READ-ONLY public read surface on chain (no
+        # write account): admin/gateway submit their own txs, and keyper writes are
+        # relayed by the coordinator.
         w3 = Web3(Web3.HTTPProvider(rpc))
-        return BlockchainDataLayer(w3, registry, account)
+        return BlockchainDataLayer(w3, registry, account=None)
 
     raise SystemExit(f"unknown GEG_DATA_LAYER={backend!r} (want memory|database|blockchain)")
 
@@ -245,7 +240,7 @@ def main() -> None:
 
     Env: ``GEG_DATA_LAYER`` (memory|database|blockchain); ``DATA_LAYER_HOST`` /
     ``DATA_LAYER_PORT``. Backend-specific: ``GEG_DATA_LAYER_DSN`` (database);
-    ``GEG_CHAIN_RPC`` / ``GEG_REGISTRY_ADDRESS`` / ``GEG_RELAYER_KEY`` (blockchain).
+    ``GEG_CHAIN_RPC`` / ``GEG_REGISTRY_ADDRESS`` (blockchain, read-only).
     Uses wall-clock (NTP-disciplined in deployment) as the adapter's authoritative
     time for immutability + voting-window enforcement (DESIGN.md §4.2).
     """

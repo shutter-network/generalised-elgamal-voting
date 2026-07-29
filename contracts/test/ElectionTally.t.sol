@@ -16,7 +16,7 @@ contract ElectionTallyTest is Test {
     address private owner = address(0xA11CE);
     address private voter = address(0xCA57);
     address private voteProxy = address(0x970);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private keyper1 = address(0x1001);
     address private keyper2 = address(0x1002);
     address private keyper3 = address(0x1003);
@@ -222,7 +222,7 @@ contract ElectionTallyTest is Test {
         vm.expectEmit(false, false, false, true, address(election));
         emit IElection.ResultPublished(totals, keyperIndices);
 
-        vm.prank(tallyAggregator);
+        vm.prank(resultPublisher);
         election.publishResult(totals, keyperIndices);
 
         assertTrue(election.isResultFinalized());
@@ -251,7 +251,7 @@ contract ElectionTallyTest is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, outsider, election.TALLY_AGGREGATOR_ROLE()
+                IAccessControl.AccessControlUnauthorizedAccount.selector, outsider, election.RESULT_PUBLISHER_ROLE()
             )
         );
         vm.prank(outsider);
@@ -261,24 +261,24 @@ contract ElectionTallyTest is Test {
         shortTotals[0] = 1;
         shortTotals[1] = 2;
 
-        vm.prank(tallyAggregator);
+        vm.prank(resultPublisher);
         vm.expectRevert(ElectionBase.InvalidResultPayload.selector);
         election.publishResult(shortTotals, _keyperIndices());
 
         uint8[] memory noKeypers = new uint8[](0);
-        vm.prank(tallyAggregator);
+        vm.prank(resultPublisher);
         vm.expectRevert(ElectionBase.InvalidResultPayload.selector);
         election.publishResult(_totals(), noKeypers);
     }
 
     function test_finalizeResultRejectsBeforeVotingEndsAndAllowsRepublish() external {
         vm.warp(votingEnd - 1);
-        vm.prank(tallyAggregator);
+        vm.prank(resultPublisher);
         vm.expectRevert(abi.encodeWithSelector(ElectionBase.VotingStillOpen.selector, votingEnd - 1));
         election.publishResult(_totals(), _keyperIndices());
 
         vm.warp(votingEnd);
-        vm.startPrank(tallyAggregator);
+        vm.startPrank(resultPublisher);
         election.publishResult(_totals(), _keyperIndices());
 
         uint256[] memory updatedTotals = _totals();
@@ -397,7 +397,7 @@ contract ElectionTallyTest is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: bytes(""),
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

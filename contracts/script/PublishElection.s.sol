@@ -26,7 +26,7 @@ import {VotingTypes} from "../src/VotingTypes.sol";
 ///   DUPLICATE_POLICY (0=first,1=last)    default 1
 ///   PROTOCOL_VERSION (string)            default "SHUTTER-VOTE-v1"
 ///   PK_WR (bytes)                        required — eligibility public key
-///   TALLY_AGGREGATOR, VOTE_PROXY         required
+///   RESULT_PUBLISHER, VOTE_PROXY         required
 ///   SELF_SUBMIT_FEE                      default 0
 contract PublishElection is Script {
     error InvalidVotingWindow(uint256 votingStart, uint256 votingEnd);
@@ -58,7 +58,7 @@ contract PublishElection is Script {
             duplicatePolicy: _toUint8("DUPLICATE_POLICY", vm.envOr("DUPLICATE_POLICY", uint256(1))),
             protocolVersion: vm.envOr("PROTOCOL_VERSION", string("SHUTTER-VOTE-v1")),
             pkWR: vm.envBytes("PK_WR"),
-            tallyAggregator: vm.envAddress("TALLY_AGGREGATOR"),
+            resultPublisher: vm.envAddress("RESULT_PUBLISHER"),
             voteProxy: vm.envAddress("VOTE_PROXY")
         });
 
@@ -68,7 +68,7 @@ contract PublishElection is Script {
 
         console2.log("Election deployed:", electionAddr);
         console2.log("Election ID (assigned):", Election(payable(electionAddr)).electionId());
-        console2.log("Tally aggregator:", params.tallyAggregator);
+        console2.log("Result Publisher:", params.resultPublisher);
         console2.log("Vote proxy:", params.voteProxy);
     }
 

@@ -142,12 +142,12 @@ class Exclusion:
 
 @dataclass(frozen=True)
 class AggregateArtifact:
-    """Aggregate artifact with its admitted set (DESIGN.md §7.2, §8.1).
+    """Aggregate artifact with its admitted set.
 
     Publishing the admitted set (plus per-exclusion reason codes and the total
-    admitted weight) makes the aggregator's admission decisions public and
-    re-checkable, and enables the keyper hardening profile (DESIGN.md §8.2). This
-    has no equivalent on today's contract — it is a new artifact.
+    admitted weight) makes the committee's admission decisions public and
+    re-checkable — each keyper re-derives it deterministically, and it becomes
+    canonical only at the t+1 byte-identical quorum.
     """
 
     election_id: bytes  # bytes32

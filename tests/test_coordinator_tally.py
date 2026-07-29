@@ -1,9 +1,9 @@
-"""Tally Aggregator watcher daemon: discover Tallying elections, aggregate,
-trigger keypers over HTTP, finalize; Void past tally_deadline.
+"""Coordinator as the single keyper-facing orchestrator: one ``AutoDKG`` drives an
+election end to end — DKG, then (once Tallying) trigger keypers to aggregate → quorum
+→ decrypt → recover + publish the result. The coordinator is also the result publisher
+(``result_publisher_key == coordinator identity``). ``Void`` past ``tally_deadline``.
 
-Full admin-plane pipeline end-to-end: auto-DKG finalizes the key, ballots go in
-through the gateway, then the tally daemon drives aggregate → trigger → recover
-against live keyper HTTP servers.
+Full admin-plane pipeline against live keyper HTTP servers.
 """
 
 from __future__ import annotations
@@ -22,10 +22,8 @@ from geg.crypto.points import g1_to_compressed, g2_from_compressed
 from geg.envelopes.types import BallotEnvelope, Ciphertext
 from geg.ports.eligibility import AttestationRequest
 from geg.services import gateway
-from geg.services.common.token_store import TokenStore
 from geg.services.coordinator import AutoDKG
 from geg.services.keyper import build_keyper_app
-from geg.services.tally_aggregator import TallyAggregatorDaemon
 
 from conftest import ManualClock
 
@@ -36,15 +34,12 @@ class World:
     def __init__(self, tmp_path):
         self.clock = ManualClock(0)
         self.dl = InMemoryDataLayer(clock=self.clock)
-        self.coordinator = Signer.generate()
+        self.coordinator = Signer.generate()  # also the result publisher
         self.admin = Signer.generate()
-        self.aggregator = Signer.generate()
         self.gateway = Signer.generate()
         self.keyper_signers = [Signer.generate() for _ in range(N)]
         elig_sk, _ = schnorr.keygen()
         self.elig = StubEligibilityService(elig_sk)
-        # Shared store: the coordinator writes keyper tokens, the aggregator reads them.
-        self.token_store = TokenStore(tmp_path / "tokens")
         self._servers = []
         self.urls = {}
         for i in range(1, N + 1):
@@ -69,7 +64,7 @@ class World:
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint=self.urls[i + 1])
                           for i in range(N)),
-            eligibility_key=self.elig.eligibility_key, aggregator_key=self.aggregator.identity,
+            eligibility_key=self.elig.eligibility_key, result_publisher_key=self.coordinator.identity,
             gateway_keys=(self.gateway.identity,), admin_key=self.admin.identity, protocol_version="v1",
         )
         return self.dl.register_election(cfg, self.admin.sign_register(cfg))
@@ -95,30 +90,30 @@ def world(tmp_path):
         w.shutdown()
 
 
-def test_tally_daemon_full_pipeline(world):
+def test_coordinator_drives_dkg_then_tally(world):
     w = world
     eid = w.register()
-    AutoDKG(w.dl, w.coordinator, clock=w.clock, token_store=w.token_store).scan_once()  # finalize DKG + write tokens
+    watcher = AutoDKG(w.dl, w.coordinator, clock=w.clock)
+    watcher.scan_once()  # Registered → DKG finalizes (bootstraps + caches tokens)
+    assert w.dl.get_finalized_key(eid) is not None
 
-    w.clock.set(1500)
+    w.clock.set(1500)  # voting open
     gateway.submit_ballot(w.dl, eid, w.voter_ballot(eid, [3, 0, 0], b"\x01" * 32, 2), clock=w.clock)
     gateway.submit_ballot(w.dl, eid, w.voter_ballot(eid, [0, 3, 0], b"\x02" * 32, 5), clock=w.clock)
 
-    w.clock.set(2500)  # Tallying
-    daemon = TallyAggregatorDaemon(w.dl, w.aggregator, clock=w.clock, hardened=True, token_store=w.token_store)
-    outcomes = daemon.scan_once()
-
+    w.clock.set(2500)  # Tallying — same watcher now drives aggregate → decrypt → result
+    outcomes = watcher.scan_once()
     assert outcomes[eid.hex()] == "tallied"
     result = w.dl.get_result(eid)
     assert result is not None and list(result.totals) == [6, 15, 0]
 
 
-def test_tally_daemon_marks_void_past_deadline(world):
+def test_coordinator_marks_void_past_deadline(world):
     w = world
     eid = w.register()
-    AutoDKG(w.dl, w.coordinator, clock=w.clock).scan_once()
-    # No ballots, no shares; jump past tally_deadline.
+    watcher = AutoDKG(w.dl, w.coordinator, clock=w.clock)
+    watcher.scan_once()  # DKG
+    # No ballots, no shares; jump past tally_deadline → terminal Void, no result.
     w.clock.set(3500)
-    daemon = TallyAggregatorDaemon(w.dl, w.aggregator, clock=w.clock)
-    assert daemon.scan_once()[eid.hex()] == "void"
+    assert watcher.scan_once()[eid.hex()] == "void"
     assert w.dl.get_result(eid) is None

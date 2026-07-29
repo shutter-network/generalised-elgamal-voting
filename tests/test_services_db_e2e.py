@@ -65,7 +65,7 @@ def test_full_weighted_election_over_postgres(db_full_env):
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([0, 3, 0], b"\x02" * 32, weight=5), clock=fe.clock)
 
     fe.clock.set(2_500)
-    result = agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock, hardened=True)
+    result = agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
     assert list(result.totals) == [6, 15, 0]
 
     # Auditor re-verifies the whole election reading only from Postgres via HTTP.
@@ -83,7 +83,7 @@ def test_result_persists_across_client_reconnect(db_full_env):
     fe.clock.set(1_500)
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)
     fe.clock.set(2_500)
-    agg.run_tally(fe.dl, fe.config.election_id, fe.aggregator, fe.keypers, clock=fe.clock)
+    agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
 
     fresh = HttpDataLayerClient(fe.dl._base)  # new client, same server/DB
     result = fresh.get_result(fe.config.election_id)

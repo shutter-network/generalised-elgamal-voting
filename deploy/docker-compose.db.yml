@@ -41,7 +41,10 @@ services:
         condition: service_healthy
 
   # Coordinator: watches for Registered elections, discovers keyper endpoints from
-  # the config, bootstraps their tokens, and drives the DKG over HTTP.
+  # the config, bootstraps their tokens, drives the DKG, and — once Tallying —
+  # triggers keypers to aggregate (quorum → canonical) then decrypt, and recovers +
+  # publishes the result (signing it with COORDINATOR_SIGNING_KEY = result_publisher_key).
+  # The single keyper-facing orchestrator.
   coordinator:
     <<: *image
     command: ["python", "-m", "geg.services.coordinator"]
@@ -51,35 +54,16 @@ services:
       COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
       COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
       COORDINATOR_PORT: "8400"
-      AUTO_DKG_POLL_S: "2.0"
-      GEG_TOKEN_STORE: /token-store   # sole bootstrapper: writes keyper tokens here
+      COORDINATOR_POLL_S: "2.0"
+      COORDINATOR_STATE_DIR: /coordinator-state   # private token persistence (restart-safe)
     ports:
       - "8400:8400"
     volumes:
-      - ../token-store:/token-store
+      - ../coordinator-state:/coordinator-state
     # Local split only: lets this service reach the separately-deployed keyper
     # stacks over host-published ports (http://host.docker.internal:810N). Provided
     # automatically on Docker Desktop (Mac/Windows); required on Linux. Unused in
     # production, where the config's keyper URLs are real public addresses.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on: [data-layer]
-
-  # Tally aggregator: on votingEnd, triggers the keypers to aggregate (they submit;
-  # canonical at the t+1 quorum), then triggers them to decrypt, recovers + publishes
-  # the result. Trigger-only for the aggregate — the committee owns aggregation now.
-  tally-aggregator:
-    <<: *image
-    command: ["python", "-m", "geg.services.tally_aggregator"]
-    environment:
-      GEG_DATA_LAYER: database
-      GEG_DATA_LAYER_URL: http://data-layer:8000
-      AGGREGATOR_SIGNING_KEY: ${AGGREGATOR_SIGNING_KEY}
-      TALLY_HARDENED: "1"
-      TALLY_POLL_S: "2.0"
-      GEG_TOKEN_STORE: /token-store   # reads keyper tokens the coordinator wrote
-    volumes:
-      - ../token-store:/token-store:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on: [data-layer]

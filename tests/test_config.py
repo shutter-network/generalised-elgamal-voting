@@ -37,7 +37,7 @@ def make_config(**overrides) -> ElectionConfig:
         threshold=Threshold(t=1, n=3),
         keypers=_keypers(3),
         eligibility_key=b"\xe1" * 48,
-        aggregator_key=b"\xa1" * 20,
+        result_publisher_key=b"\xa1" * 20,
         gateway_keys=(b"\x91" * 20,),
         admin_key=b"\xad" * 20,
         protocol_version="SHUTTER-VOTE-v1",

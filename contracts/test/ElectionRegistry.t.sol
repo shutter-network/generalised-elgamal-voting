@@ -54,7 +54,7 @@ contract ElectionRegistryTest is Test {
 
     address private voteManager = address(0xA11CE);
     address private nonAdmin = address(0xBAD);
-    address private tallyAggregator = address(0xA66);
+    address private resultPublisher = address(0xA66);
     address private voteProxy = address(0x970);
 
     event ElectionCreated(address indexed election, uint256 indexed electionId, address indexed keyperSet);
@@ -81,7 +81,7 @@ contract ElectionRegistryTest is Test {
         assertEq(election.numCandidates(), params.numCandidates);
         assertEq(election.budget(), params.budget);
         assertTrue(election.hasRole(election.DEFAULT_ADMIN_ROLE(), voteManager));
-        assertTrue(election.hasRole(election.TALLY_AGGREGATOR_ROLE(), tallyAggregator));
+        assertTrue(election.hasRole(election.RESULT_PUBLISHER_ROLE(), resultPublisher));
         assertTrue(election.hasRole(election.VOTE_PROXY_ROLE(), voteProxy));
     }
 
@@ -158,7 +158,7 @@ contract ElectionRegistryTest is Test {
             numCandidates: 3,
             budget: 1,
             pkWR: bytes(""),
-            tallyAggregator: tallyAggregator,
+            resultPublisher: resultPublisher,
             voteProxy: voteProxy
         });
     }

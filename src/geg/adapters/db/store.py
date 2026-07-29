@@ -222,29 +222,60 @@ class PostgresStore(ElectionDataLayer):
 
     # -- tally artifacts ---------------------------------------------------- #
 
-    def publish_aggregate(self, election_id, aggregate: AggregateArtifact, aggregator_sig) -> None:
+    def submit_aggregate(self, election_id, aggregate: AggregateArtifact, keyper_sig) -> None:
         with self._conn() as conn:
             config = self._config(conn, election_id)
-            if not authz.verify_request(config.aggregator_key, aggregator_sig, "aggregate", election_id):
-                raise WriteAuthorizationError("publish_aggregate: bad aggregator signature")
+            digest = write_auth.aggregate_digest_of(election_id, aggregate)
+            idx = self._keyper_index_by_recovery(config, digest, keyper_sig)
+            # Lock the election row to serialize concurrent submissions (the finalize
+            # check + override must be atomic — otherwise two overrides could race the
+            # quorum). Mirrors submit_ballot's serialization.
+            if conn.execute(
+                "SELECT 1 FROM elections WHERE election_id = %s FOR UPDATE", (election_id,)
+            ).fetchone() is None:
+                raise KeyError(f"unknown election {election_id.hex()}")
             existing = conn.execute(
-                "SELECT aggregate FROM aggregates WHERE election_id = %s", (election_id,)
+                "SELECT aggregate FROM aggregates WHERE election_id = %s AND keyper_index = %s",
+                (election_id, idx),
             ).fetchone()
-            if existing is not None:
-                if codecs.dec_aggregate(existing[0]) != aggregate:
-                    raise ImmutabilityError("aggregate already published (append-only)")
-                return
+            if existing is not None and codecs.dec_aggregate(existing[0]) == aggregate:
+                return  # idempotent resend of this keyper's current submission
+            # Mutable per keyper *until the quorum finalizes*: a keyper that submitted a
+            # wrong/stale aggregate can override it so honest keypers re-converge (a
+            # deterministic re-derivation, unlike the append-only one-shot DKG result).
+            if self._aggregate_finalized(conn, config):
+                raise ImmutabilityError("aggregate already finalized (quorum reached)")
             conn.execute(
-                "INSERT INTO aggregates (election_id, aggregate) VALUES (%s, %s)",
-                (election_id, Jsonb(codecs.enc_aggregate(aggregate))),
+                """INSERT INTO aggregates (election_id, keyper_index, aggregate) VALUES (%s, %s, %s)
+                   ON CONFLICT (election_id, keyper_index) DO UPDATE SET aggregate = EXCLUDED.aggregate""",
+                (election_id, idx, Jsonb(codecs.enc_aggregate(aggregate))),
             )
+
+    def _aggregate_group_counts(self, conn, election_id) -> dict[bytes, tuple[AggregateArtifact, set[int]]]:
+        rows = conn.execute(
+            "SELECT keyper_index, aggregate FROM aggregates WHERE election_id = %s",
+            (election_id,),
+        ).fetchall()
+        groups: dict[bytes, tuple[AggregateArtifact, set[int]]] = {}
+        for idx, agg_json in rows:
+            agg = codecs.dec_aggregate(agg_json)
+            key = write_auth.aggregate_digest_of(election_id, agg)
+            _, keypers = groups.setdefault(key, (agg, set()))
+            keypers.add(int(idx))
+        return groups
+
+    def _aggregate_finalized(self, conn, config: ElectionConfig) -> bool:
+        needed = config.threshold.t + 1
+        return any(len(kps) >= needed for _, kps in self._aggregate_group_counts(conn, config.election_id).values())
 
     def get_aggregate(self, election_id) -> AggregateArtifact | None:
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT aggregate FROM aggregates WHERE election_id = %s", (election_id,)
-            ).fetchone()
-            return codecs.dec_aggregate(row[0]) if row else None
+            config = self._config(conn, election_id)
+            needed = config.threshold.t + 1
+            for agg, keypers in self._aggregate_group_counts(conn, election_id).values():
+                if len(keypers) >= needed:
+                    return agg
+            return None
 
     def submit_decryption_share(self, election_id, share: DecryptionShareEnvelope, keyper_sig) -> None:
         with self._conn() as conn:

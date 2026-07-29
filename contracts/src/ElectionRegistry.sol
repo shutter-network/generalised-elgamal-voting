@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {Election} from "./Election.sol";
+import {ElectionDeployer} from "./ElectionDeployer.sol";
 import {IElectionRegistry} from "./interfaces/IElectionRegistry.sol";
 import {IKeyperSet} from "./interfaces/IKeyperSet.sol";
 import {VotingTypes} from "./VotingTypes.sol";
@@ -44,8 +44,10 @@ contract ElectionRegistry is AccessControl, IElectionRegistry {
         }
 
         uint256 electionId = ++electionCount;
-        Election election = new Election(admin, electionId, keyperSet, params);
-        electionAddr = address(election);
+        // Deploy via the linked library so Election's ~22 KB creation code lives in the
+        // library, not the registry — keeps the registry under EIP-170. DELEGATECALL, so
+        // the Election is still created in (and owned by) this registry's context.
+        electionAddr = ElectionDeployer.deploy(admin, electionId, keyperSet, params);
         elections[electionId] = electionAddr;
         emit ElectionCreated(electionAddr, electionId, address(keyperSet));
     }

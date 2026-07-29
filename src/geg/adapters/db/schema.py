@@ -8,10 +8,11 @@ things SQL must guarantee for the port contract:
   (``ballots.seq``), reproducible by every auditor;
 * **append-only / idempotency** via primary keys: one DKG submission per
   (election, keyper), one decryption-share row per (election, keyper), one
-  aggregate and one result per election.
+  aggregate submission per (election, keyper), and one result per election.
 
-Config immutability after ``voting_start`` and the finalization quorum rule are
-enforced in :mod:`geg.adapters.db.store` (they are logic, not constraints).
+Config immutability after ``voting_start`` and the two quorum rules (finalized key
+and canonical aggregate — each ≥ t+1 byte-identical submissions) are enforced in
+:mod:`geg.adapters.db.store` (they are logic, not constraints).
 """
 
 from __future__ import annotations
@@ -50,8 +51,10 @@ CREATE TABLE IF NOT EXISTS decryption_shares (
 );
 
 CREATE TABLE IF NOT EXISTS aggregates (
-    election_id   BYTEA PRIMARY KEY REFERENCES elections(election_id),
-    aggregate     JSONB NOT NULL    -- AggregateArtifact
+    election_id   BYTEA NOT NULL REFERENCES elections(election_id),
+    keyper_index  INT NOT NULL,
+    aggregate     JSONB NOT NULL,   -- AggregateArtifact (one keyper's submission)
+    PRIMARY KEY (election_id, keyper_index)
 );
 
 CREATE TABLE IF NOT EXISTS results (

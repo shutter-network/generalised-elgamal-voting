@@ -19,12 +19,14 @@ from geg.ports.data_layer import (
     ElectionRecord,
     FinalizedKey,
     ImmutabilityError,
+    VotingWindowError,
     WriteAuthorizationError,
 )
 
 _STATUS_EXC = {
     403: WriteAuthorizationError,
     409: ImmutabilityError,
+    422: VotingWindowError,
 }
 
 
@@ -132,10 +134,10 @@ class HttpDataLayerClient(ElectionDataLayer):
 
     # -- tally artifacts ---------------------------------------------------- #
 
-    def publish_aggregate(self, election_id, aggregate, aggregator_sig) -> None:
+    def submit_aggregate(self, election_id, aggregate, keyper_sig) -> None:
         self._post(f"/elections/{self._eid(election_id)}/aggregate", {
             "aggregate": codecs.enc_aggregate(aggregate),
-            "aggregatorSig": codecs.enc_bytes(aggregator_sig),
+            "keyperSig": codecs.enc_bytes(keyper_sig),
         })
 
     def get_aggregate(self, election_id):

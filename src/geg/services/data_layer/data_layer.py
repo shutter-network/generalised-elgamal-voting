@@ -11,7 +11,8 @@ All reads are public and unauthenticated (§3); writes carry the actor's signatu
 which the backend verifies. Contract violations surface as typed HTTP statuses
 the client maps back to the port's exception types:
 
-    404 KeyError · 403 WriteAuthorizationError · 409 ImmutabilityError · 400 ValueError
+    404 KeyError · 403 WriteAuthorizationError · 409 ImmutabilityError ·
+    422 VotingWindowError · 400 ValueError
 
 Backend semantics (``GEG_DATA_LAYER``):
 
@@ -38,6 +39,7 @@ from geg.ports.data_layer import (
     ElectionFilter,
     FinalizedKey,
     ImmutabilityError,
+    VotingWindowError,
     WriteAuthorizationError,
 )
 
@@ -66,6 +68,10 @@ def build_app(dl: ElectionDataLayer) -> Flask:
     @app.errorhandler(ImmutabilityError)
     def _conflict(e):
         return jsonify(error="ImmutabilityError", message=str(e)), 409
+
+    @app.errorhandler(VotingWindowError)
+    def _wrong_window(e):
+        return jsonify(error="VotingWindowError", message=str(e)), 422
 
     @app.errorhandler(ValueError)
     def _bad_request(e):
@@ -147,11 +153,11 @@ def build_app(dl: ElectionDataLayer) -> Flask:
     # -- tally artifacts ---------------------------------------------------- #
 
     @app.post("/elections/<eid>/aggregate")
-    def publish_aggregate(eid):
+    def submit_aggregate(eid):
         body = request.get_json(force=True)
-        dl.publish_aggregate(
+        dl.submit_aggregate(
             _eid(), codecs.dec_aggregate(body["aggregate"]),
-            codecs.dec_bytes(body["aggregatorSig"], name="aggregatorSig"),
+            codecs.dec_bytes(body["keyperSig"], name="keyperSig"),
         )
         return "", 204
 

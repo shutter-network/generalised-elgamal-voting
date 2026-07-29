@@ -235,6 +235,16 @@ def build_coordinator_app(dl: ElectionDataLayer, *, api_token: str | None):
         )
         return "", 204
 
+    @app.post("/aggregate")
+    def aggregate():
+        body = request.get_json(force=True)
+        dl.submit_aggregate(
+            codecs.dec_bytes(body["electionId"], name="electionId"),
+            codecs.dec_aggregate(body["aggregate"]),
+            codecs.dec_bytes(body["keyperSig"], name="keyperSig"),
+        )
+        return "", 204
+
     return app
 
 
@@ -278,6 +288,15 @@ class CoordinatorClient:
         self._post("/decryption-share", {
             "electionId": codecs.enc_bytes(election_id),
             "share": codecs.enc_decryption_share(share),
+            "keyperSig": codecs.enc_bytes(keyper_sig),
+        })
+
+    def submit_aggregate(self, election_id, aggregate, keyper_sig) -> None:
+        from geg.envelopes import codecs
+
+        self._post("/aggregate", {
+            "electionId": codecs.enc_bytes(election_id),
+            "aggregate": codecs.enc_aggregate(aggregate),
             "keyperSig": codecs.enc_bytes(keyper_sig),
         })
 

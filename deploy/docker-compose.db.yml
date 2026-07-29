@@ -65,8 +65,9 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on: [data-layer]
 
-  # Tally aggregator: on votingEnd, publishes the aggregate, triggers keypers to
-  # decrypt, recovers + publishes the result. Hardening profile on.
+  # Tally aggregator: on votingEnd, triggers the keypers to aggregate (they submit;
+  # canonical at the t+1 quorum), then triggers them to decrypt, recovers + publishes
+  # the result. Trigger-only for the aggregate — the committee owns aggregation now.
   tally-aggregator:
     <<: *image
     command: ["python", "-m", "geg.services.tally_aggregator"]

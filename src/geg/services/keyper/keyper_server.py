@@ -268,6 +268,25 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         submitter.submit_dkg_result(eid, pk_b, committee_b, sig)  # direct or via coordinator relay
         return jsonify(ok=True)
 
+    # -- aggregation (keyper-quorum; deterministic re-derivation from ballots) #
+
+    @app.post("/aggregate")
+    def aggregate():
+        body = request.get_json(force=True)
+        eid = _eid(body)
+        config = _config(eid)
+        # No persisted DKG secret needed — aggregation only reads the ordered
+        # ballot list and re-runs admission (self-guarded on votingEnd inside).
+        ks = KeyperService(_my_index(config), signer, data_layer, clock=clock)
+        try:
+            produced = ks.produce_aggregate(eid)
+        except Exception as err:  # noqa: BLE001 — refusal / precondition failure
+            return jsonify(ok=False, reason=str(err)), 409
+        if produced is not None:  # None = already submitted (idempotent)
+            artifact, sig = produced
+            submitter.submit_aggregate(eid, artifact, sig)  # direct or via coordinator relay
+        return jsonify(ok=True)
+
     # -- partial decryption (§8.2 preconditions enforced by KeyperService) -- #
 
     @app.post("/decrypt")

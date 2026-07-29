@@ -62,23 +62,97 @@ contract ElectionTallyTest is Test {
         assertEq(storedShare.proofs[2].z, proofs[2].z);
     }
 
-    function test_publishAggregateStoresEncryptedTallyAndPhaseProgression() external {
+    function test_submitAggregateBecomesCanonicalAtQuorum() external {
         assertEq(election.getPhase(), 3);
 
         vm.warp(votingEnd);
         assertEq(election.getPhase(), 4);
 
         VotingTypes.EncryptedTally memory aggregate = _aggregate(70);
+
+        // First keyper submits — not canonical yet (quorum is t+1 = 2).
+        vm.prank(keyper1);
+        election.submitAggregate(aggregate);
+        vm.expectRevert(ElectionBase.AggregateNotPublished.selector);
+        election.getAggregate();
+
+        // Second keyper submits the byte-identical aggregate → canonical.
         vm.expectEmit(true, false, false, false, address(election));
         emit IElection.AggregatePublished(1);
-
-        vm.prank(tallyAggregator);
-        election.publishAggregate(aggregate);
+        vm.prank(keyper2);
+        election.submitAggregate(aggregate);
 
         VotingTypes.EncryptedTally memory storedAggregate = election.getAggregate();
         assertEq(storedAggregate.aggregates.length, 3);
         assertEq(storedAggregate.aggregates[0].c1, aggregate.aggregates[0].c1);
         assertEq(storedAggregate.aggregates[2].c2, aggregate.aggregates[2].c2);
+    }
+
+    function test_submitAggregateDivergentSubmissionsDoNotFinalize() external {
+        vm.warp(votingEnd);
+
+        vm.prank(keyper1);
+        election.submitAggregate(_aggregate(70));
+        // A different aggregate from another keyper is a distinct vote — no quorum.
+        vm.prank(keyper2);
+        election.submitAggregate(_aggregate(71));
+
+        vm.expectRevert(ElectionBase.AggregateNotPublished.selector);
+        election.getAggregate();
+
+        // The third keyper agreeing with keyper1 reaches quorum on that artifact.
+        vm.prank(keyper3);
+        election.submitAggregate(_aggregate(70));
+        VotingTypes.EncryptedTally memory storedAggregate = election.getAggregate();
+        assertEq(storedAggregate.aggregates[0].c1, _aggregate(70).aggregates[0].c1);
+    }
+
+    function test_submitAggregateRejectsUnauthorizedTimingAndBadPayload() external {
+        // Before votingEnd: rejected.
+        vm.warp(votingEnd - 1);
+        vm.prank(keyper1);
+        vm.expectRevert(abi.encodeWithSelector(ElectionBase.VotingStillOpen.selector, votingEnd - 1));
+        election.submitAggregate(_aggregate(70));
+
+        vm.warp(votingEnd);
+
+        // Non-keyper: rejected.
+        vm.prank(outsider);
+        vm.expectRevert(abi.encodeWithSelector(ElectionBase.UnauthorizedKeyper.selector, outsider));
+        election.submitAggregate(_aggregate(70));
+
+        // Wrong candidate count: rejected.
+        VotingTypes.EncryptedTally memory bad;
+        bad.aggregates = new VotingTypes.Ciphertext[](2);
+        bad.aggregates[0] = VotingTypes.Ciphertext({c1: _g2Point(1), c2: _g2Point(2)});
+        bad.aggregates[1] = VotingTypes.Ciphertext({c1: _g2Point(3), c2: _g2Point(4)});
+        vm.prank(keyper2);
+        vm.expectRevert(ElectionBase.InvalidAggregatePayload.selector);
+        election.submitAggregate(bad);
+    }
+
+    function test_submitAggregateOverrideUntilFinalizedThenFrozen() external {
+        vm.warp(votingEnd);
+
+        // keyper1 + keyper2 disagree → no quorum (t+1 = 2).
+        vm.prank(keyper1);
+        election.submitAggregate(_aggregate(70));
+        vm.prank(keyper2);
+        election.submitAggregate(_aggregate(71));
+        vm.expectRevert(ElectionBase.AggregateNotPublished.selector);
+        election.getAggregate();
+
+        // keyper2 realizes it was wrong and OVERRIDES to keyper1's aggregate → quorum.
+        vm.expectEmit(true, false, false, false, address(election));
+        emit IElection.AggregatePublished(1);
+        vm.prank(keyper2);
+        election.submitAggregate(_aggregate(70));
+        assertEq(election.getAggregate().aggregates[0].c1, _aggregate(70).aggregates[0].c1);
+
+        // Once finalized, further submissions (even overrides) are frozen out.
+        vm.prank(keyper3);
+        vm.expectRevert(ElectionBase.AlreadyFinalized.selector);
+        election.submitAggregate(_aggregate(70));
     }
 
     function test_getDecryptionSharesReturnsRanges() external {

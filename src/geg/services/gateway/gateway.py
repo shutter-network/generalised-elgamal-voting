@@ -18,7 +18,7 @@ from __future__ import annotations
 from geg.core.admission import StoredBallot, validate_ballot
 from geg.crypto.points import g2_from_compressed
 from geg.envelopes.types import BallotEnvelope
-from geg.ports.data_layer import ElectionDataLayer
+from geg.ports.data_layer import ElectionDataLayer, VotingWindowError
 from geg.core.state import ElectionState, StateFacts, derive_state
 
 
@@ -92,6 +92,11 @@ def build_gateway_app(data_layer, *, clock, filter_on: bool = True):
             seq = submit_ballot(data_layer, election_id, ballot, clock=clock, filter_on=filter_on)
         except GatewayRejection as rej:
             return jsonify(error="REJECTED", reason=str(rej)), 400
+        except VotingWindowError as e:
+            # The lifecycle-enforcing backend (chain) rejected the ballot as outside the
+            # voting window — e.g. the gateway's own clock and block.timestamp differ by a
+            # second at the boundary. A clear client error, not a 500.
+            return jsonify(error="OUTSIDE_VOTING_WINDOW", message=str(e)), 400
         except KeyError:
             return jsonify(error="UNKNOWN_ELECTION"), 404
         return jsonify(sequenceNumber=seq), 200

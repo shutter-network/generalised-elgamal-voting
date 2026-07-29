@@ -16,16 +16,19 @@ Contract of the port (DESIGN.md §5.1):
   database: an append sequence.)
 * **Immutability.** Election config is immutable after ``voting_start``. Artifacts
   are append-only; :meth:`submit_decryption_share` is idempotent on
-  ``(election_id, keyper_index, candidate)``.
-* **Finalization quorum rule** (the one place the data layer is not dumb): the
-  finalized key exists iff at least ``t + 1`` distinct registered keypers
-  submitted byte-identical ``(pk_election, committee_pks)``. Deterministic and
-  publicly re-checkable from the stored submissions.
+  ``(election_id, keyper_index, candidate)``. Exception: a keyper's
+  :meth:`submit_aggregate` is **overridable until the aggregate quorum finalizes**,
+  then frozen (see that method).
+* **Quorum rules** (the places the data layer is not dumb): (1) the finalized *key*
+  exists iff ≥ ``t + 1`` distinct registered keypers submitted byte-identical
+  ``(pk_election, committee_pks)``; (2) the canonical *aggregate* exists iff ≥
+  ``t + 1`` keypers submitted a byte-identical aggregate artifact. Both deterministic
+  and publicly re-checkable from the stored submissions.
 * **Authorization matrix** (defense-in-depth against spam, not a trust anchor):
   writes are checked against identities in the election config; all reads are
-  public. config/cancel → ``admin_key``; DKG results & shares → registered
-  keypers; ballots → ``gateway_keys`` (or open where direct submission is
-  enabled); aggregate & result → ``aggregator_key``.
+  public. config/cancel → ``admin_key``; DKG results, decryption shares **and the
+  aggregate** → registered keypers; ballots → ``gateway_keys`` (or open where direct
+  submission is enabled); result → ``aggregator_key``.
 * **Capability tiers.** :meth:`verifiability_tier` returns 0 in v1 (availability
   only). Future tiers (inclusion receipts, append-only proofs) extend the port
   without breaking it.
@@ -82,6 +85,14 @@ class WriteAuthorizationError(PermissionError):
 
 class ImmutabilityError(RuntimeError):
     """Raised on an attempt to mutate config after ``voting_start`` (DESIGN.md §4.1)."""
+
+
+class VotingWindowError(RuntimeError):
+    """Raised when a write is attempted at the wrong point in the voting lifecycle:
+    a ballot before ``voting_start`` / after ``voting_end``, or a tally write (aggregate,
+    decryption share, result) before ``voting_end``. Only lifecycle-enforcing backends
+    (the chain) raise it — availability-only backends accept the write and verification
+    is authoritative at tally time (DESIGN.md §6.2)."""
 
 
 class ElectionDataLayer(ABC):
@@ -161,14 +172,33 @@ class ElectionDataLayer(ABC):
     # --- tally artifacts ---------------------------------------------------- #
 
     @abstractmethod
-    def publish_aggregate(
-        self, election_id: bytes, aggregate: AggregateArtifact, aggregator_sig: bytes
+    def submit_aggregate(
+        self, election_id: bytes, aggregate: AggregateArtifact, keyper_sig: bytes
     ) -> None:
-        """Publish the aggregate (with admitted set). Authorized: ``aggregator_key``."""
+        """Submit one keyper's aggregate (**mutable per keyper until finalized**).
+
+        Authorized writer: a registered keyper, which content-signs the **full**
+        artifact (aggregates + admitted set + exclusions + total weight). The
+        aggregate is *not* asserted canonical by the submitter — it becomes canonical
+        by the quorum rule (see :meth:`get_aggregate`). Since admission + aggregation
+        are deterministic, honest keypers submit byte-identical artifacts.
+
+        Unlike :meth:`submit_dkg_result` (append-only), a keyper **may override** its
+        own earlier submission while the aggregate is not yet canonical — aggregation
+        is a deterministic re-derivation, so a keyper that submitted a wrong/stale
+        artifact can correct it and let honest keypers re-converge on the quorum. Once
+        the ``t + 1`` quorum is reached the aggregate is **frozen**: any further
+        submission that would change it is rejected (:class:`ImmutabilityError`). An
+        identical resend of a keyper's current submission is always a no-op.
+        """
 
     @abstractmethod
     def get_aggregate(self, election_id: bytes) -> AggregateArtifact | None:
-        """Return the published aggregate, or ``None``. Public read."""
+        """Return the canonical aggregate iff the quorum rule is met, else ``None``.
+
+        Canonical iff ≥ ``t + 1`` distinct registered keypers submitted a
+        byte-identical aggregate. Public read; deterministically re-checkable.
+        """
 
     @abstractmethod
     def submit_decryption_share(

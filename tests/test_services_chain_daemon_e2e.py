@@ -199,10 +199,12 @@ def test_full_election_over_chain_daemons(world):
     submit_ballot(w.gateway_dl, ELECTION_ID, w.voter_ballot([0, 3, 0], b"\x02" * 32, weight=5), clock=w.clock)
     assert w.admin_dl.count_ballots(ELECTION_ID) == 2
 
-    # Tally: aggregator publishes the aggregate (its own tx), coordinator triggers
-    # keypers over HTTP (their shares relayed to chain), aggregator finalizes.
+    # Tally: coordinator triggers keypers to aggregate over HTTP (their signed
+    # aggregates relayed to chain as meta-tx); the aggregate is canonical only at the
+    # t+1 byte-identical quorum. Then trigger decrypt, and the aggregator finalizes.
     w.warp(2500)
-    agg.publish_aggregate(w.aggregator_dl, ELECTION_ID, w.aggregator, clock=w.clock)
+    coord.trigger_aggregate_http(ELECTION_ID, w.keyper_urls, api_tokens)
+    assert w.admin_dl.get_aggregate(ELECTION_ID) is not None  # t+1 keypers agreed → canonical
     coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens, hardened=True)
     result = agg.finalize(w.aggregator_dl, ELECTION_ID, w.aggregator, clock=w.clock)
 

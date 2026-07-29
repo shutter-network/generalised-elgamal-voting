@@ -164,7 +164,7 @@ def test_keyper_decryption_is_idempotent(full_env):
     fe.clock.set(1_500)
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)
     fe.clock.set(2_500)
-    agg.publish_aggregate(fe.dl, fe.config.election_id, fe.aggregator, clock=fe.clock)
+    agg.trigger_aggregate(fe.keypers, fe.config.election_id)
     fe.keypers[0].decrypt_and_submit(fe.config.election_id)
     fe.keypers[0].decrypt_and_submit(fe.config.election_id)  # no-op
     mine = [s for s in fe.dl.list_decryption_shares(fe.config.election_id) if s.keyper_index == 1]
@@ -197,11 +197,13 @@ def test_auditor_detects_tampered_aggregate(full_env):
     fe.clock.set(1_500)
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock)
     fe.clock.set(2_500)
-    agg.publish_aggregate(fe.dl, fe.config.election_id, fe.aggregator, clock=fe.clock)
+    agg.trigger_aggregate(fe.keypers, fe.config.election_id)
 
-    # Tamper: claim no ballots were admitted.
+    # Tamper: claim no ballots were admitted (simulating a malicious data layer that
+    # rewrites the quorum-canonical aggregate under every keyper's submission).
     stored = fe.dl._elections[fe.config.election_id]
-    stored.aggregate = replace(stored.aggregate, admitted=())
+    tampered = replace(fe.dl.get_aggregate(fe.config.election_id), admitted=())
+    stored.aggregate_by_keyper = {i: tampered for i in stored.aggregate_by_keyper}
     report = auditor.audit(fe.dl, fe.config.election_id)
     assert not report.aggregate_ok
     assert any("admitted set differs" in d for d in report.discrepancies)
@@ -211,8 +213,17 @@ def test_auditor_detects_tampered_aggregate(full_env):
 #  Hardening profile (§8.2): defeat the "exclude everyone but Alice" attack
 # --------------------------------------------------------------------------- #
 
+def _force_canonical_aggregate(fe, aggregate):
+    """Inject a (malicious) aggregate as canonical, simulating a colluding keyper
+    majority / malicious data layer: t+1 keypers appear to have submitted it, so the
+    quorum rule marks it canonical. The hardening profile (§8.2) is what catches it."""
+    stored = fe.dl._elections[fe.config.election_id]
+    needed = fe.config.threshold.t + 1
+    stored.aggregate_by_keyper = {i: aggregate for i in range(1, needed + 1)}
+
+
 def _malicious_isolate_alice(fe):
-    """Publish an aggregate that admits only Alice and falsely excludes Bob."""
+    """Make canonical an aggregate that admits only Alice and falsely excludes Bob."""
     from geg.core.admission import AdmittedBallot, StoredBallot
     from geg.core.aggregation import aggregate_points
     from geg.crypto.points import g2_to_compressed
@@ -229,7 +240,7 @@ def _malicious_isolate_alice(fe):
         exclusions=(Exclusion(sequence_number=1, reason=ExclusionReason.INVALID_PROOF),),  # false reason
         total_admitted_weight=alice.weight,
     )
-    fe.dl.publish_aggregate(eid, malicious, fe.aggregator.sign("aggregate", eid))
+    _force_canonical_aggregate(fe, malicious)
 
 
 def test_naive_keyper_decrypts_isolation_attack_but_hardened_refuses(full_env):
@@ -276,6 +287,6 @@ def test_hardened_keyper_refuses_aggregate_sum_mismatch(full_env):
         exclusions=(),
         total_admitted_weight=2,
     )
-    fe.dl.publish_aggregate(eid, malicious, fe.aggregator.sign("aggregate", eid))
+    _force_canonical_aggregate(fe, malicious)
     with pytest.raises(KeyperRefusal, match="does not match published aggregate"):
         fe.keypers[0].decrypt_and_submit(eid, hardened=True)

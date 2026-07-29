@@ -46,7 +46,15 @@ def keyper_urls_from(config, overrides: dict[str, str] | None = None) -> dict[in
 
 
 def run_dkg_once(election_id: bytes, keypers: list[KeyperService], n: int, t: int) -> bool:
-    """One full ceremony attempt over the given keypers (in-process transport).
+    """One full ceremony attempt over the given keypers, **in-process (single-process
+    test/simulation transport only)**.
+
+    This is the DKG twin of ``tally_aggregator.run_tally``: it drives live
+    ``KeyperService`` objects in the same process (rounds + submit) instead of the
+    deployed HTTP path (:func:`run_dkg_http`, keyper ``/dkg/*`` endpoints, confidential
+    keyper→keyper share exchange). Used only by the protocol-level e2e tests via
+    :func:`ensure_dkg`; no production caller. The multi-operator deployment always uses
+    :func:`run_dkg_http`.
 
     Returns whether the data layer's quorum rule now reports a finalized key.
     """
@@ -87,6 +95,9 @@ def ensure_dkg(
     backoff_base: float = 10.0,
 ) -> bool:
     """Drive the ceremony with retry/backoff until finalized or the deadline.
+
+    **In-process test/simulation harness only** (wraps :func:`run_dkg_once`); the
+    deployed coordinator uses the HTTP watcher (:class:`AutoDKG` → :func:`run_dkg_http`).
 
     ``deadline`` is the hard cutoff (e.g. ``voting_start - margin``). Returns
     ``True`` if the key finalized in time; ``False`` if attempts/ deadline were
@@ -169,6 +180,21 @@ def trigger_decrypt_http(election_id: bytes, keyper_urls: dict[int, str], api_to
         try:
             requests.post(url.rstrip("/") + "/decrypt",
                           json={"electionId": election_id.hex(), "hardened": hardened},
+                          headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def trigger_aggregate_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
+                           *, timeout: float = 30.0) -> None:
+    """Trigger each keyper's /aggregate (best-effort; keypers self-guard on votingEnd).
+
+    Each keyper re-derives the same deterministic aggregate from the ordered ballots
+    and submits it signed; the data layer makes it canonical at the t+1 quorum."""
+    for i, url in keyper_urls.items():
+        try:
+            requests.post(url.rstrip("/") + "/aggregate",
+                          json={"electionId": election_id.hex()},
                           headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
         except Exception:  # noqa: BLE001
             pass

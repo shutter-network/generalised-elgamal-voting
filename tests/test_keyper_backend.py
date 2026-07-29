@@ -116,9 +116,10 @@ def test_distributed_dkg_then_decrypt_then_tally(world):
     submit_ballot(w.dl, ELECTION_ID, w.voter_ballot([3, 0, 0], b"\x01" * 32, weight=2), clock=w.clock)
     submit_ballot(w.dl, ELECTION_ID, w.voter_ballot([0, 3, 0], b"\x02" * 32, weight=5), clock=w.clock)
 
-    # Tally: aggregate, trigger keypers over HTTP, finalize.
+    # Tally: keypers aggregate over HTTP (quorum → canonical), trigger decrypt, finalize.
     w.clock.set(2500)
-    agg.publish_aggregate(w.dl, ELECTION_ID, w.aggregator, clock=w.clock)
+    coord.trigger_aggregate_http(ELECTION_ID, w.keyper_urls, api_tokens)
+    assert w.dl.get_aggregate(ELECTION_ID) is not None  # t+1 keypers agreed → canonical
     coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens, hardened=True)
     result = agg.finalize(w.dl, ELECTION_ID, w.aggregator, clock=w.clock)
 

@@ -46,6 +46,27 @@ def test_gateway_rejects_outside_window(full_env):
     assert r.get_json()["error"] == "REJECTED"
 
 
+def test_gateway_maps_backend_voting_window_error_to_400(full_env):
+    """A lifecycle-enforcing backend (chain) can reject a ballot the gateway's own
+    clock thinks is in-window (boundary race). The gateway must surface that backend
+    ``VotingWindowError`` as a clean 400, not a 500."""
+    from geg.ports.data_layer import VotingWindowError
+
+    fe = full_env
+    _ready(fe)
+    fe.clock.set(1500)  # gateway's own window check passes (state is Voting)
+
+    def _raise(*_a, **_k):
+        raise VotingWindowError("VotingNotStarted(...) at the boundary")
+
+    fe.dl.submit_ballot = _raise  # simulate the chain revert on write
+    client = build_gateway_app(fe.dl, clock=fe.clock).test_client()
+    ballot = codecs.enc_ballot(fe.voter_ballot([3, 0, 0], b"\x01" * 32))
+    r = client.post(f"/elections/{EID_HEX}/ballots", json={"ballot": ballot})
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "OUTSIDE_VOTING_WINDOW"
+
+
 def test_gateway_rejects_malformed(full_env):
     fe = full_env
     _ready(fe)

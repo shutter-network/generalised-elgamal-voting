@@ -84,7 +84,64 @@ contract ElectionMetaTxTest is Test {
         assertEq(all[0].keyperIndex, 0); // keyper 1 is member index 0
     }
 
+    function test_submitAggregateSigned_becomesCanonicalAtQuorum() external {
+        // Finalize DKG (signed) first.
+        bytes memory pk = _g2Point(1);
+        bytes[] memory committee = _committee(10);
+        vm.startPrank(relayer);
+        election.voteDKGResultSigned(pk, committee, _signDkg(K1_PK, pk, committee));
+        election.voteDKGResultSigned(pk, committee, _signDkg(K2_PK, pk, committee));
+        vm.stopPrank();
+
+        vm.warp(votingEnd);
+        VotingTypes.EncryptedTally memory agg;
+        agg.aggregates = _ciphertexts(70);
+
+        // Relayer submits keyper1's signed aggregate — attributed to keyper1, not relayer.
+        vm.expectEmit(true, false, false, false, address(election));
+        emit IElection.AggregateVoteRegistered(vm.addr(K1_PK), bytes32(0));
+        vm.prank(relayer);
+        election.submitAggregateSigned(agg, _signAggregate(K1_PK, agg));
+
+        vm.expectRevert(ElectionBase.AggregateNotPublished.selector);
+        election.getAggregate();
+
+        // keyper2's identical signed aggregate reaches the t+1 quorum.
+        vm.prank(relayer);
+        election.submitAggregateSigned(agg, _signAggregate(K2_PK, agg));
+        assertEq(election.getAggregate().aggregates.length, 3);
+    }
+
+    function test_submitAggregateSigned_rejectsNonKeyperSignature() external {
+        bytes memory pk = _g2Point(1);
+        bytes[] memory committee = _committee(10);
+        vm.startPrank(relayer);
+        election.voteDKGResultSigned(pk, committee, _signDkg(K1_PK, pk, committee));
+        election.voteDKGResultSigned(pk, committee, _signDkg(K2_PK, pk, committee));
+        vm.stopPrank();
+
+        vm.warp(votingEnd);
+        VotingTypes.EncryptedTally memory agg;
+        agg.aggregates = _ciphertexts(70);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(ElectionBase.UnauthorizedKeyper.selector, vm.addr(OUTSIDER_PK)));
+        election.submitAggregateSigned(agg, _signAggregate(OUTSIDER_PK, agg));
+    }
+
     // -- signing helpers (mirror the contract digests) --------------------- #
+
+    function _signAggregate(uint256 pk_, VotingTypes.EncryptedTally memory agg) private pure returns (bytes memory) {
+        bytes32 digest = keccak256(abi.encodePacked("GEG-AGGREGATE-v1", uint256(1), abi.encode(agg)));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk_, MessageHashUtils.toEthSignedMessageHash(digest));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _ciphertexts(uint8 seed) private pure returns (VotingTypes.Ciphertext[] memory cts) {
+        cts = new VotingTypes.Ciphertext[](3);
+        cts[0] = VotingTypes.Ciphertext({c1: _g2Point(seed), c2: _g2Point(seed + 1)});
+        cts[1] = VotingTypes.Ciphertext({c1: _g2Point(seed + 2), c2: _g2Point(seed + 3)});
+        cts[2] = VotingTypes.Ciphertext({c1: _g2Point(seed + 4), c2: _g2Point(seed + 5)});
+    }
 
     function _signDkg(uint256 pk_, bytes memory pkElection, bytes[] memory committee) private pure returns (bytes memory) {
         bytes32 digest = keccak256(abi.encodePacked("GEG-DKG-RESULT-v1", uint256(1), pkElection, abi.encode(committee)));

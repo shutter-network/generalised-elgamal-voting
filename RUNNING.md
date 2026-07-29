@@ -136,8 +136,9 @@ Voting window and tally deadline are set relative to generation time
 (`voting_start` ≈ now + 5 min by default). For a quick demo use a short real-time
 window: `VOTING_START_OFFSET=90 VOTING_DURATION=90 python scripts/gen_deploy_env.py`.
 Voters submit ballots to the gateway (`http://127.0.0.1:8200`) during the window;
-after `voting_end` the tally aggregator publishes the aggregate, triggers the
-keypers, recovers the result, and publishes it. Read anything back through the
+after `voting_end` the tally aggregator triggers the keypers to aggregate (they
+submit; the aggregate is canonical at the t+1 quorum), triggers them to decrypt,
+recovers the result, and publishes it. Read anything back through the
 data-layer service on `:8000`. Timing here is plain wall-clock (the data-layer
 service is the NTP-disciplined authority) — no Anvil-style block-time concern.
 
@@ -235,8 +236,8 @@ GEG_DATA_LAYER_URL=http://127.0.0.1:8000 GATEWAY_URL=http://127.0.0.1:8200 \
   ELIGIBILITY_PRIVATE_KEY=$(grep '^ELIGIBILITY_PRIVATE_KEY=' deploy/.env | cut -d= -f2) \
   python scripts/vote_sample.py               # submits [3,0,0]w2 + [0,3,0]w5
 
-# 9. after voting_end the tally-aggregator daemon publishes the aggregate, triggers
-#    the keypers to decrypt (shares relayed), and finalizes — read the result:
+# 9. after voting_end the tally-aggregator daemon triggers the keypers to aggregate
+#    (t+1 quorum → canonical) then to decrypt (shares relayed), and finalizes — read it:
 curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000000000000000000000000001/result
 #   → {"result":{"totals":[6,15,0],"keyperIndices":[1,2],"bsgsBound":21,...}}
 ```
@@ -262,8 +263,9 @@ difference is purely where authz lives — tx sender vs. a verified request sign
 
 This stack has been brought up by hand through a **complete election** — anvil →
 fund → deploy-registry → register → auto-DKG finalizes on chain → two weighted
-ballots via the gateway → tally-aggregator publishes the aggregate, triggers the
-keypers (3 shares relayed to chain), and finalizes `totals=[6,15,0]` read back from
+ballots via the gateway → tally-aggregator triggers the keypers to aggregate (quorum
+→ canonical on chain) then decrypt (3 shares relayed to chain), and finalizes
+`totals=[6,15,0]` read back from
 chain — in addition to the automated `test_services_chain_daemon_e2e.py` that runs
 the same topology.
 

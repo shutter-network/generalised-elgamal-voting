@@ -83,7 +83,7 @@ contract ElectionExtensionsTest is Test {
 
     // -- admitted-set aggregate --------------------------------------------- #
 
-    function test_publishAggregateStoresAdmittedSet() external {
+    function test_submitAggregateStoresAdmittedSetAtQuorum() external {
         _finalizeDkg();
         vm.warp(votingEnd);
 
@@ -96,8 +96,12 @@ contract ElectionExtensionsTest is Test {
         agg.exclusions[0] = VotingTypes.Exclusion({sequenceNumber: 1, reason: 3}); // DUPLICATE_PSEUDONYM
         agg.totalAdmittedWeight = 5;
 
-        vm.prank(tallyAggregator);
-        election.publishAggregate(agg);
+        // Committee-owned aggregation: canonical only at the t+1 byte-identical quorum,
+        // and the full admitted set / exclusions / weight survive the quorum store.
+        vm.prank(keyper1);
+        election.submitAggregate(agg);
+        vm.prank(keyper2);
+        election.submitAggregate(agg);
 
         VotingTypes.EncryptedTally memory stored = election.getAggregate();
         assertEq(stored.aggregates.length, 3);

@@ -792,65 +792,6 @@
   },
   {
     "type": "function",
-    "name": "publishAggregate",
-    "inputs": [
-      {
-        "name": "aggregate",
-        "type": "tuple",
-        "internalType": "struct VotingTypes.EncryptedTally",
-        "components": [
-          {
-            "name": "aggregates",
-            "type": "tuple[]",
-            "internalType": "struct VotingTypes.Ciphertext[]",
-            "components": [
-              {
-                "name": "c1",
-                "type": "bytes",
-                "internalType": "bytes"
-              },
-              {
-                "name": "c2",
-                "type": "bytes",
-                "internalType": "bytes"
-              }
-            ]
-          },
-          {
-            "name": "admitted",
-            "type": "uint256[]",
-            "internalType": "uint256[]"
-          },
-          {
-            "name": "exclusions",
-            "type": "tuple[]",
-            "internalType": "struct VotingTypes.Exclusion[]",
-            "components": [
-              {
-                "name": "sequenceNumber",
-                "type": "uint256",
-                "internalType": "uint256"
-              },
-              {
-                "name": "reason",
-                "type": "uint8",
-                "internalType": "uint8"
-              }
-            ]
-          },
-          {
-            "name": "totalAdmittedWeight",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "publishResult",
     "inputs": [
       {
@@ -915,6 +856,129 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "submitAggregate",
+    "inputs": [
+      {
+        "name": "aggregate",
+        "type": "tuple",
+        "internalType": "struct VotingTypes.EncryptedTally",
+        "components": [
+          {
+            "name": "aggregates",
+            "type": "tuple[]",
+            "internalType": "struct VotingTypes.Ciphertext[]",
+            "components": [
+              {
+                "name": "c1",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "c2",
+                "type": "bytes",
+                "internalType": "bytes"
+              }
+            ]
+          },
+          {
+            "name": "admitted",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "exclusions",
+            "type": "tuple[]",
+            "internalType": "struct VotingTypes.Exclusion[]",
+            "components": [
+              {
+                "name": "sequenceNumber",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "reason",
+                "type": "uint8",
+                "internalType": "uint8"
+              }
+            ]
+          },
+          {
+            "name": "totalAdmittedWeight",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "submitAggregateSigned",
+    "inputs": [
+      {
+        "name": "aggregate",
+        "type": "tuple",
+        "internalType": "struct VotingTypes.EncryptedTally",
+        "components": [
+          {
+            "name": "aggregates",
+            "type": "tuple[]",
+            "internalType": "struct VotingTypes.Ciphertext[]",
+            "components": [
+              {
+                "name": "c1",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "c2",
+                "type": "bytes",
+                "internalType": "bytes"
+              }
+            ]
+          },
+          {
+            "name": "admitted",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "exclusions",
+            "type": "tuple[]",
+            "internalType": "struct VotingTypes.Exclusion[]",
+            "components": [
+              {
+                "name": "sequenceNumber",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "reason",
+                "type": "uint8",
+                "internalType": "uint8"
+              }
+            ]
+          },
+          {
+            "name": "totalAdmittedWeight",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "keyperSig",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1217,6 +1281,25 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AggregateVoteRegistered",
+    "inputs": [
+      {
+        "name": "keyper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "resultDigest",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false

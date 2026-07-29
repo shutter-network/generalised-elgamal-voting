@@ -78,7 +78,9 @@ abstract contract ElectionBase is AccessControl, IElection {
     bytes[] internal committeePublicKeys;
     VotingTypes.BallotRecord[] internal ballotRecords;
     mapping(bytes32 => uint256) internal ballotIndexPlusOneByPseudonym;
-    VotingTypes.EncryptedTally internal encryptedTally;
+    // Canonical aggregate stored as its ABI-encoded blob (set once at the t+1 quorum);
+    // decoded on read. Cheaper bytecode than structured storage — matters for EIP-170.
+    bytes internal encryptedTallyEncoded;
     bool internal aggregatePublished;
     VotingTypes.DecryptionShare[] internal decryptionShares;
     bool internal resultFinalized;
@@ -87,6 +89,10 @@ abstract contract ElectionBase is AccessControl, IElection {
     // forge-lint: disable-next-line(mixed-case-variable)
     mapping(address => bool) internal hasVotedForDKG;
     mapping(bytes32 => uint64) internal dkgVoteCountByResult;
+    // Aggregate votes are mutable until the quorum finalizes: track each keyper's
+    // current digest (0 = not yet voted) so an override moves its vote between digests.
+    mapping(address => bytes32) internal aggregateVoteDigestOf;
+    mapping(bytes32 => uint64) internal aggregateVoteCountByResult;
     mapping(address => bool) internal hasSubmittedDecryptionShare;
 
     constructor(address admin, uint256 electionId_, IKeyperSet keyperSet_, VotingTypes.ElectionParams memory params) {

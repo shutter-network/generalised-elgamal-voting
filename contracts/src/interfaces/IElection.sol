@@ -9,6 +9,7 @@ interface IElection is IAccessControl {
     event DKGVoteRegistered(address indexed keyper, bytes pkElection);
     event DKGResultPublished(bytes pkElection, bytes[] committeePKs);
     event VoteSubmitted(bytes32 indexed pseudonym, uint256 indexed ballotIndex);
+    event AggregateVoteRegistered(address indexed keyper, bytes32 resultDigest);
     event AggregatePublished(uint256 indexed electionId);
     event DecryptionSharePosted(uint8 indexed keyperIndex);
     event ResultPublished(uint256[] tally, uint8[] keyperIndices);
@@ -43,7 +44,8 @@ interface IElection is IAccessControl {
     function getBallot(bytes32 pseudonym) external view returns (VotingTypes.Ballot memory ballot);
     function getBallots(uint256 startIndex, uint256 count) external view returns (VotingTypes.Ballot[] memory ballots);
 
-    function publishAggregate(VotingTypes.EncryptedTally calldata encryptedTally) external;
+    function submitAggregate(VotingTypes.EncryptedTally calldata aggregate) external;
+    function submitAggregateSigned(VotingTypes.EncryptedTally calldata aggregate, bytes calldata keyperSig) external;
     function getAggregate() external view returns (VotingTypes.EncryptedTally memory encryptedTally);
 
     function submitDecryptionShare(bytes[] calldata shares, VotingTypes.DLEQProof[] calldata proofs) external;

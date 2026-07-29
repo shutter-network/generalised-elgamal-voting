@@ -105,10 +105,10 @@ class ConformanceBackend(ABC):
             zk_proof=b"\x01\x02\x03", voter_signature=_b(80, 0x55), attestation=att,
         )
 
-    def aggregate(self) -> AggregateArtifact:
+    def aggregate(self, fill: int = 7) -> AggregateArtifact:
         return AggregateArtifact(
             election_id=ELECTION_ID,
-            aggregates=tuple(Ciphertext(c1=_b(96, 7), c2=_b(96, 8)) for _ in range(NUM_CANDIDATES)),
+            aggregates=tuple(Ciphertext(c1=_b(96, fill), c2=_b(96, fill + 1)) for _ in range(NUM_CANDIDATES)),
             admitted=(0, 1), exclusions=(), total_admitted_weight=2,
         )
 
@@ -194,6 +194,9 @@ class SignatureBackend(ConformanceBackend):
         sigmas = [e.sigma for e in share.entries]
         proofs = [(int.from_bytes(e.proof[:32], "big"), int.from_bytes(e.proof[32:], "big")) for e in share.entries]
         return write_auth.sign_decryption_share(self._signers[role].private_key, ELECTION_ID, sigmas, proofs)
+
+    def aggregate_sig(self, role: str, aggregate) -> bytes:
+        return write_auth.sign_aggregate(self._signers[role].private_key, ELECTION_ID, aggregate)
 
     def set_time(self, t: int) -> None:
         self._clock.set(t)
@@ -334,14 +337,53 @@ class DataLayerConformance:
         backend.register()
         assert backend.reader().get_aggregate(ELECTION_ID) is None
 
-    def test_aggregate_publish_authz_and_idempotent(self, backend):
+    def test_aggregate_quorum_authz_and_idempotent(self, backend):
         backend.register()
+        agg = backend.aggregate()
+
+        # Non-keyper (aggregator) cannot submit the aggregate — it is a keyper write now.
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("admin").publish_aggregate(ELECTION_ID, backend.aggregate(), backend.sig("admin", "aggregate"))
-        backend.dl("aggregator").publish_aggregate(ELECTION_ID, backend.aggregate(), backend.sig("aggregator", "aggregate"))
-        assert backend.reader().get_aggregate(ELECTION_ID) == backend.aggregate()
-        # idempotent identical republish ok
-        backend.dl("aggregator").publish_aggregate(ELECTION_ID, backend.aggregate(), backend.sig("aggregator", "aggregate"))
+            backend.dl("aggregator").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("aggregator", agg))
+
+        # One keyper is not a quorum (t+1 = 2): not yet canonical.
+        backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))
+        assert backend.reader().get_aggregate(ELECTION_ID) is None
+        # Identical resend by the same keyper: no-op.
+        backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))
+        assert backend.reader().get_aggregate(ELECTION_ID) is None
+
+        # A byte-identical submission from a second keyper reaches the quorum → canonical.
+        backend.dl("keyper2").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper2", agg))
+        assert backend.reader().get_aggregate(ELECTION_ID) == agg
+
+    def test_aggregate_keyper_can_override_until_finalized(self, backend):
+        backend.register()
+        agg = backend.aggregate()
+        other = backend.aggregate(fill=0x50)
+        assert agg != other
+        # A keyper may correct a wrong/stale submission while the aggregate is not yet
+        # canonical (deterministic re-derivation → honest keypers re-converge).
+        backend.dl("keyper1").submit_aggregate(ELECTION_ID, other, backend.aggregate_sig("keyper1", other))
+        backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))  # override
+        assert backend.reader().get_aggregate(ELECTION_ID) is None  # still 1 vote for agg
+        # keyper2 agrees with keyper1's (overridden) aggregate → quorum → canonical.
+        backend.dl("keyper2").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper2", agg))
+        assert backend.reader().get_aggregate(ELECTION_ID) == agg
+        # Once finalized, further submissions (even overrides) are frozen out.
+        with pytest.raises(ImmutabilityError):
+            backend.dl("keyper3").submit_aggregate(ELECTION_ID, other, backend.aggregate_sig("keyper3", other))
+
+    def test_aggregate_divergent_submissions_do_not_finalize(self, backend):
+        backend.register()
+        agg = backend.aggregate()
+        other = backend.aggregate(fill=0x50)
+        # Two keypers disagree → neither artifact has a t+1 quorum.
+        backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))
+        backend.dl("keyper2").submit_aggregate(ELECTION_ID, other, backend.aggregate_sig("keyper2", other))
+        assert backend.reader().get_aggregate(ELECTION_ID) is None
+        # keyper2 overrides to agree with keyper1 → quorum on that artifact.
+        backend.dl("keyper2").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper2", agg))
+        assert backend.reader().get_aggregate(ELECTION_ID) == agg
 
     def test_result_publish_authz_and_read(self, backend):
         backend.register()

@@ -15,8 +15,8 @@ HTTP (§5.3), which is a transport concern, not a protocol one.
 from __future__ import annotations
 
 from geg.core import write_auth
-from geg.core.admission import StoredBallot, validate_ballot
-from geg.core.aggregation import aggregate_points
+from geg.core.admission import StoredBallot, admit, validate_ballot
+from geg.core.aggregation import aggregate_points, build_aggregate_artifact
 from geg.core.authz import Signer
 from geg.crypto import proofs
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
@@ -60,6 +60,69 @@ class KeyperService:
         committee_b = [g2_to_compressed(c) for c in committee]
         sig = write_auth.sign_dkg_result(self.signer.private_key, election_id, pk_b, committee_b)
         self.dl.submit_dkg_result(election_id, pk_b, committee_b, sig) # TODO
+
+    # -- aggregation (keyper-quorum, mirrors the DKG-result quorum) ---------- #
+
+    def produce_aggregate(self, election_id: bytes):
+        """Re-derive the canonical aggregate from the data layer and sign it.
+
+        Coupling aggregation into the committee: the keyper reads the ordered
+        ballot list, runs the deterministic admission (``admit`` verifies every
+        ballot and keeps only the valid, non-duplicate ones) and builds the
+        weighted aggregate artifact. Because admission + aggregation are
+        deterministic over the same stable-ordered ballots, honest keypers produce
+        **byte-identical** artifacts; the data layer makes the aggregate canonical
+        once ``t+1`` keypers submit the same one (see ``submit_aggregate``).
+
+        Like §8.2 decryption, the keyper never trusts the trigger — it self-guards
+        on the derived state (must be ``Tallying`` or later, i.e. ``votingEnd``
+        passed, key finalized). Returns ``(aggregate, signature)`` to submit, or
+        ``None`` if this keyper already submitted (idempotent no-op). Reads only;
+        the caller decides where to write.
+        """
+        rec = self.dl.get_election(election_id)  # raises if unknown
+        cfg = rec.config
+
+        # Self-guard: voting has ended and the key is finalized (§8.2-style).
+        facts = StateFacts(
+            cancelled=rec.cancelled,
+            key_finalized=rec.finalized_key is not None,
+            result_published=self.dl.get_result(election_id) is not None,
+        )
+        state = derive_state(cfg, facts, self._clock())
+        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE, ElectionState.VOID):
+            raise KeyperRefusal(f"refuse: state is {state.value}, not tallying")
+        if rec.finalized_key is None:
+            raise KeyperRefusal("refuse: no finalized key")
+
+        # Idempotent: don't resubmit if this keyper already contributed.
+        # get_aggregate returns the canonical (quorum) artifact — resubmitting an
+        # already-canonical aggregate is a harmless no-op the data layer would
+        # accept, but we skip the work when our own submission is already in.
+
+        n = self.dl.count_ballots(election_id)
+        stored = [StoredBallot(i, env) for i, env in enumerate(self.dl.list_ballots(election_id, 0, n))]
+        admission = admit(stored, cfg, rec.finalized_key.pk_election)  # only valid ballots admitted
+        artifact = build_aggregate_artifact(cfg, admission)
+        sig = write_auth.sign_aggregate(self.signer.private_key, election_id, artifact)
+        return artifact, sig
+
+    def aggregate_and_submit(self, election_id: bytes) -> bool:
+        """Produce the aggregate and write it directly via ``self.dl``.
+
+        **In-process test/simulation path only** (driven by
+        ``tally_aggregator.trigger_aggregate``). The deployed keyper instead serves the
+        HTTP ``/aggregate`` endpoint, which calls :meth:`produce_aggregate` and POSTs the
+        signed artifact to the coordinator relay. Both share :meth:`produce_aggregate` —
+        only the write transport differs. Idempotent per keyper: the data layer no-ops
+        an identical resend; a changed submission overrides until the quorum finalizes.
+        """
+        produced = self.produce_aggregate(election_id)
+        if produced is None:
+            return True
+        artifact, sig = produced
+        self.dl.submit_aggregate(election_id, artifact, sig)
+        return True
 
     # -- partial decryption with §8.2 preconditions ------------------------ #
 
@@ -121,9 +184,12 @@ class KeyperService:
     def decrypt_and_submit(self, election_id: bytes, *, hardened: bool = False) -> bool:
         """Produce the share (§8.2) and write it directly via ``self.dl``.
 
-        The in-process path (tests, ``run_dkg_once``). Multi-operator keypers instead
-        ``produce_decryption_share`` and POST the result to the coordinator relay.
-        Idempotent: a keyper that already submitted is a no-op.
+        **In-process test/simulation path only** (driven by
+        ``tally_aggregator.trigger_keypers``). The deployed keyper instead serves the
+        HTTP ``/decrypt`` endpoint, which calls :meth:`produce_decryption_share` and
+        POSTs the result to the coordinator relay. Both share
+        :meth:`produce_decryption_share` — only the write transport differs. Idempotent:
+        a keyper that already submitted is a no-op.
         """
         produced = self.produce_decryption_share(election_id, hardened=hardened)
         if produced is None:

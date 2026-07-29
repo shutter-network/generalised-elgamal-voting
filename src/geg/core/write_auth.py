@@ -27,6 +27,13 @@ from eth_utils import keccak
 
 DKG_RESULT_DST = b"GEG-DKG-RESULT-v1"
 DECRYPT_SHARE_DST = b"GEG-DECRYPT-SHARE-v1"
+AGGREGATE_DST = b"GEG-AGGREGATE-v1"
+
+# Exclusion reason → uint8 code for the aggregate digest. Order MUST match the
+# Solidity `enum ExclusionReason` in VotingTypes.sol (both are declaration order).
+from geg.envelopes.types import ExclusionReason  # noqa: E402  (core already depends on envelopes via aggregation)
+
+_EXCLUSION_CODE = {reason: index for index, reason in enumerate(ExclusionReason)}
 
 
 def dkg_result_digest(election_id: bytes, pk_election: bytes, committee_pks: list[bytes]) -> bytes:
@@ -68,3 +75,57 @@ def sign_dkg_result(private_key: int, election_id: bytes, pk_election: bytes, co
 
 def sign_decryption_share(private_key: int, election_id: bytes, shares: list[bytes], proofs: list[tuple[int, int]]) -> bytes:
     return sign_digest(private_key, decryption_share_digest(election_id, shares, proofs))
+
+
+# --- aggregate (keyper-quorum, mirrors the DKG-result quorum) --------------- #
+#
+# The keyper content-signs the FULL aggregate artifact (aggregates + admitted set +
+# exclusions + total weight). Backends recover the keyper from this signature and
+# count byte-identical artifacts by the same digest — canonical at t+1. The chain
+# `submitAggregateSigned` re-derives the same digest over the EncryptedTally struct.
+#
+#   aggregate = keccak256("GEG-AGGREGATE-v1" ‖ electionId ‖ abi.encode(EncryptedTally))
+#
+# where EncryptedTally is the single struct/tuple
+#   ((bytes,bytes)[] aggregates, uint256[] admitted, (uint256,uint8)[] exclusions, uint256 total).
+# One ABI-encode of the whole struct (matching Solidity ``abi.encode(aggregate)``) — this
+# keeps the Election contract under the EIP-170 code-size limit vs. four field-wise encodes.
+
+_TALLY_ABI = "((bytes,bytes)[],uint256[],(uint256,uint8)[],uint256)"
+
+
+def aggregate_digest(
+    election_id: bytes,
+    aggregates: list[tuple[bytes, bytes]],
+    admitted: list[int],
+    exclusions: list[tuple[int, "ExclusionReason"]],
+    total_admitted_weight: int,
+) -> bytes:
+    tally = (
+        [(bytes(c1), bytes(c2)) for (c1, c2) in aggregates],
+        [int(s) for s in admitted],
+        [(int(seq), _EXCLUSION_CODE[reason]) for (seq, reason) in exclusions],
+        int(total_admitted_weight),
+    )
+    packed = AGGREGATE_DST + bytes(election_id) + abi_encode([_TALLY_ABI], [tally])
+    return keccak(packed)
+
+
+def _aggregate_fields(aggregate):
+    """Unpack an ``AggregateArtifact`` into the digest's primitive fields."""
+    return (
+        [(ct.c1, ct.c2) for ct in aggregate.aggregates],
+        list(aggregate.admitted),
+        [(x.sequence_number, x.reason) for x in aggregate.exclusions],
+        aggregate.total_admitted_weight,
+    )
+
+
+def aggregate_digest_of(election_id: bytes, aggregate) -> bytes:
+    """Digest of an ``AggregateArtifact`` (used by keyper to sign, backends to verify)."""
+    aggs, admitted, exclusions, total = _aggregate_fields(aggregate)
+    return aggregate_digest(election_id, aggs, admitted, exclusions, total)
+
+
+def sign_aggregate(private_key: int, election_id: bytes, aggregate) -> bytes:
+    return sign_digest(private_key, aggregate_digest_of(election_id, aggregate))

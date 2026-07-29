@@ -44,7 +44,7 @@ class _Stored:
     cancelled: bool = False
     dkg_by_keyper: dict[int, DKGResultSubmission] = field(default_factory=dict)
     ballots: list[BallotEnvelope] = field(default_factory=list)
-    aggregate: AggregateArtifact | None = None
+    aggregate_by_keyper: dict[int, AggregateArtifact] = field(default_factory=dict)
     shares_by_keyper: dict[int, DecryptionShareEnvelope] = field(default_factory=dict)
     result: ResultArtifact | None = None
 
@@ -168,18 +168,41 @@ class InMemoryDataLayer(ElectionDataLayer):
 
     # -- tally artifacts ---------------------------------------------------- #
 
-    def publish_aggregate(self, election_id, aggregate: AggregateArtifact, aggregator_sig) -> None:
+    def submit_aggregate(self, election_id, aggregate: AggregateArtifact, keyper_sig) -> None:
         st = self._get(election_id)
-        if not authz.verify_request(st.config.aggregator_key, aggregator_sig, "aggregate", election_id):
-            raise WriteAuthorizationError("publish_aggregate: bad aggregator signature")
-        if st.aggregate is not None:
-            if st.aggregate != aggregate:
-                raise ImmutabilityError("aggregate already published (append-only)")
-            return
-        st.aggregate = aggregate
+        digest = write_auth.aggregate_digest_of(election_id, aggregate)
+        idx = self._keyper_index_by_recovery(st.config, digest, keyper_sig)
+        existing = st.aggregate_by_keyper.get(idx)
+        if existing is not None and existing == aggregate:
+            return  # idempotent resend of this keyper's current submission
+        # Mutable per keyper *until the quorum finalizes*: a keyper that submitted a
+        # wrong/stale aggregate can override it so honest keypers can re-converge
+        # (aggregation is a deterministic re-derivation — unlike the one-shot DKG
+        # result, which is append-only). Once t+1 keypers agree the aggregate is
+        # canonical and frozen.
+        if self._aggregate_finalized(st):
+            raise ImmutabilityError("aggregate already finalized (quorum reached)")
+        st.aggregate_by_keyper[idx] = aggregate  # submit or override
+
+    def _aggregate_groups(self, election_id, st) -> dict[bytes, tuple[AggregateArtifact, set[int]]]:
+        groups: dict[bytes, tuple[AggregateArtifact, set[int]]] = {}
+        for idx, agg in st.aggregate_by_keyper.items():
+            key = write_auth.aggregate_digest_of(election_id, agg)
+            _, keypers = groups.setdefault(key, (agg, set()))
+            keypers.add(idx)
+        return groups
+
+    def _aggregate_finalized(self, st) -> bool:
+        needed = st.config.threshold.t + 1
+        return any(len(kps) >= needed for _, kps in self._aggregate_groups(st.config.election_id, st).values())
 
     def get_aggregate(self, election_id) -> AggregateArtifact | None:
-        return self._get(election_id).aggregate
+        st = self._get(election_id)
+        needed = st.config.threshold.t + 1
+        for agg, keypers in self._aggregate_groups(election_id, st).values():
+            if len(keypers) >= needed:
+                return agg
+        return None
 
     def submit_decryption_share(self, election_id, share: DecryptionShareEnvelope, keyper_sig) -> None:
         st = self._get(election_id)

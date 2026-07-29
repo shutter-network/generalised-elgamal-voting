@@ -6,10 +6,10 @@
 # Chain authorization is by tx sender, so — unlike the database backend — each
 # actor holds its OWN Ethereum key and submits its own transactions:
 #   * admin      → register/cancel (is the on-chain adminAddr)
-#   * aggregator → publishAggregate/publishResult
+#   * aggregator → publishResult (the aggregate is keyper-submitted, not published here)
 #   * gateway    → submitVote
 # Keypers are the exception (Option A): they hold no chain key. They content-sign
-# their DKG/decryption writes and POST them to the data-layer service, which runs
+# their DKG/aggregate/decryption writes and POST them to the data-layer service, which runs
 # a RELAYER account that pays gas and sends the ...Signed tx; the contract
 # ecrecovers the keyper as the on-chain author.
 #

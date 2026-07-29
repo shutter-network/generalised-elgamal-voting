@@ -28,7 +28,7 @@ from geg.envelopes.types import (
     DecryptionShareEntry,
     DecryptionShareEnvelope,
 )
-from geg.ports.data_layer import ImmutabilityError, WriteAuthorizationError
+from geg.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
 
 # Well-known Anvil dev keys (public test keys — safe to hardcode).
 ANVIL_KEYS = [
@@ -175,6 +175,10 @@ class ChainEnv:
         proofs = [(int.from_bytes(e.proof[:32], "big"), int.from_bytes(e.proof[32:], "big")) for e in share.entries]
         return write_auth.sign_decryption_share(self._key(role), ELECTION_ID, sigmas, proofs)
 
+    def aggregate_sig(self, role, aggregate) -> bytes:
+        from geg.core import write_auth
+        return write_auth.sign_aggregate(self._key(role), ELECTION_ID, aggregate)
+
     def register(self):
         return self.dl("admin").register_election(self.config, b"")
 
@@ -304,6 +308,23 @@ def test_ballot_ordering_and_pagination(env):
     assert [b.pseudonym for b in page] == [bytes([3]) * 32, bytes([4]) * 32]
 
 
+def test_writes_outside_voting_window_raise_voting_window_error(env):
+    env.register()
+    env.finalize_dkg()
+    agg = env.aggregate()
+    # Warps must be monotonic (Anvil rejects a past timestamp), so walk the lifecycle
+    # forward: before start → during voting → after end.
+    env.warp(500)  # before voting_start
+    with pytest.raises(VotingWindowError):  # ballot too early → VotingNotStarted
+        env.dl("gateway").submit_ballot(ELECTION_ID, env.ballot(b"\x01" * 32))
+    env.warp(1500)  # voting open, before voting_end
+    with pytest.raises(VotingWindowError):  # tally write too early → VotingStillOpen
+        env.dl("keyper1").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("keyper1", agg))
+    env.warp(2500)  # after voting_end
+    with pytest.raises(VotingWindowError):  # ballot too late → VotingClosed
+        env.dl("gateway").submit_ballot(ELECTION_ID, env.ballot(b"\x02" * 32))
+
+
 def test_ballot_attestation_round_trips_through_wrattestation(env):
     env.register()
     env.finalize_dkg()
@@ -339,16 +360,36 @@ def test_share_keyper_index_must_match_signer(env):
         env.dl("keyper2").submit_decryption_share(ELECTION_ID, share1, env.share_sig("keyper2", share1))
 
 
-def test_aggregate_authz_idempotent_and_read(env):
+def test_aggregate_quorum_authz_idempotent_and_read(env):
     env.register()
     env.finalize_dkg()
     env.warp(2500)
+    agg = env.aggregate()
     assert env.reader().get_aggregate(ELECTION_ID) is None
+
+    # Non-keyper signer rejected (aggregate is a keyper write now, meta-tx ecrecover).
     with pytest.raises(WriteAuthorizationError):
-        env.dl("keyper1").publish_aggregate(ELECTION_ID, env.aggregate(), b"")
-    env.dl("aggregator").publish_aggregate(ELECTION_ID, env.aggregate(), b"")
-    assert env.reader().get_aggregate(ELECTION_ID) == env.aggregate()
-    env.dl("aggregator").publish_aggregate(ELECTION_ID, env.aggregate(), b"")  # idempotent
+        env.dl("aggregator").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("aggregator", agg))
+
+    other = AggregateArtifact(
+        election_id=ELECTION_ID,
+        aggregates=tuple(Ciphertext(c1=_b(96, 0x50), c2=_b(96, 0x51)) for _ in range(NUM_CANDIDATES)),
+        admitted=(0, 1), exclusions=(), total_admitted_weight=2,
+    )
+    # keyper1 submits a wrong aggregate, then OVERRIDES it while not yet canonical.
+    env.dl("keyper1").submit_aggregate(ELECTION_ID, other, env.aggregate_sig("keyper1", other))
+    env.dl("keyper1").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("keyper1", agg))  # override
+    assert env.reader().get_aggregate(ELECTION_ID) is None  # 1 vote for agg, no quorum
+    # Identical resend by the same keyper: no-op.
+    env.dl("keyper1").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("keyper1", agg))
+    assert env.reader().get_aggregate(ELECTION_ID) is None
+
+    # A byte-identical submission from a second keyper reaches quorum → canonical.
+    env.dl("keyper2").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("keyper2", agg))
+    assert env.reader().get_aggregate(ELECTION_ID) == agg
+    # Frozen after finalization: a different submission can no longer change it.
+    with pytest.raises(ImmutabilityError):
+        env.dl("keyper3").submit_aggregate(ELECTION_ID, other, env.aggregate_sig("keyper3", other))
 
 
 def test_result_authz_and_read(env):

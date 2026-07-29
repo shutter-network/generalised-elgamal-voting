@@ -27,6 +27,7 @@ from geg.ports.data_layer import (
     ElectionRecord,
     FinalizedKey,
     ImmutabilityError,
+    VotingWindowError,
     WriteAuthorizationError,
 )
 
@@ -47,10 +48,18 @@ _AUTHZ_SELECTORS = {
 }
 _IMMUTABILITY_SELECTORS = {
     _selector("AlreadyCancelled()"),
-    _selector("VotingAlreadyStarted(uint256)"),
+    _selector("VotingAlreadyStarted(uint256)"),  # cancel attempted at/after voting_start
     _selector("AlreadyVoted(address)"),
     _selector("AlreadyFinalized()"),
     _selector("ElectionIdTaken(uint256)"),
+}
+# Writes attempted at the wrong point in the voting lifecycle (the chain is a state
+# machine; availability-only backends don't gate these). VotingAlreadyStarted stays an
+# ImmutabilityError above — it's a cancel-after-start, not a window-timing violation.
+_VOTING_WINDOW_SELECTORS = {
+    _selector("VotingNotStarted(uint256)"),  # ballot before voting_start
+    _selector("VotingClosed(uint256)"),      # ballot after voting_end
+    _selector("VotingStillOpen(uint256)"),   # tally write (aggregate/share/result) before voting_end
 }
 
 
@@ -98,12 +107,17 @@ class BlockchainDataLayer(ElectionDataLayer):
     def _map_revert(exc: Exception) -> Exception:
         msg = str(exc)
         # Decoded error names (when the ABI carried the error def).
+        if any(s in msg for s in ("VotingNotStarted", "VotingClosed", "VotingStillOpen")):
+            return VotingWindowError(msg)
         if any(s in msg for s in ("AlreadyCancelled", "VotingAlreadyStarted", "AlreadyVoted", "AlreadyFinalized", "ElectionIdTaken")):
             return ImmutabilityError(msg)
         if any(s in msg for s in ("AccessControl", "UnauthorizedKeyper", "InvalidMember", "missing role")):
             return WriteAuthorizationError(msg)
-        # Raw custom-error selectors in the revert data.
+        # Raw custom-error selectors in the revert data (web3 leaves these undecoded
+        # when the error is caught at gas-estimation / the ABI def isn't consulted).
         selectors = {m[:10] for m in re.findall(r"0x[0-9a-fA-F]{8,}", msg)}
+        if selectors & _VOTING_WINDOW_SELECTORS:
+            return VotingWindowError(msg)
         if selectors & _IMMUTABILITY_SELECTORS:
             return ImmutabilityError(msg)
         if selectors & _AUTHZ_SELECTORS:
@@ -246,14 +260,29 @@ class BlockchainDataLayer(ElectionDataLayer):
 
     # -- tally artifacts ---------------------------------------------------- #
 
-    def publish_aggregate(self, election_id, aggregate: AggregateArtifact, aggregator_sig) -> None:
+    def submit_aggregate(self, election_id, aggregate: AggregateArtifact, keyper_sig) -> None:
         election = self._election(election_id)
+        # Meta-tx: the keyper signed the aggregate content; recover it (the on-chain
+        # author), not the relaying tx sender. The digest is byte-identical to the
+        # contract's ``_aggregateDigest`` and groups the quorum vote.
+        digest = write_auth.aggregate_digest_of(election_id, aggregate)
+        keyper_addr = Web3.to_checksum_address(write_auth.recover_digest(digest, keyper_sig))
+        # If the aggregate is already canonical (t+1 quorum on chain), it is frozen:
+        # a matching resend is a no-op; anything else can no longer become canonical.
         existing = self._read_aggregate(election, election_id)
         if existing is not None:
-            if existing != aggregate:
-                raise ImmutabilityError("aggregate already published (append-only)")
-            return
-        self._send(election.functions.publishAggregate(codec.aggregate_to_tuple(aggregate)))
+            if existing == aggregate:
+                return
+            raise ImmutabilityError("aggregate already finalized with a different artifact")
+        # Not finalized: submissions are mutable per keyper (override allowed). Skip the
+        # tx only if this keyper's current on-chain vote already equals this digest.
+        mine = [
+            ev for ev in election.events.AggregateVoteRegistered().get_logs(from_block=0)
+            if ev["args"]["keyper"] == keyper_addr
+        ]
+        if mine and bytes(mine[-1]["args"]["resultDigest"]) == digest:
+            return  # this keyper's current vote is already this aggregate → no-op
+        self._send(election.functions.submitAggregateSigned(codec.aggregate_to_tuple(aggregate), keyper_sig))
 
     def get_aggregate(self, election_id) -> AggregateArtifact | None:
         return self._read_aggregate(self._election(election_id), election_id)

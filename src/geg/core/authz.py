@@ -1,4 +1,4 @@
-"""Write-authorization identities — secp256k1 / ecrecover (DESIGN.md §5.1).
+"""Write-authorization identities — secp256k1 / ecrecover.
 
 Unified with the on-chain authorization model: a write identity is an **Ethereum
 secp256k1 key**, its ``identity`` is the 20-byte address, and a write is
@@ -8,7 +8,7 @@ The same identity/signature works for the in-memory, database (verify by
 data layers, so keypers/services are backend-agnostic.
 
 This is defense-in-depth against spam, **not a trust anchor** — every stored
-artifact is self-verifying (§3). Voter **ballot** and **attestation** keys are
+artifact is self-verifying. Voter **ballot** and **attestation** keys are
 unrelated and remain Schnorr-G1 (see :mod:`geg.crypto`).
 """
 

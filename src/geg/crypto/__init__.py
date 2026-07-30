@@ -1,4 +1,4 @@
-"""The protocol-v1 crypto suite (DESIGN.md §7.1), built fresh in this repo.
+"""The protocol-v1 crypto suite, built fresh in this repo.
 
 BLS12-381; ElGamal + DKG in G2, Schnorr + attestations in G1; keccak256
 transcripts. Byte-faithful to the reference SDK so cross-language conformance

@@ -1,4 +1,4 @@
-"""Content-binding write signatures for keyper writes (DESIGN.md §5.1, §5.3).
+"""Content-binding write signatures for keyper writes.
 
 A keyper signs the **content** of its write (the DKG result, or its decryption
 shares), not a generic request. The digest is byte-identical to the contract's
@@ -6,7 +6,7 @@ meta-tx digest, so one keyper signature is verified the same way by every
 backend: the in-memory/database stores recover the signer and check committee
 membership; the blockchain store relays the signature to the ``...Signed``
 contract method, which ``ecrecover``s the same digest. This is what makes keypers
-backend-agnostic *and* preserves on-chain per-keyper authorship (§5.3).
+backend-agnostic *and* preserves on-chain per-keyper authorship.
 
 Digests mirror the Solidity exactly (see ``ElectionDKG.sol`` /
 ``ElectionDecryption.sol``):

@@ -73,12 +73,12 @@ build does no further network access.
 
 ### `KeyperSet`
 
-`KeyperSet` is the immutable keyper committee contract. It is used by elections to determine membership, threshold, and each member's HTTP endpoint.
+`KeyperSet` is the immutable keyper committee contract. It is used by elections to determine membership, threshold, and each member's HTTP URL.
 
 Implemented behavior:
 
-- constructor-time member, per-member **endpoint (URL)**, and threshold configuration
-- endpoints are **required** and 1:1 with members (reverts `EndpointsLengthMismatch` otherwise)
+- constructor-time member, per-member **URL**, and threshold configuration
+- URLs are **required** and 1:1 with members (reverts `URLsLengthMismatch` otherwise)
 - duplicate member rejection
 - zero-address rejection
 - threshold validation
@@ -89,7 +89,7 @@ Available read methods include:
 - `getNumMembers`
 - `getMember`
 - `getMembers`
-- `getEndpoints` — per-member URLs, index-aligned with members (surfaced in `getElection()` as `keyperEndpoints`)
+- `getURLs` — per-member URLs, index-aligned with members (surfaced in `getElection()` as `keyperURLs`)
 - `getMemberIndex`
 - `getThreshold`
 - `isMember`

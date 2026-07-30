@@ -1,4 +1,4 @@
-"""Cross-language conformance vectors (DESIGN.md §9).
+"""Cross-language conformance vectors.
 
 Verifies that geg's crypto reproduces every cross-implementation vector — the
 same JSON files an independent re-verifier (the TS SDK, a future port) consumes.

@@ -1,4 +1,4 @@
-"""Artifact envelope dataclasses (DESIGN.md §7.2).
+"""Artifact envelope dataclasses.
 
 In-memory representations of the five transport artifacts plus the
 ``ATTESTATION_V1`` credential. These are pure data holders; JSON
@@ -6,7 +6,7 @@ encoding/decoding and byte-length validation live in
 :mod:`geg.envelopes.codecs`.
 
 Byte fields are held as raw ``bytes`` here and only become ``0x``-hex at the JSON
-boundary. Fixed byte sizes (from the SDK v1 codecs, DESIGN.md §7.2) are recorded
+boundary. Fixed byte sizes (from the SDK v1 codecs) are recorded
 in :data:`SIZES` and enforced by the codecs so malformed input is rejected.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-# Fixed byte sizes of the crypto suite (DESIGN.md §7.1/§7.2). Enforced on decode.
+# Fixed byte sizes of the crypto suite. Enforced on decode.
 G1_BYTES = 48  # compressed G1 (voter vk, Schnorr R, attestation/eligibility keys)
 G2_BYTES = 96  # compressed G2 (ElGamal ciphertext components, sigma, committee PKs)
 SCHNORR_BYTES = 80  # R (48) || s (32)
@@ -32,7 +32,7 @@ SIZES = {
 
 
 class ExclusionReason(str, Enum):
-    """Typed reasons a stored ballot was excluded from the aggregate (DESIGN.md §7.2)."""
+    """Typed reasons a stored ballot was excluded from the aggregate."""
 
     INVALID_PROOF = "INVALID_PROOF"
     INVALID_SIGNATURE = "INVALID_SIGNATURE"
@@ -43,7 +43,7 @@ class ExclusionReason(str, Enum):
 
 
 class AttestationScheme(str, Enum):
-    """Which eligibility-credential scheme an attestation uses (DESIGN.md §5.2).
+    """Which eligibility-credential scheme an attestation uses.
 
     ``V1`` is the weighted, domain-separated ``ATTESTATION_V1``. ``LEGACY`` is the
     weightless Wahlregister scheme (``keccak(electionId‖pseudonym‖vk)``), carried
@@ -56,7 +56,7 @@ class AttestationScheme(str, Enum):
 
 @dataclass(frozen=True)
 class Ciphertext:
-    """Exponential-ElGamal ciphertext in G2: ``(C1, C2)`` (DESIGN.md §7.1)."""
+    """Exponential-ElGamal ciphertext in G2: ``(C1, C2)``."""
 
     c1: bytes  # G2, 96 bytes
     c2: bytes  # G2, 96 bytes
@@ -64,7 +64,7 @@ class Ciphertext:
 
 @dataclass(frozen=True)
 class Attestation:
-    """``ATTESTATION_V1`` eligibility credential (DESIGN.md §5.2, §7.1).
+    """``ATTESTATION_V1`` eligibility credential.
 
     A Schnorr-on-G1 signature by ``eligibility_key`` over a domain-separated
     transcript of ``(election_id, pseudonym, vk, weight)``. Extends the prior
@@ -83,7 +83,7 @@ class Attestation:
 
 @dataclass(frozen=True)
 class BallotEnvelope:
-    """Ballot artifact (DESIGN.md §7.2).
+    """Ballot artifact.
 
     Generalises the on-chain ballot (``eth_client.py::_decode_ballot``) by adding
     an explicit ``election_id`` and carrying the eligibility credential as
@@ -102,11 +102,10 @@ class BallotEnvelope:
 
 @dataclass(frozen=True)
 class DKGResultSubmission:
-    """A keyper's signed DKG result vote (DESIGN.md §7.2).
+    """A keyper's signed DKG result vote.
 
     The finalized key exists iff >= t+1 registered keypers submit byte-identical
-    ``(pk_election, committee_pks)`` — the finalization quorum rule (DESIGN.md
-    §5.1). This envelope is one such submission.
+    ``(pk_election, committee_pks)`` — the finalization quorum rule. This envelope is one such submission.
     """
 
     election_id: bytes  # bytes32
@@ -125,7 +124,7 @@ class DecryptionShareEntry:
 
 @dataclass(frozen=True)
 class DecryptionShareEnvelope:
-    """A keyper's per-candidate decryption shares (DESIGN.md §7.2, §8.2)."""
+    """A keyper's per-candidate decryption shares."""
 
     election_id: bytes  # bytes32
     keyper_index: int
@@ -134,7 +133,7 @@ class DecryptionShareEnvelope:
 
 @dataclass(frozen=True)
 class Exclusion:
-    """A ballot excluded from the aggregate, with a typed reason (DESIGN.md §7.2)."""
+    """A ballot excluded from the aggregate, with a typed reason."""
 
     sequence_number: int
     reason: ExclusionReason
@@ -159,7 +158,7 @@ class AggregateArtifact:
 
 @dataclass(frozen=True)
 class ResultArtifact:
-    """Final result artifact (DESIGN.md §7.2, §8.3)."""
+    """Final result artifact."""
 
     election_id: bytes  # bytes32
     totals: tuple[int, ...]  # per-candidate plaintext totals

@@ -1,6 +1,6 @@
-"""Relational schema for the database data-layer adapter (DESIGN.md §5.1).
+"""Relational schema for the database data-layer adapter.
 
-Artifacts are stored as their JSON envelopes (§7.2) in ``jsonb`` columns — the
+Artifacts are stored as their JSON envelopes in ``jsonb`` columns — the
 adapter never interprets crypto (availability only). The schema provides the two
 things SQL must guarantee for the port contract:
 

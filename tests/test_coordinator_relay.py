@@ -35,7 +35,7 @@ def _world():
         election_id=b"\x00" * 32, num_candidates=NC, budget=3, mode=Mode.EXACT, variant=Variant.A,
         weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000, voting_end=2_000, tally_deadline=3_000, threshold=Threshold(t=T, n=N),
-        keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, endpoint="") for i in range(N)),
+        keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url="") for i in range(N)),
         eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
         gateway_keys=(Signer.generate().identity,), admin_key=admin.identity, protocol_version="v1",
     )
@@ -139,7 +139,7 @@ def test_keypers_write_dkg_through_coordinator_relay(tmp_path):
         election_id=b"\x00" * 32, num_candidates=NC, budget=3, mode=Mode.EXACT, variant=Variant.A,
         weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000, voting_end=2_000, tally_deadline=3_000, threshold=Threshold(t=T, n=N),
-        keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, endpoint="") for i in range(N)),
+        keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url="") for i in range(N)),
         eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
         gateway_keys=(Signer.generate().identity,), admin_key=admin.identity, protocol_version="v1",
     )

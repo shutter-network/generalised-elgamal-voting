@@ -1,4 +1,4 @@
-"""Database backend of the uniform data-layer service (DESIGN.md §5.1, §7.2).
+"""Database backend of the uniform data-layer service.
 
 The HTTP surface is now backend-agnostic and lives in
 :mod:`geg.services.data_layer` (:func:`build_app` maps the ``ElectionDataLayer``

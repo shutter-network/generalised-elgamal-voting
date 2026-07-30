@@ -1,4 +1,4 @@
-"""Single-point Schnorr signatures over G1 (DESIGN.md §5.2, §7.1).
+"""Single-point Schnorr signatures over G1.
 
 ``vk = sk·P1``; ``sign: R = k·P1, e = H(R‖vk‖msg), s = k + e·sk``; ``verify:
 s·P1 == R + e·vk``. Chosen over BLS so verification stays in G1 without a pairing.

@@ -60,7 +60,7 @@ abstract contract ElectionTally is ElectionBase {
 
         if (aggregateVoteCountByResult[resultDigest] >= keyperSet.getThreshold()) {
             // Store the canonical aggregate (admitted set + exclusions + total weight
-            // included) as its encoded blob — DESIGN.md §7.2.
+            // included) as its encoded blob.
             encryptedTallyEncoded = abi.encode(aggregate);
             aggregatePublished = true;
             emit AggregatePublished(electionId);

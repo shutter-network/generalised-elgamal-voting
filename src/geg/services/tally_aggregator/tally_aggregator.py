@@ -1,4 +1,4 @@
-"""Tally library (DESIGN.md §2, §8.1, §8.3) — recover + publish the result.
+"""Tally library — recover + publish the result.
 
 Aggregation is committee-owned: each keyper re-derives the deterministic aggregate
 from the ordered ballots and submits it, and the data layer makes it canonical at
@@ -55,9 +55,9 @@ def trigger_aggregate(keypers, election_id: bytes) -> None:
 
 def trigger_keypers(keypers, election_id: bytes) -> None:
     """**Test/simulation harness only** (the coordinator uses ``coord.trigger_decrypt_http``).
-    Trigger each in-process keyper's decryption (sx-monorepo model). Failures are
+    Trigger each in-process keyper's decryption. Failures are
     swallowed — the share count on the data layer is the real success gate, and the
-    next tick retries (keypers self-guard via §8.2 preconditions)."""
+    next tick retries (keypers self-guard on their preconditions)."""
     for k in keypers:
         try:
             k.decrypt_and_submit(election_id)

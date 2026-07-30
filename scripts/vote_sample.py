@@ -4,7 +4,7 @@
 For the deployment demos (RUNNING.md): reads the finalized election key from the
 data-layer service, builds valid weighted ballots in-browser style (plaintext +
 proof randomness never leave here), issues each an attestation with the eligibility
-secret, and POSTs the §7.2 ballot envelope to the gateway. Backend-agnostic — it
+secret, and POSTs the ballot envelope to the gateway. Backend-agnostic — it
 only speaks HTTP to the data-layer + gateway services.
 
     GEG_DATA_LAYER_URL=http://127.0.0.1:8000 GATEWAY_URL=http://127.0.0.1:8200 \

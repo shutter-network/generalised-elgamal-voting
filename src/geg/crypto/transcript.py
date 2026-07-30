@@ -1,4 +1,4 @@
-"""Merlin-style Fiat-Shamir transcript and hash-to-scalar (DESIGN.md §7.1).
+"""Merlin-style Fiat-Shamir transcript and hash-to-scalar.
 
 Byte-faithful reproduction of the SDK's ``Transcript`` (``transcript.ts`` /
 ``hash.ts``): an append-only, length-prefixed byte log whose ``challenge`` folds

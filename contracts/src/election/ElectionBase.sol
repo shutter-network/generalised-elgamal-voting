@@ -170,7 +170,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         config.thresholdN = keyperSet.getNumMembers();
         config.thresholdT = keyperSet.getThreshold();
         config.keyperAddresses = keyperSet.getMembers();
-        config.keyperEndpoints = keyperSet.getEndpoints();
+        config.keyperURLs = keyperSet.getURLs();
         config.pkWR = wrPublicKey;
         config.cancelled = cancelled;
         config.adminAddr = adminAddr;

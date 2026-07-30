@@ -1,4 +1,4 @@
-"""Linearly homomorphic exponential ElGamal in G2 (DESIGN.md §7.1).
+"""Linearly homomorphic exponential ElGamal in G2.
 
 ``Enc(m, mpk, r) = (r·P2, r·mpk + m·P2)``. Homomorphic by point-wise addition:
 ``Enc(m1) + Enc(m2) = Enc(m1 + m2)``; ``scalar_mul_ct(k, ct) = Enc(k·m)`` applies

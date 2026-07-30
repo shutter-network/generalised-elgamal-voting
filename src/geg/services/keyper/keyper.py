@@ -1,17 +1,17 @@
-"""Keyper service (DESIGN.md §2, §5.3, §8.2).
+"""Keyper service.
 
 A committee member: participates in the fresh per-election DKG, re-derives and
 submits the deterministic aggregate (canonical at the t+1 quorum), and produces
 precondition-guarded partial decryptions of the canonical aggregate. Keypers are
 triggered automatically by the coordinator but **never trust the trigger** — before
 producing shares a keyper re-derives the necessary facts from the data layer itself
-(§8.2). Aggregate integrity comes from the **t+1 keyper quorum** (a bogus aggregate
+. Aggregate integrity comes from the **t+1 keyper quorum** (a bogus aggregate
 can't become canonical under the threshold assumption), so decryption needs no
 separate honesty re-check.
 
 The DKG round exchange here is in-process (driven by the coordinator); a
 multi-operator deployment wraps the same round methods behind authenticated P2P
-HTTP (§5.3), which is a transport concern, not a protocol one.
+HTTP, which is a transport concern, not a protocol one.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from geg.core.state import ElectionState, StateFacts, derive_state
 
 
 class KeyperRefusal(RuntimeError):
-    """Raised when a keyper refuses to decrypt because a §8.2 precondition fails."""
+    """Raised when a keyper refuses to decrypt because a precondition fails."""
 
 
 class KeyperService:
@@ -76,7 +76,7 @@ class KeyperService:
         **byte-identical** artifacts; the data layer makes the aggregate canonical
         once ``t+1`` keypers submit the same one (see ``submit_aggregate``).
 
-        Like §8.2 decryption, the keyper never trusts the trigger — it self-guards
+        Like decryption, the keyper never trusts the trigger — it self-guards
         on the derived state (must be ``Tallying`` or later, i.e. ``votingEnd``
         passed, key finalized). Returns ``(aggregate, signature)`` to submit, or
         ``None`` if this keyper already submitted (idempotent no-op). Reads only;
@@ -85,7 +85,7 @@ class KeyperService:
         rec = self.dl.get_election(election_id)  # raises if unknown
         cfg = rec.config
 
-        # Self-guard: voting has ended and the key is finalized (§8.2-style).
+        # Self-guard: voting has ended and the key is finalized.
         facts = StateFacts(
             cancelled=rec.cancelled,
             key_finalized=rec.finalized_key is not None,
@@ -126,10 +126,10 @@ class KeyperService:
         self.dl.submit_aggregate(election_id, artifact, sig)
         return True
 
-    # -- partial decryption with §8.2 preconditions ------------------------ #
+    # -- partial decryption with its preconditions ------------------------ #
 
     def produce_decryption_share(self, election_id: bytes):
-        """Check §8.2 and produce this keyper's signed decryption share.
+        """Check the preconditions and produce this keyper's signed decryption share.
 
         Returns ``(share, signature)`` to submit, or ``None`` if this keyper already
         submitted for this election (idempotent no-op). Raises :class:`KeyperRefusal`
@@ -185,7 +185,7 @@ class KeyperService:
         return share, sig
 
     def decrypt_and_submit(self, election_id: bytes) -> bool:
-        """Produce the share (§8.2) and write it directly via ``self.dl``.
+        """Produce the share and write it directly via ``self.dl``.
 
         **In-process test/simulation path only** (driven by
         ``tally_aggregator.trigger_keypers``). The deployed keyper instead serves the

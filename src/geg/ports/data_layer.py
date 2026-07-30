@@ -1,15 +1,13 @@
-"""``ElectionDataLayer`` — the single storage abstraction (DESIGN.md §5.1).
+"""``ElectionDataLayer`` — the single storage abstraction.
 
-The method set is lifted from the proven surface of
-``thresholdELGamal/src/eth_client.py::ElectionClient`` and generalised: no method
+The method set is a proven storage surface, generalised so that no method
 assumes a chain. All artifacts are stored and returned as opaque, self-verifying
 envelopes (:mod:`geg.envelopes`); the data layer never interprets crypto beyond
 the two rules noted below.
 
-Contract of the port (DESIGN.md §5.1):
+Contract of the port:
 
-* **Availability only.** The data layer is untrusted for integrity (DESIGN.md
-  §3). It performs no proof verification.
+* **Availability only.** The data layer is untrusted for integrity. It performs no proof verification.
 * **Ordering.** :meth:`ElectionDataLayer.list_ballots` returns ballots in a
   stable total order with monotonic sequence numbers, so ``duplicate_policy`` is
   deterministically reproducible by every auditor. (Chain: transaction order;
@@ -59,12 +57,11 @@ class FinalizedKey:
 
 @dataclass(frozen=True)
 class ElectionRecord:
-    """An election's stored config plus finalization facts (DESIGN.md §5.1).
+    """An election's stored config plus finalization facts.
 
     Returned by :meth:`ElectionDataLayer.get_election`. State (``Registered``,
     ``Voting``, ``Tallying`` …) is **not** stored here — it is derived from these
-    facts and the current time by the state-derivation function (DESIGN.md §4.2,
-    a later slice). ``cancelled`` records only whether a cancellation fact exists.
+    facts and the current time by the state-derivation function. ``cancelled`` records only whether a cancellation fact exists.
     """
 
     config: ElectionConfig
@@ -84,7 +81,7 @@ class WriteAuthorizationError(PermissionError):
 
 
 class ImmutabilityError(RuntimeError):
-    """Raised on an attempt to mutate config after ``voting_start`` (DESIGN.md §4.1)."""
+    """Raised on an attempt to mutate config after ``voting_start``."""
 
 
 class VotingWindowError(RuntimeError):
@@ -92,7 +89,7 @@ class VotingWindowError(RuntimeError):
     a ballot before ``voting_start`` / after ``voting_end``, or a tally write (aggregate,
     decryption share, result) before ``voting_end``. Only lifecycle-enforcing backends
     (the chain) raise it — availability-only backends accept the write and verification
-    is authoritative at tally time (DESIGN.md §6.2)."""
+    is authoritative at tally time."""
 
 
 class ElectionDataLayer(ABC):
@@ -158,7 +155,7 @@ class ElectionDataLayer(ABC):
 
         Authorized writer: a ``gateway_key`` (or open where direct submission is
         enabled). No proof verification here — ballots are self-verifying and
-        verification is authoritative at tally time (DESIGN.md §6.2).
+        verification is authoritative at tally time.
         """
 
     @abstractmethod
@@ -229,4 +226,4 @@ class ElectionDataLayer(ABC):
 
     @abstractmethod
     def verifiability_tier(self) -> int:
-        """Advertised verifiability tier (DESIGN.md §3, §5.1). v1 adapters return 0."""
+        """Advertised verifiability tier. v1 adapters return 0."""

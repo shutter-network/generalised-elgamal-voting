@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {DuplicateMember, EndpointsLengthMismatch, InvalidMember, InvalidThreshold, KeyperSet} from "../src/KeyperSet.sol";
+import {DuplicateMember, URLsLengthMismatch, InvalidMember, InvalidThreshold, KeyperSet} from "../src/KeyperSet.sol";
 
 contract KeyperSetTest is Test {
     address private keyper1 = address(0x1001);
@@ -30,26 +30,26 @@ contract KeyperSetTest is Test {
         keyperSet.getMemberIndex(address(0xBAD));
     }
 
-    function test_endpointsRoundTripAndLengthCheck() external {
+    function test_urlsRoundTripAndLengthCheck() external {
         address[] memory members = _members();
-        string[] memory eps = new string[](3);
-        eps[0] = "http://k1:8100";
-        eps[1] = "http://k2:8100";
-        eps[2] = "http://k3:8100";
+        string[] memory urls = new string[](3);
+        urls[0] = "http://k1:8100";
+        urls[1] = "http://k2:8100";
+        urls[2] = "http://k3:8100";
 
-        KeyperSet keyperSet = new KeyperSet(members, eps, 2);
-        string[] memory stored = keyperSet.getEndpoints();
+        KeyperSet keyperSet = new KeyperSet(members, urls, 2);
+        string[] memory stored = keyperSet.getURLs();
         assertEq(stored.length, 3);
         assertEq(stored[0], "http://k1:8100");
         assertEq(stored[2], "http://k3:8100");
 
-        // endpoints are REQUIRED: an empty array (length 0) is rejected
-        vm.expectRevert(abi.encodeWithSelector(EndpointsLengthMismatch.selector, 0, 3));
+        // URLs are REQUIRED: an empty array (length 0) is rejected
+        vm.expectRevert(abi.encodeWithSelector(URLsLengthMismatch.selector, 0, 3));
         new KeyperSet(members, new string[](0), 2);
 
         // any mismatched length is rejected
         string[] memory two = new string[](2);
-        vm.expectRevert(abi.encodeWithSelector(EndpointsLengthMismatch.selector, 2, 3));
+        vm.expectRevert(abi.encodeWithSelector(URLsLengthMismatch.selector, 2, 3));
         new KeyperSet(members, two, 2);
     }
 

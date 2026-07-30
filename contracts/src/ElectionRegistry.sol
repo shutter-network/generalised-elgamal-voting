@@ -21,7 +21,7 @@ contract ElectionRegistry is AccessControl, IElectionRegistry {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
-    /// @notice Publish an election under the next sequential id (DESIGN.md §4.1).
+    /// @notice Publish an election under the next sequential id.
     /// @dev electionId is assigned by the registry (++electionCount), matching the
     ///      canonical bulletin-board model — ids are dense and enumerable, and no
     ///      caller-chosen id is accepted.

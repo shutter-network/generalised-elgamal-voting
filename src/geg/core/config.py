@@ -1,6 +1,6 @@
 """Election configuration and lifecycle enums.
 
-Implements the election-configuration table of DESIGN.md §4.1. The config is
+The election-configuration table. The config is
 registered once by the admin service and is **immutable after ``voting_start``**
 (the data-layer adapter enforces this: free on the contract adapter, mandatory
 server-side on the database adapter).
@@ -20,14 +20,14 @@ from enum import Enum
 
 
 class Mode(str, Enum):
-    """Budget constraint over the per-ballot vote vector (DESIGN.md §4.1, §6.1)."""
+    """Budget constraint over the per-ballot vote vector."""
 
     EXACT = "exact"  # sum(votes) == budget
     AT_MOST = "atMost"  # sum(votes) <= budget   (conformance level 2)
 
 
 class Variant(str, Enum):
-    """Per-candidate validity-proof construction (DESIGN.md §6.1)."""
+    """Per-candidate validity-proof construction."""
 
     A = "A"  # (B+1)-branch OR proof per candidate      (conformance level 1)
     B = "B"  # bit-decomposition proofs per candidate   (conformance level 2)
@@ -36,7 +36,7 @@ class Variant(str, Enum):
 class DuplicatePolicy(str, Enum):
     """How repeated ballots for one pseudonym are resolved at tally time.
 
-    Evaluated over the data layer's stable total order (DESIGN.md §6.2), so the
+    Evaluated over the data layer's stable total order, so the
     outcome is reproducible by any auditor.
     """
 
@@ -46,7 +46,7 @@ class DuplicatePolicy(str, Enum):
 
 @dataclass(frozen=True)
 class Threshold:
-    """(t, n): any ``t + 1`` of ``n`` keypers can decrypt (DESIGN.md §4.1)."""
+    """(t, n): any ``t + 1`` of ``n`` keypers can decrypt."""
 
     t: int
     n: int
@@ -60,25 +60,24 @@ class Threshold:
 
 @dataclass(frozen=True)
 class KeyperIdentity:
-    """One committee member: a signing identity plus a P2P endpoint (DESIGN.md §4.1).
+    """One committee member: a signing identity plus a P2P URL.
 
     ``signing_key`` is the opaque identity the data layer checks DKG-result,
-    aggregate, and decryption-share writes against; ``endpoint`` is where the
+    aggregate, and decryption-share writes against; ``url`` is where the
     coordinator reaches this keyper over HTTP.
     """
 
     signing_key: bytes
-    endpoint: str
+    url: str
 
 
 @dataclass(frozen=True)
 class ElectionConfig:
-    """Full immutable election configuration (DESIGN.md §4.1).
+    """Full immutable election configuration.
 
-    Superset of the on-chain ``ElectionConfigView`` (see
-    ``thresholdELGamal/src/eth_client.py::get_election``): this generalised config
+    Superset of the on-chain ``ElectionConfigView``: this generalised config
     adds ``mode``, ``variant``, ``weighted``, ``max_weight``, ``duplicate_policy``,
-    ``tally_deadline``, per-keyper endpoints, and the explicit authorization
+    ``tally_deadline``, per-keyper URLs, and the explicit authorization
     identities (``eligibility_key``, ``result_publisher_key``, ``gateway_keys``,
     ``admin_key``) plus ``protocol_version``.
     """
@@ -95,12 +94,12 @@ class ElectionConfig:
     voting_end: int  # absolute unix timestamp (seconds)
     tally_deadline: int  # after this, an election without a result is Void
     threshold: Threshold
-    keypers: tuple[KeyperIdentity, ...]  # n keyper identities + endpoints
+    keypers: tuple[KeyperIdentity, ...]  # n keyper identities + URLs
     eligibility_key: bytes  # public key attestations must verify against
     result_publisher_key: bytes  # identity authorized to publish aggregate + result
     gateway_keys: tuple[bytes, ...]  # authorized ballot writers (empty = open writes)
     admin_key: bytes  # identity authorized to register/cancel
-    protocol_version: str  # crypto suite + wire format version (DESIGN.md §7)
+    protocol_version: str  # crypto suite + wire format version
 
     def __post_init__(self) -> None:
         if self.num_candidates < 1:

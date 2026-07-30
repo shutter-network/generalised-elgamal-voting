@@ -1,4 +1,4 @@
-"""Reusable ``ElectionDataLayer`` conformance suite (DESIGN.md §5.1, §9).
+"""Reusable ``ElectionDataLayer`` conformance suite.
 
 ``DataLayerConformance`` is a base class of behavioural tests for the port
 contract — ordering, immutability, the finalization quorum rule, the authz
@@ -6,8 +6,7 @@ matrix, idempotent shares, and public reads. Every adapter subclasses it and
 supplies a ``backend`` fixture; it is correct iff it passes these unmodified.
 
 The suite is abstracted over **two seams** so the *same assertions* run against
-backends with different authorization and time models (DESIGN.md §5.1: identity
-interpretation is adapter-specific):
+backends with different authorization and time models:
 
 * **Authorization** — a write is issued through ``backend.dl(role)`` (the adapter
   authorized to act as ``role``) with ``backend.sig(role, op)`` (the credential to
@@ -165,7 +164,7 @@ class SignatureBackend(ConformanceBackend):
             tally_deadline=3_000,
             threshold=Threshold(t=T, n=N),
             keypers=tuple(
-                KeyperIdentity(signing_key=self._signers[f"keyper{i}"].identity, endpoint=f"http://k{i}")
+                KeyperIdentity(signing_key=self._signers[f"keyper{i}"].identity, url=f"http://k{i}")
                 for i in range(1, N + 1)
             ),
             eligibility_key=_b(48, 0xE1),

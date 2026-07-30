@@ -65,11 +65,11 @@ python scripts/gen_deploy_env.py     # writes deploy/.env + deploy/sample-electi
 ```
 
 `deploy/.env` holds every private key (git-ignored — don't commit it);
-`deploy/sample-election.json` is a valid §7.2 config envelope wired to the
-generated keyper endpoints/addresses. See `deploy/.env.example` for the full
-variable list. `gen_deploy_env.py` writes each keyper's endpoint as
+`deploy/sample-election.json` is a valid config envelope wired to the
+generated keyper URLs/addresses. See `deploy/.env.example` for the full
+variable list. `gen_deploy_env.py` writes each keyper's URL as
 `http://host.docker.internal:810N` (local split); set
-`KEYPER_ENDPOINTS=url1,url2,url3` before running it for a real multi-machine deploy.
+`KEYPER_URLS=url1,url2,url3` before running it for a real multi-machine deploy.
 
 ---
 
@@ -101,7 +101,7 @@ docker compose -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper
 ```
 
 Onboarding is one-time and needs a single pre-shared value: share your keyper's
-**public URL** with the admin (it goes into `config.keypers[].endpoint`) and receive
+**public URL** with the admin (it goes into `config.keypers[].url`) and receive
 `COORDINATOR_IDENTITY` from them out of band. No tokens to mint or hold — the
 coordinator installs both your inbound bearer token **and** your relay token over the
 sealed, signed `/auth/bootstrap` channel once it can reach your `/status`.
@@ -194,7 +194,7 @@ the config, so successive elections can use different or partly-replaced keyper 
 (k1,k2,k3 then k2,k3,k4). The keyper URLs travel in that config and are stored in the
 data layer on **every** backend — including on chain, where the `KeyperSet` contract
 holds each member's URL — so services read them through the port; there is no
-endpoint env var.
+URL env var.
 
 ---
 
@@ -261,10 +261,10 @@ lives — tx sender vs. a verified request signature.
 > and let real time pass (don't warp — services derive state from wall-clock, which
 > on a real chain matches `block.timestamp`).
 
-> **Keyper endpoints on chain.** The `KeyperSet` contract stores each member's URL
+> **Keyper URLs on chain.** The `KeyperSet` contract stores each member's URL
 > alongside its address (set at registration), so the coordinator reads keyper
-> endpoints straight from the election config via the data-layer port — same as the
-> database backend. No endpoint env var.
+> URLs straight from the election config via the data-layer port — same as the
+> database backend. No URL env var.
 
 This stack has been brought up by hand through a **complete election** — anvil →
 fund → deploy-registry → register → auto-DKG finalizes on chain → two weighted

@@ -1,4 +1,4 @@
-"""Chain-backed voting-power source for the wallet eligibility adapter (DESIGN.md §5.2).
+"""Chain-backed voting-power source for the wallet eligibility adapter.
 
 The wallet adapter reads voting power through an injected ``address_bytes -> int``
 callable. :func:`chain_voting_power` fills that seam with an on-chain read —

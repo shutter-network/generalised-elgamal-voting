@@ -74,7 +74,7 @@ class Env:
             tally_deadline=3_000,
             threshold=Threshold(t=self.threshold_t, n=self.n),
             keypers=tuple(
-                KeyperIdentity(signing_key=bytes([i]) * 20, endpoint=f"http://k{i}") for i in range(self.n)
+                KeyperIdentity(signing_key=bytes([i]) * 20, url=f"http://k{i}") for i in range(self.n)
             ),
             eligibility_key=self.elig_vk_bytes,
             result_publisher_key=b"\xa1" * 20,
@@ -229,7 +229,7 @@ def build_full_env(dl, clock) -> FullEnv:
         tally_deadline=3_000,
         threshold=Threshold(t=t, n=n),
         keypers=tuple(
-            KeyperIdentity(signing_key=keyper_signers[i].identity, endpoint=f"http://k{i}") for i in range(n)
+            KeyperIdentity(signing_key=keyper_signers[i].identity, url=f"http://k{i}") for i in range(n)
         ),
         eligibility_key=elig.eligibility_key,
         result_publisher_key=result_publisher.identity,

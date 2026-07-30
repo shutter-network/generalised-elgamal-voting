@@ -561,7 +561,7 @@
             "internalType": "address"
           },
           {
-            "name": "keyperEndpoints",
+            "name": "keyperURLs",
             "type": "string[]",
             "internalType": "string[]"
           }

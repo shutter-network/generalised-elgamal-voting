@@ -1,4 +1,4 @@
-"""Ballot admission — the correctness kernel (DESIGN.md §6.2, §8.1).
+"""Ballot admission — the correctness kernel.
 
 A deterministic function from the data layer's ordered ballot list + election
 config + eligibility key to an **admitted set** and typed **exclusion reasons**.
@@ -34,7 +34,7 @@ class StoredBallot:
 
     ``submitted_at`` is the adapter's authoritative receive time where it has one
     (block time / NTP-disciplined service clock); ``None`` when the adapter has no
-    authoritative time and enforces the window at write instead (DESIGN.md §4.2),
+    authoritative time and enforces the window at write instead,
     in which case the ``OUT_OF_WINDOW`` check is skipped here.
     """
 
@@ -117,7 +117,7 @@ def _duplicate_losers(valid: list[StoredBallot], policy: DuplicatePolicy) -> set
 
 
 def admit(ballots: list[StoredBallot], config: ElectionConfig, mpk_bytes: bytes) -> AdmissionResult:
-    """Compute the admitted set and typed exclusions (DESIGN.md §6.2).
+    """Compute the admitted set and typed exclusions.
 
     ``ballots`` must be in the data layer's stable total order. ``mpk_bytes`` is
     the finalized election key (``FinalizedKey.pk_election``).

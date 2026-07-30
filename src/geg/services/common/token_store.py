@@ -3,7 +3,7 @@
 The keyper bootstrap tokens are minted by the **coordinator** (the sole
 bootstrapper) and installed on the keypers. This file-backed store persists them to
 the coordinator's private volume, keyed by **keyper URL** — the stable identity of a
-keyper endpoint.
+keyper.
 
 Each entry is a per-``(coordinator, keyper)`` **channel credential**
 (``{api_token, peer_token}``): minted once and reused across every committee/election

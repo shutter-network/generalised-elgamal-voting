@@ -1,4 +1,4 @@
-"""Stub ``EligibilityService`` adapter (DESIGN.md §5.2).
+"""Stub ``EligibilityService`` adapter.
 
 A development eligibility service that issues attestations to any request
 (fixed or request-supplied weight). It authenticates nobody — issuance

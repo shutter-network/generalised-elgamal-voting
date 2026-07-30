@@ -1,10 +1,10 @@
-"""Multi-operator keyper backend: DKG over HTTP → decrypt → tally (sx-monorepo model).
+"""Multi-operator keyper backend: DKG over HTTP → decrypt → tally.
 
 Spins up n keyper HTTP servers (each with its own identity + private encrypted
 state dir), bootstraps bearer tokens, drives a real distributed DKG over the wire
 (confidential round-2 shares travel keyper→keyper), then runs a full weighted
 election to a correct tally — with keypers triggered over HTTP and self-guarding
-via the §8.2 preconditions. Also checks auth fail-closed and persisted-secret
+via their preconditions. Also checks auth fail-closed and persisted-secret
 restart.
 """
 
@@ -52,7 +52,7 @@ class World:
             election_id=ELECTION_ID, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1000, voting_end=2000, tally_deadline=3000, threshold=Threshold(t=T, n=N),
-            keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint="") for i in range(N)),
+            keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url="") for i in range(N)),
             eligibility_key=self.elig.eligibility_key, result_publisher_key=self.result_publisher.identity,
             gateway_keys=(self.gateway.identity,), admin_key=self.admin.identity, protocol_version="v1",
         )

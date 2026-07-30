@@ -1,4 +1,4 @@
-"""``BlockchainDataLayer`` — the per-actor chain adapter (DESIGN.md §5.1).
+"""``BlockchainDataLayer`` — the per-actor chain adapter.
 
 Maps the ``ElectionDataLayer`` port onto the extended bulletin-board contracts.
 Authorization is by transaction sender (this adapter is bound to one actor's
@@ -137,13 +137,13 @@ class BlockchainDataLayer(ElectionDataLayer):
     # -- election lifecycle ------------------------------------------------- #
 
     def register_election(self, config: ElectionConfig, admin_sig: bytes) -> bytes:
-        # Deploy a fresh KeyperSet from the config's keyper addresses + endpoints
-        # (fresh DKG per election). Storing endpoints on-chain lets any service read
-        # keyper URLs through the data-layer port — no off-chain endpoint registry.
+        # Deploy a fresh KeyperSet from the config's keyper addresses + URLs
+        # (fresh DKG per election). Storing URLs on-chain lets any service read
+        # keyper URLs through the data-layer port — no off-chain URL registry.
         members = [Web3.to_checksum_address(k.signing_key) for k in config.keypers]
-        endpoints = [k.endpoint for k in config.keypers]
+        urls = [k.url for k in config.keypers]
         quorum = config.threshold.t + 1  # on-chain threshold is the quorum count
-        ks = self._deploy(KEYPERSET_ABI, "KeyperSet", members, endpoints, quorum)
+        ks = self._deploy(KEYPERSET_ABI, "KeyperSet", members, urls, quorum)
         params = self._config_to_params(config)
         # The registry assigns the next sequential id; read it back from the event.
         # The receipt also carries the KeyperSet/Election deploy + role-grant logs, so
@@ -160,7 +160,7 @@ class BlockchainDataLayer(ElectionDataLayer):
     def get_election(self, election_id: bytes) -> ElectionRecord:
         election = self._election(election_id)
         config_raw, dkg_raw = election.functions.getElection().call()
-        config = self._config_from_view(config_raw)  # keyper endpoints included (from getElection)
+        config = self._config_from_view(config_raw)  # keyper URLs included (from getElection)
         finalized = None
         if election.functions.isDKGFinalized().call():
             finalized = FinalizedKey(
@@ -374,7 +374,7 @@ class BlockchainDataLayer(ElectionDataLayer):
 
     def _config_from_view(self, v) -> ElectionConfig:
         keyper_addrs = [_addr_bytes(a) for a in v[15]]
-        keyper_endpoints = [str(e) for e in v[21]]  # index-aligned with keyperAddresses
+        keyper_urls = [str(e) for e in v[21]]  # index-aligned with keyperAddresses
         threshold_n = int(v[13])
         threshold_t = int(v[14]) - 1  # on-chain threshold is the quorum count (t+1)
         return ElectionConfig(
@@ -391,7 +391,7 @@ class BlockchainDataLayer(ElectionDataLayer):
             tally_deadline=int(v[3]),
             threshold=Threshold(t=threshold_t, n=threshold_n),
             keypers=tuple(
-                KeyperIdentity(signing_key=a, endpoint=e) for a, e in zip(keyper_addrs, keyper_endpoints)
+                KeyperIdentity(signing_key=a, url=e) for a, e in zip(keyper_addrs, keyper_urls)
             ),
             eligibility_key=bytes(v[16]),
             result_publisher_key=_addr_bytes(v[19]),

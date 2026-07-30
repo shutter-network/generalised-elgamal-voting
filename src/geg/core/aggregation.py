@@ -1,4 +1,4 @@
-"""Weighted homomorphic aggregation and threshold recovery (DESIGN.md §6.3, §8).
+"""Weighted homomorphic aggregation and threshold recovery.
 
 Aggregation is uniform: the per-candidate aggregate is always
 ``Σ_i weight_i · ct_i`` over admitted ballots, with ``weight_i`` from each
@@ -7,7 +7,7 @@ ballot's attestation (weight 1 is the one-person-one-vote case — one code path
 Recovery verifies every decryption share's DLEQ against the finalized committee
 keys, Lagrange-combines ``t+1`` of them per candidate, and recovers each total by
 baby-step giant-step within the **derived** bound ``budget · Σ(admitted weights)``
-(DESIGN.md §6.3) — computable from public data since weights are attested.
+ — computable from public data since weights are attested.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from geg.envelopes.types import (
 
 
 def bsgs_bound(config: ElectionConfig, total_admitted_weight: int) -> int:
-    """Derived plaintext bound for BSGS: ``budget · Σ(admitted weights)`` (§6.3)."""
+    """Derived plaintext bound for BSGS: ``budget · Σ(admitted weights)``."""
     return config.budget * total_admitted_weight
 
 
@@ -43,7 +43,7 @@ def aggregate_points(admitted, num_candidates: int) -> list[tuple]:
 
 
 def build_aggregate_artifact(config: ElectionConfig, admission: AdmissionResult) -> AggregateArtifact:
-    """Compose the admitted set + weighted aggregate into the published artifact (§7.2)."""
+    """Compose the admitted set + weighted aggregate into the published artifact."""
     agg_pts = aggregate_points(admission.admitted, config.num_candidates)
     aggregates = tuple(
         Ciphertext(c1=g2_to_compressed(c1), c2=g2_to_compressed(c2)) for (c1, c2) in agg_pts
@@ -64,7 +64,7 @@ def recover_result(
     committee_pks: tuple[bytes, ...],
     threshold_t: int,
 ) -> ResultArtifact | None:
-    """Recover per-candidate totals from ``t+1`` DLEQ-verified shares (§8.3).
+    """Recover per-candidate totals from ``t+1`` DLEQ-verified shares.
 
     ``committee_pks`` is the finalized ``committee_pks`` tuple (index
     ``keyper_index - 1``). Returns ``None`` if any candidate lacks ``t+1`` valid

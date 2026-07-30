@@ -118,7 +118,7 @@ class ChainDaemonWorld:
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=self.base + 1000, voting_end=self.base + 2000, tally_deadline=self.base + 3000,
             threshold=Threshold(t=T, n=N),
-            keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint="") for i in range(N)),
+            keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url="") for i in range(N)),
             eligibility_key=self.elig.eligibility_key, result_publisher_key=self.result_publisher.identity,
             gateway_keys=(self.gateway.identity,), admin_key=self.admin.identity, protocol_version="v1",
         )

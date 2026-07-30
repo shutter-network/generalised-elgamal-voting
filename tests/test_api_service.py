@@ -3,7 +3,7 @@ backend via the Flask test client.
 
 The API is backend-blind (it takes any ``ElectionDataLayer``); driving it over the
 in-memory adapter exercises the read pass-through, pagination, CORS, and error
-mapping without external infra. It returns the raw §7.2 envelopes today, so the
+mapping without external infra. It returns the raw envelopes today, so the
 config round-trips back through the codec.
 """
 

@@ -116,7 +116,7 @@ class ChainEnv:
             duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=self.base + 1000, voting_end=self.base + 2000, tally_deadline=self.base + 3000,
             threshold=Threshold(t=T, n=N),
-            keypers=tuple(KeyperIdentity(signing_key=self._addr(f"keyper{i}"), endpoint=f"http://keyper{i}:8100")
+            keypers=tuple(KeyperIdentity(signing_key=self._addr(f"keyper{i}"), url=f"http://keyper{i}:8100")
                           for i in range(1, N + 1)),
             eligibility_key=_b(48, 0xE1), result_publisher_key=self._addr("result_publisher"),
             gateway_keys=(self._addr("gateway"),), admin_key=self._addr("admin"), protocol_version="v1",
@@ -206,7 +206,7 @@ def test_register_and_get_round_trip(env):
     assert rec.config.num_candidates == NUM_CANDIDATES
     # keyper (address, URL) pairs are stored on chain (in the KeyperSet) and read back
     # index-aligned through the port — k_i always pairs with u_i (DKG + decryption).
-    assert [(k.signing_key, k.endpoint) for k in rec.config.keypers] == [
+    assert [(k.signing_key, k.url) for k in rec.config.keypers] == [
         (env._addr(f"keyper{i}"), f"http://keyper{i}:8100") for i in range(1, N + 1)
     ]
 

@@ -1,6 +1,6 @@
 """Ballot construction, validity-proof codec, and crypto verification.
 
-Variant A / exact mode (conformance level 1, DESIGN.md §6.1). Byte-faithful to
+Variant A / exact mode (conformance level 1). Byte-faithful to
 the SDK (``verify.ts``, ``highlevel.ts``, ``codec.ts``): the canonical ballot
 message the voter signs, the transcript seeding shared by prover and verifier,
 and the versioned ``BallotValidityProof`` encoding.
@@ -48,7 +48,7 @@ from geg.crypto.transcript import Transcript
 # --------------------------------------------------------------------------- #
 
 def encode_ballot_validity_proof(range_proofs: Sequence[Sequence[ORBranch]], e_b: int, z_b: int) -> bytes:
-    """Encode Variant-A / exact validity proof (DESIGN.md §7.2)."""
+    """Encode Variant-A / exact validity proof."""
     n_outer = len(range_proofs)
     if n_outer == 0:
         raise ValueError("encode_ballot_validity_proof: no range proofs")
@@ -185,7 +185,7 @@ def build_ballot(*, mpk, election_id: bytes, pseudonym: bytes, sk: int, vk,
                  budget_proof_w=None, schnorr_k=None) -> BuiltBallot:
     """Build a Variant-A / exact ballot (mirrors ``highlevel.ts:buildBallot``).
 
-    Randomness stays inside this function (DESIGN.md §7.1); optional pinned
+    Randomness stays inside this function; optional pinned
     randomness reproduces fixtures. Does NOT create the eligibility attestation —
     that is issued separately by the eligibility service and attached to the
     envelope by the caller.

@@ -1,4 +1,4 @@
-"""``PostgresStore`` — the database adapter's enforcement engine (DESIGN.md §5.1).
+"""``PostgresStore`` — the database adapter's enforcement engine.
 
 Implements the ``ElectionDataLayer`` contract against Postgres, server-side:
 stable total ballot ordering (a per-election 0-based sequence assigned under a row
@@ -11,7 +11,7 @@ passes the *same* conformance suite.
 Time is injected via ``clock`` (the service's NTP-disciplined wall clock in
 production; a controllable clock in tests) so immutability/cancellation windows
 are deterministic — matching "the authoritative timestamp source is the adapter's"
-(DESIGN.md §4.2).
+.
 """
 
 from __future__ import annotations

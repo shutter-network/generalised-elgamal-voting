@@ -1,4 +1,4 @@
-"""In-memory ``ElectionDataLayer`` — the reference adapter (DESIGN.md §5.1).
+"""In-memory ``ElectionDataLayer`` — the reference adapter.
 
 Single-process, for tests, demos, and as the executable definition of the port
 semantics. Enforces the full port contract: stable total ballot ordering with
@@ -9,7 +9,7 @@ matrix (via :mod:`geg.authz`), idempotent share submission, public reads, and
 
 Time is injected via a ``clock`` callable so immutability and cancellation
 windows are testable without wall-clock dependence (matching the "authoritative
-time source is the adapter's" rule of DESIGN.md §4.2). The database adapter will
+time source is the adapter's" rule). The database adapter will
 enforce the same contract server-side; both are correct iff they pass the
 conformance suite.
 """
@@ -154,7 +154,7 @@ class InMemoryDataLayer(ElectionDataLayer):
         st = self._get(election_id)
         # Ballot writes are open in the reference (gateway restriction, where
         # required, is enforced at the transport tier). Ballots are self-verifying;
-        # verification is authoritative at tally time (DESIGN.md §6.2).
+        # verification is authoritative at tally time.
         seq = len(st.ballots)
         st.ballots.append(ballot)
         return seq

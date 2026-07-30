@@ -21,15 +21,15 @@
     "keypers": [
       {
         "signingKey": "0x0000000000000000000000000000000000000000",
-        "endpoint": ""
+        "url": ""
       },
       {
         "signingKey": "0x0101010101010101010101010101010101010101",
-        "endpoint": ""
+        "url": ""
       },
       {
         "signingKey": "0x0202020202020202020202020202020202020202",
-        "endpoint": ""
+        "url": ""
       }
     ],
     "eligibilityKey": "0xb18609e0e36ed25d08c2ac5778a752ab18ef70179fb4753f767fd0cb6e5a83a9a414b79f3d9d8ccd78fd26b0d9982494",

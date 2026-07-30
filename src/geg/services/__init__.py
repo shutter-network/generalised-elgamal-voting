@@ -1,9 +1,9 @@
-"""Services / actors (DESIGN.md §2) — thin orchestration over the deep modules,
+"""Services / actors — thin orchestration over the deep modules,
 organized one **domain package** per actor. Each package colocates that domain's
 modules and re-exports its public API; deployable ones expose ``__main__`` so
 ``python -m geg.services.<domain>`` runs them.
 
-* :mod:`geg.services.keyper` — DKG participation + §8.2-guarded decryption; the
+* :mod:`geg.services.keyper` — DKG participation + precondition-guarded decryption; the
   HTTP keyper process, token bootstrap, and encrypted state.
 * :mod:`geg.services.coordinator` — the single keyper-facing orchestrator: DKG
   watcher/driver **and** tally driver (trigger aggregate → quorum → decrypt →

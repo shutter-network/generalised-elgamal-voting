@@ -1,4 +1,4 @@
-"""Blockchain data-layer adapter (DESIGN.md §5.1, adapter 1).
+"""Blockchain data-layer adapter.
 
 A single ``BlockchainDataLayer`` per actor, bound to that actor's Ethereum key,
 mapping the ``ElectionDataLayer`` port onto the extended bulletin-board contracts

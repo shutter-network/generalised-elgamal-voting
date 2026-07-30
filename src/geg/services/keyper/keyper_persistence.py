@@ -1,4 +1,4 @@
-"""Encrypted on-disk persistence for a keyper's durable state (sx-monorepo model).
+"""Encrypted on-disk persistence for a keyper's durable state.
 
 A keyper's secret ``combined_share`` is created at DKG (before ``voting_start``)
 but needed for decryption (after ``voting_end``) — days later — so it must

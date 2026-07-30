@@ -1,4 +1,4 @@
-"""Deployable keyper HTTP service (sx-monorepo model, geg ports).
+"""Deployable keyper HTTP service (geg ports).
 
 One process per committee member. Wraps the keyper crypto (`KeyperDKGState`,
 partial decryption) behind an authenticated HTTP API the DKG coordinator drives,
@@ -11,7 +11,7 @@ Auth (fail-closed until bootstrapped): coordinator→keyper endpoints require th
 ``/status``, ``/health``, ``/auth/bootstrap`` are open. Tokens are installed via a
 one-time X25519-sealed + coordinator-signed :func:`/auth/bootstrap` and persisted.
 
-The server never trusts a decryption trigger — `/decrypt` re-checks the §8.2
+The server never trusts a decryption trigger — `/decrypt` re-checks the
 preconditions against the data layer (via :class:`KeyperService`).
 """
 
@@ -261,7 +261,11 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         try:
             st.round2(box["commitments"], box["shares"])
         except ValueError as err:
-            return jsonify(verified=False, complaints=getattr(err, "bad_dealers", [])), 200
+            bad = getattr(err, "bad_dealers", [])
+            # Security-relevant: this keyper's VSS verification rejected a dealer's shares.
+            log.warning("op=dkg phase=round2 status=verify_failed election=%s complaints=%s err=%s",
+                        eid_hex, bad, err)
+            return jsonify(verified=False, complaints=bad), 200
         with lock:
             completed[eid_hex] = persist.DkgEntry(
                 combined_share=st.combined_share,
@@ -309,7 +313,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
                 return jsonify(ok=True, note="aggregate already finalized by quorum"), 200
         return jsonify(ok=True)
 
-    # -- partial decryption (§8.2 preconditions enforced by KeyperService) -- #
+    # -- partial decryption -- #
 
     @app.post("/decrypt")
     def decrypt():
@@ -375,9 +379,12 @@ def main() -> None:
     coordinator_url = os.environ.get("COORDINATOR_URL")
     submitter = CoordinatorClient(coordinator_url, "") if coordinator_url else None
 
+    port = int(os.environ.get("KEYPER_PORT", "8100"))
+    logging.getLogger("geg.keyper").info(
+        "op=start service=keyper port=%d keyper_identity=%s", port, signer.identity.hex())
     app = build_keyper_app(signer, data_layer, trusted_identities,
                            clock=lambda: int(time.time()), state_dir=state_dir, submitter=submitter)
-    app.run(host=os.environ.get("KEYPER_HOST", "0.0.0.0"), port=int(os.environ.get("KEYPER_PORT", "8100")))
+    app.run(host=os.environ.get("KEYPER_HOST", "0.0.0.0"), port=port)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""``ATTESTATION_V1`` — the weighted eligibility credential (DESIGN.md §5.2, §7.1).
+"""``ATTESTATION_V1`` — the weighted eligibility credential.
 
 A Schnorr-on-G1 signature by ``eligibility_key`` over a **domain-separated
 transcript** of ``(election_id, pseudonym, vk, weight)``. This extends the prior
@@ -76,7 +76,7 @@ def verify_attestation_sig(elig_vk_bytes: bytes, election_id: bytes, pseudonym: 
 
 
 # --------------------------------------------------------------------------- #
-#  Legacy Wahlregister attestation (weightless; DESIGN.md §5.2 interop)
+#  Legacy Wahlregister attestation (weightless; legacy interop)
 #
 #  The concept-doc-locked scheme: Schnorr-on-G1 over the bare concatenation
 #  ``keccak256(electionId ‖ pseudonym ‖ vk)`` — no domain separator, no weight.

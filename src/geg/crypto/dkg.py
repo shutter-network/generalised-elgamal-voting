@@ -1,4 +1,4 @@
-"""Feldman VSS distributed key generation over G2 (DESIGN.md §5.3, §7.1).
+"""Feldman VSS distributed key generation over G2.
 
 Each keyper draws a random degree-``t`` polynomial, publishes Feldman
 commitments ``γ_j = c_j·P2``, and hands share ``φ(i)`` to keyper ``i``. In round 2

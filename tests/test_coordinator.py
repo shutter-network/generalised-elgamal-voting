@@ -49,7 +49,7 @@ class KeyperWorld:
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=voting_start, voting_end=voting_end, tally_deadline=tally_deadline,
             threshold=Threshold(t=T, n=N),
-            keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, endpoint=self.urls[i + 1])
+            keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url=self.urls[i + 1])
                           for i in range(N)),
             eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
             gateway_keys=(Signer.generate().identity,), admin_key=self.admin.identity, protocol_version="v1",

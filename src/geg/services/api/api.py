@@ -7,7 +7,7 @@ methods, deliberately separate from the internal data-layer service. It is
 data-layer service), so it serves identical JSON whether the backend is database
 or blockchain — the frontend sees one contract either way.
 
-Responses are the raw §7.2 JSON envelopes today (the same shapes the data-layer
+Responses are the raw JSON envelopes today (the same shapes the data-layer
 service returns); shaping/enrichment (derived lifecycle state, list summaries,
 turnout) can be layered on later without changing the transport.
 
@@ -224,9 +224,12 @@ def main() -> None:
     from geg.adapters.db.client import HttpDataLayerClient
 
     logging.basicConfig(level=logging.INFO)
+    port = int(os.environ.get("API_PORT", "8500"))
+    logging.getLogger("geg.api").info("op=start service=api port=%d data_layer=%s",
+                                      port, os.environ["GEG_DATA_LAYER_URL"])
     dl = HttpDataLayerClient(os.environ["GEG_DATA_LAYER_URL"])
     app = build_api_app(dl)
-    app.run(host=os.environ.get("API_HOST", "0.0.0.0"), port=int(os.environ.get("API_PORT", "8500")))
+    app.run(host=os.environ.get("API_HOST", "0.0.0.0"), port=port)
 
 
 if __name__ == "__main__":

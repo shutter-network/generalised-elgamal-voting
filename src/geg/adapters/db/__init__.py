@@ -1,6 +1,6 @@
-"""Database data-layer adapter (DESIGN.md §5.1, adapter 2).
+"""Database data-layer adapter.
 
-A microservice exposing the ``ElectionDataLayer`` port over HTTP (the §7.2 JSON
+A microservice exposing the ``ElectionDataLayer`` port over HTTP (the JSON
 envelopes), backed by a relational database (Postgres), plus the HTTP client
 adapter the services hold. Topology:
 

@@ -1,6 +1,6 @@
 """Ballot Gateway HTTP ingest service: accept valid ballots, reject/filter others.
 
-The filter is non-authoritative (DESIGN.md §6.2): with it off, an invalid ballot
+The filter is non-authoritative: with it off, an invalid ballot
 is still accepted (injected) — the tally would exclude it. Uses the in-process
 `full_env` (registers + finalizes DKG in-process) with the HTTP gateway over it.
 """

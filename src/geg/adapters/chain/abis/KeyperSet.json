@@ -8,7 +8,7 @@
         "internalType": "address[]"
       },
       {
-        "name": "initialEndpoints",
+        "name": "initialURLs",
         "type": "string[]",
         "internalType": "string[]"
       },
@@ -19,19 +19,6 @@
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getEndpoints",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "string[]",
-        "internalType": "string[]"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -112,6 +99,19 @@
   },
   {
     "type": "function",
+    "name": "getURLs",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string[]",
+        "internalType": "string[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isMember",
     "inputs": [
       {
@@ -142,22 +142,6 @@
   },
   {
     "type": "error",
-    "name": "EndpointsLengthMismatch",
-    "inputs": [
-      {
-        "name": "endpointsLen",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "membersLen",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidMember",
     "inputs": [
       {
@@ -175,6 +159,22 @@
         "name": "threshold",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "membersLen",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "URLsLengthMismatch",
+    "inputs": [
+      {
+        "name": "urlsLen",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "membersLen",

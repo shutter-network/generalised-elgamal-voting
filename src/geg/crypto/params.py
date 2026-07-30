@@ -1,4 +1,4 @@
-"""Fixed parameters of the protocol-v1 crypto suite (DESIGN.md §7.1).
+"""Fixed parameters of the protocol-v1 crypto suite.
 
 BLS12-381: ElGamal ciphertexts and DKG artifacts live in **G2**; voter Schnorr
 signatures and attestations live in **G1**. Scalars are integers mod
@@ -29,9 +29,9 @@ DST_SCHNORR = b"SHUTTER-VOTE-SCHNORR-v1"
 # Transcript labels.
 BALLOT_LABEL = "SHUTTER-VOTE-BALLOT-v1"
 ONCHAIN_DECRYPT_LABEL = "SHUTTER-VOTE-DECRYPT-v1"
-ATTESTATION_LABEL = "SHUTTER-VOTE-ATTEST-v1"  # ATTESTATION_V1 (weighted; DESIGN.md §7.1)
+ATTESTATION_LABEL = "SHUTTER-VOTE-ATTEST-v1"  # ATTESTATION_V1 (weighted)
 
-# Ballot-validity-proof codec constants (DESIGN.md §7.2).
+# Ballot-validity-proof codec constants.
 BVP_VERSION = 0x01
 VARIANT_A_BYTE = 0x41  # 'A'
 VARIANT_B_BYTE = 0x42  # 'B' (conformance level 2)

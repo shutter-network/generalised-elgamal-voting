@@ -1,5 +1,5 @@
 """``EligibilityService`` — the authority on who may vote and with what weight
-(DESIGN.md §5.2).
+.
 
 The core protocol never sees this service's internals; it interacts through
 exactly one artifact, the ``ATTESTATION_V1`` credential
@@ -19,7 +19,7 @@ Two halves, with very different normativity:
   so it lives as :func:`verify_attestation` rather than on the service — auditors
   and the tally pipeline call it without any eligibility service present.
 
-Reference adapters (DESIGN.md §5.2): a Wahlregister-style adapter (weight fixed
+Reference adapters: a Wahlregister-style adapter (weight fixed
 to 1) and a wallet-based adapter (EIP-712 challenge + on-chain voting power →
 ``weight``). Both are later slices; this module is the contract only.
 """
@@ -34,7 +34,7 @@ from geg.envelopes.types import Attestation
 
 @dataclass(frozen=True)
 class AttestationRequest:
-    """Inputs an adapter binds into an attestation (DESIGN.md §5.2).
+    """Inputs an adapter binds into an attestation.
 
     The ``pseudonym`` construction is adapter-owned (e.g.
     ``keccak256(address || election_id)`` in a wallet adapter, an opaque
@@ -71,7 +71,7 @@ def verify_attestation(
     election_id: bytes,
     max_weight: int,
 ) -> bool:
-    """Normative ``ATTESTATION_V1`` verification (DESIGN.md §5.2, §7.1).
+    """Normative ``ATTESTATION_V1`` verification.
 
     Dispatches on ``attestation.scheme``:
 

@@ -1,4 +1,4 @@
-"""Keyper-to-keyper DKG P2P message schema (DESIGN.md §5.3).
+"""Keyper-to-keyper DKG P2P message schema.
 
 DKG round-1 commitments and round-2 shares travel **directly between keypers**
 over authenticated HTTP, never through the data layer: round-2 shares are
@@ -12,7 +12,7 @@ is an adapter concern** (EIP-191 ECDSA over Ethereum keys today, anything else
 tomorrow, chosen consistently per deployment) — hence :class:`KeyperP2PTransport`
 is abstract over signing/verification.
 
-Invariants (DESIGN.md §5.3):
+Invariants:
 
 * Every message is signed by the dealer and verifies against the dealer's
   registered ``KeyperIdentity.signing_key`` at the dealer's index.
@@ -35,7 +35,7 @@ from enum import Enum
 
 
 class DKGMessageType(str, Enum):
-    """The kinds of P2P DKG messages (DESIGN.md §5.3)."""
+    """The kinds of P2P DKG messages."""
 
     COMMITMENTS = "commitments"  # round-1 Feldman commitments (public per dealer)
     SHARE = "share"  # round-2 secret share (confidential, one recipient)
@@ -44,7 +44,7 @@ class DKGMessageType(str, Enum):
 
 @dataclass(frozen=True)
 class DKGCommitmentsMessage:
-    """Round-1 Feldman commitments broadcast by a dealer (DESIGN.md §5.3).
+    """Round-1 Feldman commitments broadcast by a dealer.
 
     ``commitments`` are the public coefficient commitments (each a G2 point, 96
     bytes); every keyper stores them append-only per dealer and uses them to
@@ -75,7 +75,7 @@ class DKGShareMessage:
 @dataclass(frozen=True)
 class DKGRevealMessage:
     """Signed Feldman-VSS rebuttal: a dealer reveals a share during complaint
-    resolution (DESIGN.md §5.3)."""
+    resolution."""
 
     election_id: bytes
     dealer_index: int
@@ -85,7 +85,7 @@ class DKGRevealMessage:
 
 
 class KeyperP2PTransport(ABC):
-    """Authenticated point-to-point transport between keypers (DESIGN.md §5.3).
+    """Authenticated point-to-point transport between keypers.
 
     Signing and verification are abstract because the signature scheme is a
     per-deployment adapter concern. Implementations MUST verify every inbound
@@ -96,15 +96,15 @@ class KeyperP2PTransport(ABC):
     """
 
     @abstractmethod
-    def send_commitments(self, to_endpoint: str, message: DKGCommitmentsMessage) -> None:
+    def send_commitments(self, to_url: str, message: DKGCommitmentsMessage) -> None:
         """Deliver a signed round-1 commitments message to one peer."""
 
     @abstractmethod
-    def send_share(self, to_endpoint: str, message: DKGShareMessage) -> None:
+    def send_share(self, to_url: str, message: DKGShareMessage) -> None:
         """Deliver a signed round-2 secret share to its single recipient."""
 
     @abstractmethod
-    def send_reveal(self, to_endpoint: str, message: DKGRevealMessage) -> None:
+    def send_reveal(self, to_url: str, message: DKGRevealMessage) -> None:
         """Deliver a signed complaint/reveal rebuttal to one peer."""
 
     @abstractmethod

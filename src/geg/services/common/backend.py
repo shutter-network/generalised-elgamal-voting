@@ -1,4 +1,4 @@
-"""Client-side backend selection for deployed services (DESIGN.md §5.1).
+"""Client-side backend selection for deployed services.
 
 A service (admin, gateway, coordinator) picks its ``ElectionDataLayer``
 from ``GEG_DATA_LAYER`` so the *same* daemon runs on any backend:

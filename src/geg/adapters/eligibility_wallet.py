@@ -1,4 +1,4 @@
-"""Wallet-based ``EligibilityService`` adapter (DESIGN.md §5.2).
+"""Wallet-based ``EligibilityService`` adapter.
 
 Maps the Snapshot X flow onto the generalised eligibility port: a voter proves
 control of an Ethereum address by signing an **EIP-712 challenge** bound to
@@ -133,7 +133,7 @@ class WalletEligibilityService(EligibilityService):
         if self._prevent_reissue and (election_id, address) in self._issued:
             raise EligibilityError("attestation already issued for this address in this election")
 
-        weight = min(vp, self._max_weight)  # clamp — the maxWeight BSGS guard (§6.3)
+        weight = min(vp, self._max_weight)  # clamp — the maxWeight BSGS guard
         pseudonym = self.pseudonym_for(address, election_id)
         sig = att_crypto.sign_attestation(self._sk, self._vk, election_id, pseudonym, vk, weight)
         self._issued.add((election_id, address))

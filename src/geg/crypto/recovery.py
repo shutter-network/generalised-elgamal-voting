@@ -1,4 +1,4 @@
-"""Threshold combination and discrete-log recovery (DESIGN.md §6.3, §8.3).
+"""Threshold combination and discrete-log recovery.
 
 Lagrange-interpolate ``t+1`` partial decryption shares at zero to get
 ``σ = msk·C1``, then ``τ = C2 − σ = V·P2`` and recover ``V`` by baby-step

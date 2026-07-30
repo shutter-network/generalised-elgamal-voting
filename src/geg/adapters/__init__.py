@@ -1,4 +1,4 @@
-"""``ElectionDataLayer`` adapters (DESIGN.md §5.1).
+"""``ElectionDataLayer`` adapters.
 
 * :mod:`geg.adapters.memory` — in-memory reference adapter; the executable
   definition of the port semantics and the fixture the conformance suite runs

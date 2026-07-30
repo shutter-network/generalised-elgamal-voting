@@ -1,18 +1,18 @@
-"""DKG coordinator daemon (DESIGN.md §2, §5.3).
+"""DKG coordinator daemon.
 
 A standing watcher that drives the keyper ceremony for ``Registered`` elections
 lacking a finalized key, sequencing ``round1 → distribute_commitments →
 distribute_shares → round2 → submit_dkg_result``. It holds no secrets; its
 compromise affects liveness only.
 
-Retry/backoff to a hard lead-time deadline follows the sx-monorepo ``coordinator``
-pattern (reimplemented here): attempts are bounded and must complete before
+Retry/backoff to a hard lead-time deadline: attempts are bounded and must complete before
 ``voting_start`` minus a margin. Sleeping is injected (``sleep``) so tests drive
 the schedule deterministically; wall-clock is read via ``clock``.
 """
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 
@@ -25,22 +25,27 @@ from geg.ports.data_layer import ElectionDataLayer
 from geg.services.keyper import keyper_bootstrap as boot
 from geg.services.keyper import KeyperService
 
+# Shared with AutoDKG (same logger name), so the ceremony/trigger driver and the
+# lifecycle watcher interleave under one "geg.coordinator" stream — the operator sees
+# per-phase progress and *which* keyper/phase failed, not just a terminal error.
+_LOG = logging.getLogger("geg.coordinator")
+
 
 class DKGError(RuntimeError):
     pass
 
 
 def keyper_urls_from(config, overrides: dict[str, str] | None = None) -> dict[int, str]:
-    """Map keyper index (1-based) → HTTP endpoint for the ceremony/trigger.
+    """Map keyper index (1-based) → HTTP URL for the ceremony/trigger.
 
-    Endpoints come from the election config on every backend — including blockchain,
-    where the KeyperSet contract now stores per-member URLs (read back via the port).
+    URLs come from the election config on every backend — including blockchain,
+    where the KeyperSet contract stores per-member URLs (read back via the port).
     ``overrides`` (address-keyed, lowercase hex) is a vestigial escape hatch and is
     normally empty.
     """
     overrides = overrides or {}
     return {
-        i: (k.endpoint or overrides.get(bytes(k.signing_key).hex().lower(), ""))
+        i: (k.url or overrides.get(bytes(k.signing_key).hex().lower(), ""))
         for i, k in enumerate(config.keypers, start=1)
     }
 
@@ -142,8 +147,10 @@ def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, relay_token: 
     """
     api_tokens: dict[int, str] = {}
     peer_tokens: dict[int, str] = {}
+    reused: dict[int, bool] = {}
     for i, url in keyper_urls.items():
         cred = token_store.get(url) if token_store is not None else None
+        reused[i] = cred is not None
         if cred is None:  # first time this keyper is seen by this coordinator → mint + persist
             cred = {"api_token": secrets.token_urlsafe(32), "peer_token": secrets.token_urlsafe(32)}
             if token_store is not None:
@@ -152,28 +159,36 @@ def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, relay_token: 
         peer_tokens[i] = cred["peer_token"]
 
     targets = keyper_urls if install is None else {i: keyper_urls[i] for i in install}
-    enc = {i: requests.get(url.rstrip("/") + "/status", timeout=timeout).json()["encryptionPubkey"]
-           for i, url in targets.items()}
     for i, url in targets.items():
-        payload = {
-            "api_token": api_tokens[i],
-            "peer_token": peer_tokens[i],
-            "relay_token": relay_token,
-            "peers": {str(j): {"url": keyper_urls[j], "token": peer_tokens[j]} for j in keyper_urls if j != i},
-            "nonce": secrets.token_hex(16),
-            "timestamp": int(time.time()),
-        }
-        sig = boot.sign_payload(coordinator, payload)
-        sealed = boot.x25519_seal(
-            boot.canonical_payload_bytes(payload), X25519PublicKey.from_public_bytes(bytes.fromhex(enc[i]))
-        )
-        requests.post(url.rstrip("/") + "/auth/bootstrap",
-                      json={"sealed": sealed.hex(), "signature": sig.hex()}, timeout=timeout).raise_for_status()
+        # Fetch this keyper's X25519 pubkey, seal+sign its bundle, and install it —
+        # attributing any failure to the specific keyper (unreachable /status, bad
+        # bootstrap) so a stuck committee names the culprit rather than a generic error.
+        try:
+            enc_hex = requests.get(url.rstrip("/") + "/status", timeout=timeout).json()["encryptionPubkey"]
+            payload = {
+                "api_token": api_tokens[i],
+                "peer_token": peer_tokens[i],
+                "relay_token": relay_token,
+                "peers": {str(j): {"url": keyper_urls[j], "token": peer_tokens[j]} for j in keyper_urls if j != i},
+                "nonce": secrets.token_hex(16),
+                "timestamp": int(time.time()),
+            }
+            sig = boot.sign_payload(coordinator, payload)
+            sealed = boot.x25519_seal(
+                boot.canonical_payload_bytes(payload), X25519PublicKey.from_public_bytes(bytes.fromhex(enc_hex))
+            )
+            requests.post(url.rstrip("/") + "/auth/bootstrap",
+                          json={"sealed": sealed.hex(), "signature": sig.hex()}, timeout=timeout).raise_for_status()
+        except Exception as err:  # noqa: BLE001 — re-raised; caller backs off and retries
+            _LOG.error("op=bootstrap keyper=%d url=%s status=error err=%s", i, url, err)
+            raise
+        _LOG.debug("op=bootstrap keyper=%d url=%s status=installed token=%s",
+                   i, url, "reused" if reused[i] else "minted")
     return api_tokens, peer_tokens
 
 
 def _post_keyper(url: str, path: str, election_id: bytes, api_tokens: dict[int, str], i: int,
-                 *, rebootstrap=None, timeout: float):
+                 *, rebootstrap=None, timeout: float, op: str | None = None):
     """POST a coordinator→keyper trigger, recovering from a stale-token 401.
 
     On ``401`` — the keyper doesn't hold the token we presented (state loss, or a
@@ -182,19 +197,30 @@ def _post_keyper(url: str, path: str, election_id: bytes, api_tokens: dict[int, 
     with the returned token. Because credentials are per-keyper (Option D), re-installing
     keyper ``i`` never disturbs any other keyper, so this can't ping-pong between
     concurrent elections. Returns the response, or ``None`` if the call errored out.
+
+    A trigger is best-effort (the data-layer quorum is the real success gate and the
+    next poll retries), but failures are **logged** — an unreachable keyper or a 5xx
+    during tally would otherwise be invisible, leaving the operator staring at a stalled
+    election with no clue which keyper is down.
     """
-    body = {"electionId": election_id.hex()}
+    op = op or path.lstrip("/")
+    eid_hex = election_id.hex()
+    body = {"electionId": eid_hex}
     try:
         r = requests.post(url.rstrip("/") + path, json=body,
                           headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
         if r.status_code == 401 and rebootstrap is not None:
+            _LOG.info("op=%s keyper=%d status=reauth election=%s (401 → re-bootstrap + retry)", op, i, eid_hex)
             token = rebootstrap(i)  # re-install stable token; returns it (unchanged) or None
             if token:
                 api_tokens[i] = token
                 r = requests.post(url.rstrip("/") + path, json=body,
                                   headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
+        if r.status_code >= 500:
+            _LOG.warning("op=%s keyper=%d status=error http=%d election=%s", op, i, r.status_code, eid_hex)
         return r
-    except Exception:  # noqa: BLE001 — the data-layer quorum is the real success gate; retried next poll
+    except Exception as err:  # noqa: BLE001 — best-effort; retried next poll
+        _LOG.warning("op=%s keyper=%d status=unreachable election=%s err=%s", op, i, eid_hex, err)
         return None
 
 
@@ -206,32 +232,39 @@ def run_dkg_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: di
     returns its token; used to recover a phase call that comes back ``401``."""
     eid_hex = election_id.hex()
 
-    def call(i: int, path: str):
-        r = requests.post(keyper_urls[i].rstrip("/") + path, json={"electionId": eid_hex},
-                          headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
-        if r.status_code == 401 and rebootstrap is not None:
-            token = rebootstrap(i)
-            if token:
-                api_tokens[i] = token
-                r = requests.post(keyper_urls[i].rstrip("/") + path, json={"electionId": eid_hex},
-                                  headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
+    def call(i: int, phase: str):
+        path = "/dkg/" + phase
+        try:
+            r = requests.post(keyper_urls[i].rstrip("/") + path, json={"electionId": eid_hex},
+                              headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
+            if r.status_code == 401 and rebootstrap is not None:
+                _LOG.info("op=dkg phase=%s keyper=%d status=reauth election=%s", phase, i, eid_hex)
+                token = rebootstrap(i)
+                if token:
+                    api_tokens[i] = token
+                    r = requests.post(keyper_urls[i].rstrip("/") + path, json={"electionId": eid_hex},
+                                      headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except Exception as err:  # noqa: BLE001 — re-raised; _drive_dkg backs off + retries
+            _LOG.error("op=dkg phase=%s keyper=%d status=error election=%s err=%s", phase, i, eid_hex, err)
+            raise
 
     idxs = sorted(keyper_urls)
-    for phase in ("/dkg/round1", "/dkg/distribute_commitments", "/dkg/distribute_shares", "/dkg/round2", "/dkg/publish"):
+    for phase in ("round1", "distribute_commitments", "distribute_shares", "round2", "publish"):
         for i in idxs:
             call(i, phase)
+        _LOG.info("op=dkg phase=%s status=ok election=%s keypers=%d", phase, eid_hex, len(idxs))
     return data_layer.get_finalized_key(election_id) is not None
 
 
 def trigger_decrypt_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
                          *, rebootstrap=None, timeout: float = 30.0) -> None:
-    """Trigger each keyper's /decrypt (keypers self-guard via §8.2). A ``401`` is
+    """Trigger each keyper's /decrypt (keypers self-guard on their preconditions). A ``401`` is
     recovered via ``rebootstrap`` (Option D safety net); other failures are best-effort
     (the share-count quorum is the real gate and the next poll retries)."""
     for i, url in keyper_urls.items():
-        _post_keyper(url, "/decrypt", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout)
+        _post_keyper(url, "/decrypt", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout, op="decrypt")
 
 
 def trigger_aggregate_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
@@ -242,4 +275,4 @@ def trigger_aggregate_http(election_id: bytes, keyper_urls: dict[int, str], api_
     Each keyper re-derives the same deterministic aggregate from the ordered ballots
     and submits it signed; the data layer makes it canonical at the t+1 quorum."""
     for i, url in keyper_urls.items():
-        _post_keyper(url, "/aggregate", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout)
+        _post_keyper(url, "/aggregate", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout, op="aggregate")

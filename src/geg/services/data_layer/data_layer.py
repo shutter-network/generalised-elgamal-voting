@@ -1,13 +1,13 @@
-"""Uniform data-layer HTTP service (DESIGN.md §5.1, §7.2).
+"""Uniform data-layer HTTP service.
 
 One Flask microservice that exposes the ``ElectionDataLayer`` port over HTTP (the
-§7.2 JSON envelopes) wrapping **any** backend adapter — in-memory, Postgres, or
+JSON envelopes) wrapping **any** backend adapter — in-memory, Postgres, or
 blockchain. A deployment picks the backend with ``GEG_DATA_LAYER`` and every
 component (keypers, gateway, coordinator, admin) speaks the same HTTP
 to it via :class:`geg.adapters.db.client.HttpDataLayerClient`, unchanged. The
 routes call only port methods, so the service is genuinely backend-agnostic.
 
-All reads are public and unauthenticated (§3); writes carry the actor's signature
+All reads are public and unauthenticated; writes carry the actor's signature
 which the backend verifies. Contract violations surface as typed HTTP statuses
 the client maps back to the port's exception types:
 
@@ -242,16 +242,19 @@ def main() -> None:
     ``DATA_LAYER_PORT``. Backend-specific: ``GEG_DATA_LAYER_DSN`` (database);
     ``GEG_CHAIN_RPC`` / ``GEG_REGISTRY_ADDRESS`` (blockchain, read-only).
     Uses wall-clock (NTP-disciplined in deployment) as the adapter's authoritative
-    time for immutability + voting-window enforcement (DESIGN.md §4.2).
+    time for immutability + voting-window enforcement.
     """
     import logging
     import os
     import time
 
     logging.basicConfig(level=logging.INFO)
+    backend = os.environ.get("GEG_DATA_LAYER", "database").strip().lower()
+    port = int(os.environ.get("DATA_LAYER_PORT", "8000"))
+    logging.getLogger("geg.data_layer").info("op=start service=data-layer backend=%s port=%d", backend, port)
     dl = _build_backend(lambda: int(time.time()))
     app = build_app(dl)
-    app.run(host=os.environ.get("DATA_LAYER_HOST", "0.0.0.0"), port=int(os.environ.get("DATA_LAYER_PORT", "8000")))
+    app.run(host=os.environ.get("DATA_LAYER_HOST", "0.0.0.0"), port=port)
 
 
 if __name__ == "__main__":

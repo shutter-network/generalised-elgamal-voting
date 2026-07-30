@@ -1,4 +1,4 @@
-"""Coordinator service (DESIGN.md §2; sx-monorepo ``auto_dkg`` role, generalised).
+"""Coordinator service.
 
 The **single keyper-facing orchestrator**. Two roles in one daemon:
 
@@ -47,7 +47,7 @@ class AutoDKG:
 
     def __init__(self, data_layer: ElectionDataLayer, coordinator, *, clock,
                  poll_interval_s: float = 2.0, backoff_base_s: float = 10.0,
-                 backoff_cap_s: float = 300.0, endpoints: dict[str, str] | None = None,
+                 backoff_cap_s: float = 300.0, url_overrides: dict[str, str] | None = None,
                  token_store=None, relay_token: str | None = None,
                  logger: logging.Logger | None = None):
         self.dl = data_layer
@@ -56,9 +56,9 @@ class AutoDKG:
         self.poll_interval_s = poll_interval_s
         self.backoff_base_s = backoff_base_s
         self.backoff_cap_s = backoff_cap_s
-        # Address-keyed endpoint override for backends that don't store endpoints
-        # (e.g. blockchain) — see geg.services.dkg_coordinator.keyper_urls_from.
-        self.endpoints = endpoints or {}
+        # Address-keyed URL override for backends that don't store keyper URLs
+        # — see geg.services.dkg_coordinator.keyper_urls_from. Normally empty.
+        self.url_overrides = url_overrides or {}
         # Coordinator-private persistence for the minted keyper credentials, keyed by
         # keyper (stable per-keyper tokens): reloaded on restart so keypers are not
         # re-bootstrapped, and never churned when committees overlap.
@@ -71,11 +71,12 @@ class AutoDKG:
         self._failed: set[str] = set()    # DKGFailed / Void → terminal
         self._attempts: dict[str, dict] = {}
         self._tokens_by_committee: dict[tuple, dict] = {}
+        self._tally_phase: dict[str, str] = {}  # eid_hex → last-logged tally phase (dedupes per-poll spam)
 
     # -- helpers ------------------------------------------------------------ #
 
     def _keyper_urls(self, config) -> dict[int, str]:
-        return coord.keyper_urls_from(config, self.endpoints)
+        return coord.keyper_urls_from(config, self.url_overrides)
 
     def _bootstrap(self, urls: dict[int, str]) -> dict[int, str]:
         """Full ``/auth/bootstrap`` of the committee: reuse-or-mint each keyper's stable
@@ -151,6 +152,14 @@ class AutoDKG:
             return self._drive_tally(election_id, rec)
         return "not_ready"  # KeyReady / Voting / Cancelled
 
+    def _tally_transition(self, eid_hex: str, phase: str) -> None:
+        """Log a tally phase change once (``_drive_tally`` runs every poll, so logging
+        unconditionally would spam ``aggregating`` at the poll interval — dedupe on the
+        last-logged phase per election)."""
+        if self._tally_phase.get(eid_hex) != phase:
+            self._tally_phase[eid_hex] = phase
+            self.log.info("op=tally status=%s election=%s", phase, eid_hex)
+
     def _drive_dkg(self, election_id: bytes, rec, now: int) -> str:
         eid_hex = election_id.hex()
         # Back-off gate so we don't hammer between polls.
@@ -160,11 +169,13 @@ class AutoDKG:
 
         urls = self._keyper_urls(rec.config)
         if any(not u for u in urls.values()):
-            self.log.error("op=dkg status=error election=%s reason=missing_keyper_endpoints", eid_hex)
-            return "no_endpoints"
+            self.log.error("op=dkg status=error election=%s reason=missing_keyper_urls", eid_hex)
+            return "no_urls"
 
         try:
             # DKG needs the correct peer map installed → full bootstrap before the ceremony.
+            self.log.info("op=dkg status=starting election=%s committee=%d attempt=%d",
+                          eid_hex, len(urls), att["attempts"] + 1)
             api_tokens = self._bootstrap(urls)
             if coord.run_dkg_http(election_id, urls, api_tokens, self.dl,
                                   rebootstrap=lambda i: self._rebootstrap_one(urls, i)):
@@ -185,8 +196,8 @@ class AutoDKG:
         eid_hex = election_id.hex()
         urls = self._keyper_urls(rec.config)
         if any(not u for u in urls.values()):
-            self.log.error("op=tally status=error election=%s reason=missing_keyper_endpoints", eid_hex)
-            return "no_endpoints"
+            self.log.error("op=tally status=error election=%s reason=missing_keyper_urls", eid_hex)
+            return "no_urls"
         try:
             api_tokens = self._committee_tokens(urls)
         except Exception as err:  # noqa: BLE001
@@ -195,11 +206,13 @@ class AutoDKG:
         rebootstrap = lambda i: self._rebootstrap_one(urls, i)  # noqa: E731 — 401 safety net
 
         # 1. Trigger keypers to aggregate (best-effort; the quorum is the real gate).
+        self._tally_transition(eid_hex, "aggregating")
         coord.trigger_aggregate_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
         # 2. Gate on the canonical aggregate — no quorum yet → retry next poll.
         if self.dl.get_aggregate(election_id) is None:
             return "collecting_aggregate"
-        # 3. Trigger keypers to decrypt (best-effort; keypers self-guard via §8.2).
+        # 3. Trigger keypers to decrypt (best-effort; keypers self-guard on their preconditions).
+        self._tally_transition(eid_hex, "decrypting")  # quorum aggregate reached
         coord.trigger_decrypt_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
         # 4. Recover + publish the result (signed by the coordinator = result publisher).
         result = tally.finalize(self.dl, election_id, self.coordinator, clock=self.clock)

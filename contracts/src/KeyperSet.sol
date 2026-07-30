@@ -6,10 +6,10 @@ import {IKeyperSet} from "./interfaces/IKeyperSet.sol";
 error DuplicateMember(address member);
 error InvalidMember(address member);
 error InvalidThreshold(uint64 threshold, uint256 membersLen);
-error EndpointsLengthMismatch(uint256 endpointsLen, uint256 membersLen);
+error URLsLengthMismatch(uint256 urlsLen, uint256 membersLen);
 
-/// @notice Immutable keyper membership, threshold, and per-member HTTP endpoints.
-/// @dev Endpoints are operational discovery metadata (where each keyper is reachable
+/// @notice Immutable keyper membership, threshold, and per-member HTTP URLs.
+/// @dev URLs are operational discovery metadata (where each keyper is reachable
 ///      for the DKG/decryption ceremony). They are fixed for the committee's lifetime
 ///      (a fresh KeyperSet is deployed per election), so storing them here — rather
 ///      than off-chain env — lets any service read them through the data-layer port.
@@ -17,13 +17,13 @@ contract KeyperSet is IKeyperSet {
     uint64 private threshold;
 
     address[] private members;
-    string[] private endpoints;
+    string[] private urls;
     mapping(address => uint64) private memberIndexPlusOne;
 
-    constructor(address[] memory initialMembers, string[] memory initialEndpoints, uint64 initialThreshold) {
-        // Endpoints are REQUIRED and pair with members 1:1 (member i ↔ endpoint i).
-        if (initialEndpoints.length != initialMembers.length) {
-            revert EndpointsLengthMismatch(initialEndpoints.length, initialMembers.length);
+    constructor(address[] memory initialMembers, string[] memory initialURLs, uint64 initialThreshold) {
+        // URLs are REQUIRED and pair with members 1:1 (member i ↔ url i).
+        if (initialURLs.length != initialMembers.length) {
+            revert URLsLengthMismatch(initialURLs.length, initialMembers.length);
         }
         for (uint256 i = 0; i < initialMembers.length; i++) {
             address member = initialMembers[i];
@@ -38,7 +38,7 @@ contract KeyperSet is IKeyperSet {
             revert InvalidThreshold(initialThreshold, members.length);
         }
         threshold = initialThreshold;
-        endpoints = initialEndpoints;
+        urls = initialURLs;
     }
 
     function getNumMembers() external view returns (uint64) {
@@ -53,8 +53,8 @@ contract KeyperSet is IKeyperSet {
         return members;
     }
 
-    function getEndpoints() external view returns (string[] memory) {
-        return endpoints;
+    function getURLs() external view returns (string[] memory) {
+        return urls;
     }
 
     function getMemberIndex(address account) external view returns (uint64) {

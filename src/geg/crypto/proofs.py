@@ -1,4 +1,4 @@
-"""Fiat-Shamir sigma proofs over the shared transcript (DESIGN.md §7.1).
+"""Fiat-Shamir sigma proofs over the shared transcript.
 
 All proofs are Fiat-Shamir transforms driven by a shared :class:`Transcript`;
 prover and verifier must seed it identically. Byte-faithful to the SDK
@@ -31,7 +31,7 @@ from geg.crypto.transcript import Transcript
 
 
 def make_decrypt_transcript(election_id: bytes, candidate_index: int) -> Transcript:
-    """Freshly seed the decryption-share transcript (DESIGN.md §8.2).
+    """Freshly seed the decryption-share transcript.
 
     ``Transcript(SHUTTER-VOTE-DECRYPT-v1)`` with ``electionId`` (32 bytes) and
     ``candidate`` (u16BE) appended. Prover (keyper) and verifier (coordinator /

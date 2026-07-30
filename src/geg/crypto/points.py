@@ -1,4 +1,4 @@
-"""BLS12-381 point arithmetic and compressed codecs (DESIGN.md §7.1).
+"""BLS12-381 point arithmetic and compressed codecs.
 
 Thin wrappers over ``py_arkworks_bls12381`` giving a uniform arithmetic surface
 for both groups (G1 for Schnorr/attestations, G2 for ElGamal/DKG) plus the

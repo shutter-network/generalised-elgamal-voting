@@ -1,4 +1,4 @@
-"""Ballot gateway (DESIGN.md §2, §6.2).
+"""Ballot gateway.
 
 The default user-facing ingest endpoint. Runs the standard admission
 verification as a **filter (on by default)** and writes accepted ballots to the
@@ -64,13 +64,13 @@ def submit_ballot(
 
 
 # --------------------------------------------------------------------------- #
-#  HTTP ingest service — the default user-facing ballot endpoint (DESIGN.md §2)
+#  HTTP ingest service — the default user-facing ballot endpoint
 # --------------------------------------------------------------------------- #
 
 def build_gateway_app(data_layer, *, clock, filter_on: bool = True):
     """Flask ingest app: POST a frontend-built ballot envelope; filtered (on by
     default) then written to the data layer. The filter is UX + spam control — it
-    has no bearing on tally correctness (DESIGN.md §6.2)."""
+    has no bearing on tally correctness."""
     from flask import Flask, jsonify, request
 
     from geg.envelopes import codecs
@@ -120,9 +120,11 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
     dl = data_layer_for_service(os.environ.get("GATEWAY_SIGNING_KEY"))
-    app = build_gateway_app(dl, clock=lambda: int(time.time()),
-                            filter_on=os.environ.get("GATEWAY_FILTER", "1") == "1")
-    app.run(host=os.environ.get("GATEWAY_HOST", "0.0.0.0"), port=int(os.environ.get("GATEWAY_PORT", "8200")))
+    filter_on = os.environ.get("GATEWAY_FILTER", "1") == "1"
+    port = int(os.environ.get("GATEWAY_PORT", "8200"))
+    logging.getLogger("geg.gateway").info("op=start service=gateway port=%d filter=%s", port, "on" if filter_on else "off")
+    app = build_gateway_app(dl, clock=lambda: int(time.time()), filter_on=filter_on)
+    app.run(host=os.environ.get("GATEWAY_HOST", "0.0.0.0"), port=port)
 
 
 if __name__ == "__main__":

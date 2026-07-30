@@ -5,8 +5,7 @@ pragma solidity ^0.8.24;
 /// @dev Extended from the original Munich bulletin board with the generalised
 ///      protocol fields (mode/variant/weighted/maxWeight/duplicatePolicy/
 ///      tallyDeadline/protocolVersion) and an admitted-set aggregate, so the chain
-///      adapter can satisfy the full ElectionDataLayer port (see geg DESIGN.md §4.1,
-///      §7.2). Enum-like fields are uint8 the adapter maps:
+///      adapter can satisfy the full ElectionDataLayer port. Enum-like fields are uint8 the adapter maps:
 ///        mode: 0=exact, 1=atMost
 ///        variant: 0=A, 1=B
 ///        duplicatePolicy: 0=first-wins, 1=last-wins
@@ -92,8 +91,8 @@ library VotingTypes {
         address adminAddr;
         address resultPublisher;
         address voteProxy;
-        // Per-keyper HTTP endpoints, index-aligned with keyperAddresses (from the KeyperSet).
-        string[] keyperEndpoints;
+        // Per-keyper HTTP URLs, index-aligned with keyperAddresses (from the KeyperSet).
+        string[] keyperURLs;
     }
 
     /// @notice One ballot excluded from the aggregate, with a typed reason code.
@@ -102,7 +101,7 @@ library VotingTypes {
         uint8 reason;
     }
 
-    /// @notice Aggregate artifact with its published admitted set (DESIGN.md §7.2).
+    /// @notice Aggregate artifact with its published admitted set.
     struct EncryptedTally {
         Ciphertext[] aggregates;
         uint256[] admitted;

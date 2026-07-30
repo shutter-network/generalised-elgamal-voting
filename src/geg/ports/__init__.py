@@ -1,4 +1,4 @@
-"""The three abstraction seams of the system (DESIGN.md §5).
+"""The three abstraction seams of the system.
 
 - :mod:`geg.ports.data_layer` — ``ElectionDataLayer``, the single storage
   abstraction (chain / database / in-memory adapters).

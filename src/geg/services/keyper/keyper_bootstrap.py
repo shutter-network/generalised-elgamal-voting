@@ -1,7 +1,6 @@
-"""Keyper token-bootstrap crypto (sx-monorepo model, geg identity).
+"""Keyper token-bootstrap crypto (geg identity).
 
-Two independent properties (neither substitutes for the other), matching
-sx-monorepo's design:
+Two independent properties (neither substitutes for the other):
 
   - **confidentiality** — ``x25519_seal`` / ``x25519_unseal``: an anonymous
     sealed box (ephemeral ECDH + HKDF + AES-GCM) so the coordinator can encrypt a

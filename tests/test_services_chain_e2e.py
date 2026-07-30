@@ -114,7 +114,7 @@ class ChainWorld:
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=self.base + 1000, voting_end=self.base + 2000, tally_deadline=self.base + 3000,
             threshold=Threshold(t=self.t, n=self.n),
-            keypers=tuple(KeyperIdentity(signing_key=ab(f"keyper{i}"), endpoint="") for i in range(1, self.n + 1)),
+            keypers=tuple(KeyperIdentity(signing_key=ab(f"keyper{i}"), url="") for i in range(1, self.n + 1)),
             eligibility_key=self.elig.eligibility_key, result_publisher_key=ab("result_publisher"),
             gateway_keys=(ab("gateway"),), admin_key=ab("admin"), protocol_version="v1",
         )

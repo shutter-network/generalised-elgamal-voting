@@ -46,7 +46,7 @@ Register ──▶ DKG ──▶ Vote ──▶ Tally ──▶ Decrypt ──�
 ```
 
 1. **Register.** The admin publishes an immutable election config (candidates,
-   voting window, `(t, n)` committee with keyper identities + endpoints, weighting
+   voting window, `(t, n)` committee with keyper identities + URLs, weighting
    rules). The registry assigns a sequential election id.
 2. **DKG.** The coordinator drives a 2-round Feldman VSS ceremony across the keyper
    committee over authenticated HTTP, with **confidential round-2 shares travelling
@@ -214,7 +214,7 @@ Python side reimplements the same byte formats and verifies the same vectors.
 The blockchain backend is a Foundry project under [`contracts/`](./contracts):
 
 - `ElectionRegistry` — admin-gated factory + index; assigns sequential election ids.
-- `KeyperSet` — immutable committee: members + per-member HTTP endpoints + threshold.
+- `KeyperSet` — immutable committee: members + per-member HTTP URLs + threshold.
 - `Election` — per-election state machine (DKG voting, ballots, decryption shares,
   aggregate, result), assembled from facet contracts.
 

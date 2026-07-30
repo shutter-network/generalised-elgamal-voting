@@ -1,4 +1,4 @@
-"""JSON transport-envelope codecs (DESIGN.md §7.2).
+"""JSON transport-envelope codecs.
 
 Encode/decode each artifact type to/from a JSON-ready ``dict`` with ``0x``-hex
 byte fields. Decoders validate hex formatting and the fixed byte sizes of the
@@ -321,7 +321,7 @@ def enc_config(c: ElectionConfig) -> dict:
         "tallyDeadline": c.tally_deadline,
         "threshold": {"t": c.threshold.t, "n": c.threshold.n},
         "keypers": [
-            {"signingKey": enc_bytes(k.signing_key), "endpoint": k.endpoint} for k in c.keypers
+            {"signingKey": enc_bytes(k.signing_key), "url": k.url} for k in c.keypers
         ],
         "eligibilityKey": enc_bytes(c.eligibility_key),
         "resultPublisherKey": enc_bytes(c.result_publisher_key),
@@ -359,7 +359,7 @@ def dec_config(d: Any) -> ElectionConfig:
             keypers=tuple(
                 KeyperIdentity(
                     signing_key=dec_bytes(_req(k, "signingKey"), name=f"keypers[{i}].signingKey"),
-                    endpoint=str(_req(k, "endpoint")),
+                    url=str(_req(k, "url")),
                 )
                 for i, k in enumerate(keypers)
             ),

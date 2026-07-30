@@ -1,4 +1,4 @@
-"""Election admin service (DESIGN.md §2, §4.1).
+"""Election admin service.
 
 The sole writer of election config: registers elections with full parameter
 validation (including the DKG lead-time gate), cancels strictly before
@@ -12,16 +12,20 @@ so a new election can name a different or partly-replaced keyper set (k1,k2,k3 v
 k2,k3,k4); on the database backend those URLs are stored and read back by the
 coordinator (no env needed).
 
-Auth is model **A** (DESIGN note): the service holds ``ADMIN_SIGNING_KEY`` and the
-HTTP endpoints are gated by a fail-closed bearer token (``ADMIN_API_TOKEN``). Model
-B (frontend signs, server relays — key never on the server) is a later-version TODO.
+Auth is model **A**: the service holds ``ADMIN_SIGNING_KEY`` and the HTTP endpoints
+are gated by a fail-closed bearer token (``ADMIN_API_TOKEN``). Model B (frontend signs,
+server relays — key never on the server) is a later-version TODO.
 """
 
 from __future__ import annotations
 
+import logging
+
 from geg.core.authz import Signer
 from geg.core.config import ElectionConfig
 from geg.ports.data_layer import ElectionDataLayer
+
+_LOG = logging.getLogger("geg.admin")
 
 
 class RegistrationError(ValueError):
@@ -51,12 +55,16 @@ def register_election(
             f"insufficient DKG lead time: voting_start - now = {config.voting_start - now} "
             f"< dkg_lead_time = {dkg_lead_time}"
         )
-    return dl.register_election(config, admin.sign_register(config))
+    eid = dl.register_election(config, admin.sign_register(config))
+    _LOG.info("op=register status=ok election=%s keypers=%d voting_start=%d",
+              eid.hex(), len(config.keypers), config.voting_start)
+    return eid
 
 
 def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin: Signer) -> None:
     """Cancel before ``voting_start`` (the data layer rejects it once voting starts)."""
     dl.cancel_election(election_id, admin.sign("cancel", election_id))
+    _LOG.info("op=cancel status=ok election=%s", election_id.hex())
 
 
 # --------------------------------------------------------------------------- #
@@ -90,6 +98,7 @@ def build_admin_app(dl: ElectionDataLayer, admin: Signer, *, clock, dkg_lead_tim
 
     @app.errorhandler(ValueError)  # includes RegistrationError
     def _bad_request(e):
+        _LOG.warning("op=admin status=rejected reason=%s", e)
         return jsonify(error="ValueError", message=str(e)), 400
 
     @app.before_request
@@ -125,11 +134,11 @@ def build_admin_app(dl: ElectionDataLayer, admin: Signer, *, clock, dkg_lead_tim
 
 
 def main() -> None:
-    """Election Admin — CLI or HTTP service (DESIGN.md §2, §4.1). The committee
+    """Election Admin — CLI or HTTP service. The committee
     (keyper identities + URLs) is provided in the register config.
 
     Commands:
-      register --config <config.json>   register an election (JSON = §7.2 config envelope)
+      register --config <config.json>   register an election (JSON = config envelope)
       cancel   --election-id <hex>       cancel before voting_start
       serve                              run the admin HTTP service (register/cancel)
 
@@ -171,9 +180,11 @@ def main() -> None:
         print("cancelled election", args.election_id)
     elif args.command == "serve":
         logging.basicConfig(level=logging.INFO)
+        port = int(os.environ.get("ADMIN_PORT", "8300"))
+        _LOG.info("op=start service=admin port=%d admin_identity=%s", port, admin.identity.hex())
         app = build_admin_app(dl, admin, clock=lambda: int(time.time()), dkg_lead_time=lead_time,
                               api_token=os.environ.get("ADMIN_API_TOKEN"))
-        app.run(host=os.environ.get("ADMIN_HOST", "0.0.0.0"), port=int(os.environ.get("ADMIN_PORT", "8300")))
+        app.run(host=os.environ.get("ADMIN_HOST", "0.0.0.0"), port=port)
 
 
 if __name__ == "__main__":

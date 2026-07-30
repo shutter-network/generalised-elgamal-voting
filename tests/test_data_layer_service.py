@@ -1,5 +1,5 @@
 """Run the shared conformance suite against the uniform data-layer HTTP service
-wrapping the in-memory backend (DESIGN.md §5.1, §7.2).
+wrapping the in-memory backend.
 
 The same :func:`geg.services.data_layer.build_app` that fronts Postgres in
 production also fronts :class:`~geg.adapters.memory.InMemoryDataLayer` here,

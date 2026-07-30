@@ -1,4 +1,4 @@
-"""Validation tests for ElectionConfig (DESIGN.md §4.1) and its enums."""
+"""Validation tests for ElectionConfig and its enums."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from geg.core.config import (
 
 def _keypers(n: int) -> tuple[KeyperIdentity, ...]:
     return tuple(
-        KeyperIdentity(signing_key=bytes([i]) * 20, endpoint=f"https://keyper{i}.example")
+        KeyperIdentity(signing_key=bytes([i]) * 20, url=f"https://keyper{i}.example")
         for i in range(n)
     )
 
@@ -53,7 +53,7 @@ def test_valid_config_constructs():
 
 
 def test_conformance_level_1_defaults():
-    """Level 1 = variant A / exact / weighted-capable (DESIGN.md §6.1)."""
+    """Level 1 = variant A / exact / weighted-capable."""
     cfg = make_config(weighted=True, max_weight=100)
     assert (cfg.variant, cfg.mode, cfg.weighted) == (Variant.A, Mode.EXACT, True)
 
@@ -85,6 +85,6 @@ def test_invalid_threshold_rejected(t, n):
 
 
 def test_threshold_t_plus_one_of_n():
-    """(t, n): any t+1 of n can decrypt; t < n required (DESIGN.md §4.1)."""
+    """(t, n): any t+1 of n can decrypt; t < n required."""
     th = Threshold(t=1, n=3)
     assert th.t + 1 == 2 and th.n == 3

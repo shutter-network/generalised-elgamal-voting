@@ -31,7 +31,7 @@ contract MockKeyperSet is IKeyperSet {
         return new address[](0);
     }
 
-    function getEndpoints() external pure returns (string[] memory) {
+    function getURLs() external pure returns (string[] memory) {
         return new string[](0);
     }
 

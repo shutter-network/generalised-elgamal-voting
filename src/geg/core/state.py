@@ -1,4 +1,4 @@
-"""Derived election lifecycle state (DESIGN.md §4.2).
+"""Derived election lifecycle state.
 
 Election state is **derived, never stored**: a pure function of the facts in the
 data layer and the current time. Every service and every auditor uses this same
@@ -30,7 +30,7 @@ class ElectionState(str, Enum):
 
 @dataclass(frozen=True)
 class StateFacts:
-    """The data-layer facts state derivation depends on (DESIGN.md §4.2)."""
+    """The data-layer facts state derivation depends on."""
 
     cancelled: bool  # a cancellation fact exists
     key_finalized: bool  # the DKG finalization quorum rule is met
@@ -38,7 +38,7 @@ class StateFacts:
 
 
 def derive_state(config: ElectionConfig, facts: StateFacts, now: int) -> ElectionState:
-    """Map ``(config, facts, now)`` to a lifecycle state (DESIGN.md §4.2, normative).
+    """Map ``(config, facts, now)`` to a lifecycle state.
 
     The order below is the normative derivation: terminal outcomes are resolved
     before live states.

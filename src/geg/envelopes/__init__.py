@@ -1,4 +1,4 @@
-"""Transport envelopes and their JSON codecs (DESIGN.md §7.2).
+"""Transport envelopes and their JSON codecs.
 
 The **byte codecs** (fixed sizes: G1=48, G2=96, Schnorr=80, DLEQ=64, and the
 versioned ballot-validity-proof encoding) are the normative interop layer,

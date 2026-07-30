@@ -1,4 +1,4 @@
-"""End-to-end service flows on the in-memory adapter (DESIGN.md §2, §8).
+"""End-to-end service flows on the in-memory adapter.
 
 Drives a full election through the actual services — admin → coordinator (DKG +
 tally) → gateway → keypers → auditor — plus the security-relevant negative cases
@@ -107,7 +107,7 @@ def test_gateway_filter_rejects_malformed_ballot(full_env):
 
 def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
     """A compromised/disabled filter can inject an invalid ballot; the tally is
-    unaffected because verification is authoritative at tally time (§6.2)."""
+    unaffected because verification is authoritative at tally time."""
     fe = full_env
     _register_and_dkg(fe)
     fe.clock.set(1_500)
@@ -129,7 +129,7 @@ def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
 
 
 # --------------------------------------------------------------------------- #
-#  Keyper preconditions (§8.2) — never trust the trigger
+#  Keyper preconditions — never trust the trigger
 # --------------------------------------------------------------------------- #
 
 def test_keyper_refuses_before_voting_ends(full_env):

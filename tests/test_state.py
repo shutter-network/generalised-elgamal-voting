@@ -1,4 +1,4 @@
-"""Exhaustive coverage of derive_state (DESIGN.md §4.2), including boundaries."""
+"""Exhaustive coverage of derive_state, including boundaries."""
 
 from __future__ import annotations
 

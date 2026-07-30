@@ -1,4 +1,4 @@
-"""Byte-parity conformance vectors (DESIGN.md §7.3, §9).
+"""Byte-parity conformance vectors.
 
 Reproduces fully-pinned vectors byte-for-byte, proving this reimplementation of
 the crypto suite is wire-compatible with the reference (and, transitively, with

@@ -1,7 +1,7 @@
-"""``HttpDataLayerClient`` — the remote data-layer adapter (DESIGN.md §5.1).
+"""``HttpDataLayerClient`` — the remote data-layer adapter.
 
 Implements the ``ElectionDataLayer`` port by calling the database microservice
-over HTTP with the §7.2 JSON envelopes. This is the object the services actually
+over HTTP with the JSON envelopes. This is the object the services actually
 hold when a deployment selects the database backend; it is behaviourally
 interchangeable with the in-memory and blockchain adapters and passes the same
 conformance suite. HTTP error statuses are mapped back to the port's exception

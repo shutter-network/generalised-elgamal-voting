@@ -19,13 +19,12 @@ class ElectionState(str, Enum):
     # Terminal states.
     CANCELLED = "Cancelled"  # cancellation recorded (only possible before voting_start)
     COMPLETE = "Complete"  # result published
-    VOID = "Void"  # now >= tally_deadline and no result
     DKG_FAILED = "DKGFailed"  # now >= voting_start and key not finalized
     # Live states.
     REGISTERED = "Registered"  # config exists, key not finalized, now < voting_start
     KEY_READY = "KeyReady"  # key finalized, now < voting_start
     VOTING = "Voting"  # key finalized, voting_start <= now < voting_end
-    TALLYING = "Tallying"  # key finalized, now >= voting_end, no result, now < tally_deadline
+    TALLYING = "Tallying"  # key finalized, now >= voting_end, no result (unbounded — no deadline)
 
 
 @dataclass(frozen=True)
@@ -49,9 +48,6 @@ def derive_state(config: ElectionConfig, facts: StateFacts, now: int) -> Electio
     # Terminal: a published result wins over everything else.
     if facts.result_published:
         return ElectionState.COMPLETE
-    # Terminal: no result by the tally deadline.
-    if now >= config.tally_deadline:
-        return ElectionState.VOID
     # Terminal: no finalized key by the time voting opens.
     if now >= config.voting_start and not facts.key_finalized:
         return ElectionState.DKG_FAILED

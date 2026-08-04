@@ -161,7 +161,6 @@ class SignatureBackend(ConformanceBackend):
             duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1_000,
             voting_end=2_000,
-            tally_deadline=3_000,
             threshold=Threshold(t=T, n=N),
             keypers=tuple(
                 KeyperIdentity(signing_key=self._signers[f"keyper{i}"].identity, url=f"http://k{i}")

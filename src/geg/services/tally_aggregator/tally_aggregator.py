@@ -69,7 +69,8 @@ def finalize(dl: ElectionDataLayer, election_id: bytes, result_publisher: Signer
     """Collect ``t+1`` verified shares, recover totals, publish the result.
 
     Returns the published ``ResultArtifact``, or ``None`` if there are not yet
-    enough valid shares (caller retries; ``Void`` if never satisfied by deadline).
+    enough valid shares (caller retries; ``Tallying`` is unbounded, so it simply
+    stays open until enough shares arrive).
     """
     rec, state = _state(dl, election_id, clock())
     if state is ElectionState.COMPLETE:

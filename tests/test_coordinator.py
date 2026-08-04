@@ -43,11 +43,11 @@ class KeyperWorld:
         for srv in self._servers:
             srv.shutdown()
 
-    def register(self, *, voting_start=1000, voting_end=2000, tally_deadline=3000) -> bytes:
+    def register(self, *, voting_start=1000, voting_end=2000) -> bytes:
         config = ElectionConfig(
             election_id=b"\x00" * 32, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
-            voting_start=voting_start, voting_end=voting_end, tally_deadline=tally_deadline,
+            voting_start=voting_start, voting_end=voting_end,
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url=self.urls[i + 1])
                           for i in range(N)),
@@ -98,7 +98,7 @@ def test_watcher_does_not_redrive_after_dkg(kw):
 
 
 def test_watcher_marks_dkg_failed_past_voting_start(kw):
-    eid = kw.register(voting_start=1000, voting_end=2000, tally_deadline=3000)
+    eid = kw.register(voting_start=1000, voting_end=2000)
     kw.clock.set(1500)  # now > voting_start, still no key → terminally DKGFailed
     watcher = kw.watcher()
 
@@ -112,9 +112,9 @@ def test_watcher_drives_nearest_voting_start_first(kw, monkeypatch):
     from geg.services.coordinator import dkg_coordinator as coord
 
     # Registered out of order; expect drive order sorted by voting_start ascending.
-    e_far = kw.register(voting_start=3000, voting_end=4000, tally_deadline=5000)
-    e_near = kw.register(voting_start=1000, voting_end=2000, tally_deadline=3000)
-    e_mid = kw.register(voting_start=2000, voting_end=3000, tally_deadline=4000)
+    e_far = kw.register(voting_start=3000, voting_end=4000)
+    e_near = kw.register(voting_start=1000, voting_end=2000)
+    e_mid = kw.register(voting_start=2000, voting_end=3000)
 
     driven: list[bytes] = []
     real = coord.run_dkg_http

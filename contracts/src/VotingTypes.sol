@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 /// @notice Shared types for the generalised threshold-ElGamal voting bulletin board.
 /// @dev Extended from the original Munich bulletin board with the generalised
 ///      protocol fields (mode/variant/weighted/maxWeight/duplicatePolicy/
-///      tallyDeadline/protocolVersion) and an admitted-set aggregate, so the chain
+///      protocolVersion) and an admitted-set aggregate, so the chain
 ///      adapter can satisfy the full ElectionDataLayer port. Enum-like fields are uint8 the adapter maps:
 ///        mode: 0=exact, 1=atMost
 ///        variant: 0=A, 1=B
@@ -15,7 +15,6 @@ library VotingTypes {
     struct ElectionParams {
         uint64 votingStart;
         uint64 votingEnd;
-        uint64 tallyDeadline;
         uint256 selfSubmitFee;
         uint32 numCandidates;
         uint32 budget;
@@ -72,7 +71,6 @@ library VotingTypes {
         uint256 electionId;
         uint64 votingStart;
         uint64 votingEnd;
-        uint64 tallyDeadline;
         uint256 selfSubmitFee;
         uint32 numCandidates;
         uint32 budget;

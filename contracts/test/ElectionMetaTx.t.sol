@@ -188,7 +188,7 @@ contract ElectionMetaTxTest is Test {
 
     function _params() private view returns (VotingTypes.ElectionParams memory) {
         return VotingTypes.ElectionParams({
-            votingStart: votingStart, votingEnd: votingEnd, tallyDeadline: type(uint64).max, selfSubmitFee: 0,
+            votingStart: votingStart, votingEnd: votingEnd, selfSubmitFee: 0,
             numCandidates: 3, budget: 1, mode: 0, variant: 0, weighted: false, maxWeight: 1, duplicatePolicy: 1,
             protocolVersion: "v1", pkWR: bytes(""), resultPublisher: resultPublisher, voteProxy: voteProxy
         });

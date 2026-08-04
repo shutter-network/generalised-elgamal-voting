@@ -167,7 +167,7 @@ class BlockchainDataLayer(ElectionDataLayer):
                 pk_election=bytes(dkg_raw[0]),
                 committee_pks=tuple(bytes(p) for p in dkg_raw[1]),
             )
-        return ElectionRecord(config=config, cancelled=bool(config_raw[17]), finalized_key=finalized)
+        return ElectionRecord(config=config, cancelled=bool(config_raw[16]), finalized_key=finalized)
 
     def list_elections(self, filter: ElectionFilter | None = None) -> list[bytes]:
         # Ids are dense (1..electionCount), so enumerate by index — one paged read,
@@ -357,7 +357,6 @@ class BlockchainDataLayer(ElectionDataLayer):
         return (
             config.voting_start,
             config.voting_end,
-            config.tally_deadline,
             0,  # selfSubmitFee
             config.num_candidates,
             config.budget,
@@ -373,31 +372,32 @@ class BlockchainDataLayer(ElectionDataLayer):
         )
 
     def _config_from_view(self, v) -> ElectionConfig:
-        keyper_addrs = [_addr_bytes(a) for a in v[15]]
-        keyper_urls = [str(e) for e in v[21]]  # index-aligned with keyperAddresses
-        threshold_n = int(v[13])
-        threshold_t = int(v[14]) - 1  # on-chain threshold is the quorum count (t+1)
+        # Indices track VotingTypes.ElectionConfigView field order (tallyDeadline removed,
+        # so everything after votingEnd shifts down one vs the previous layout).
+        keyper_addrs = [_addr_bytes(a) for a in v[14]]
+        keyper_urls = [str(e) for e in v[20]]  # index-aligned with keyperAddresses
+        threshold_n = int(v[12])
+        threshold_t = int(v[13]) - 1  # on-chain threshold is the quorum count (t+1)
         return ElectionConfig(
             election_id=codec.uint_to_eid(int(v[0])),
-            num_candidates=int(v[5]),
-            budget=int(v[6]),
-            mode=codec.U8_TO_MODE[int(v[7])],
-            variant=codec.U8_TO_VARIANT[int(v[8])],
-            weighted=bool(v[9]),
-            max_weight=int(v[10]),
-            duplicate_policy=codec.U8_TO_DUP[int(v[11])],
+            num_candidates=int(v[4]),
+            budget=int(v[5]),
+            mode=codec.U8_TO_MODE[int(v[6])],
+            variant=codec.U8_TO_VARIANT[int(v[7])],
+            weighted=bool(v[8]),
+            max_weight=int(v[9]),
+            duplicate_policy=codec.U8_TO_DUP[int(v[10])],
             voting_start=int(v[1]),
             voting_end=int(v[2]),
-            tally_deadline=int(v[3]),
             threshold=Threshold(t=threshold_t, n=threshold_n),
             keypers=tuple(
                 KeyperIdentity(signing_key=a, url=e) for a, e in zip(keyper_addrs, keyper_urls)
             ),
-            eligibility_key=bytes(v[16]),
-            result_publisher_key=_addr_bytes(v[19]),
-            gateway_keys=(_addr_bytes(v[20]),),
-            admin_key=_addr_bytes(v[18]),
-            protocol_version=str(v[12]),
+            eligibility_key=bytes(v[15]),
+            result_publisher_key=_addr_bytes(v[18]),
+            gateway_keys=(_addr_bytes(v[19]),),
+            admin_key=_addr_bytes(v[17]),
+            protocol_version=str(v[11]),
         )
 
     # -- deploy helper ------------------------------------------------------ #

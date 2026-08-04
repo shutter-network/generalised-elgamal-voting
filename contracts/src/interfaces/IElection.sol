@@ -23,7 +23,6 @@ interface IElection is IAccessControl {
     function keyperSet() external view returns (IKeyperSet);
     function votingStart() external view returns (uint64);
     function votingEnd() external view returns (uint64);
-    function tallyDeadline() external view returns (uint64);
     function selfSubmitFee() external view returns (uint256);
     function numCandidates() external view returns (uint32);
     function budget() external view returns (uint32);

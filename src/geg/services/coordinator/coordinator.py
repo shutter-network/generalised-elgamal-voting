@@ -68,7 +68,7 @@ class AutoDKG:
         self.relay_token = relay_token
         self.log = logger or logging.getLogger("geg.coordinator")
         self._done: set[str] = set()      # result published / Complete → terminal
-        self._failed: set[str] = set()    # DKGFailed / Void → terminal
+        self._failed: set[str] = set()    # DKGFailed → terminal
         self._attempts: dict[str, dict] = {}
         self._tokens_by_committee: dict[tuple, dict] = {}
         self._tally_phase: dict[str, str] = {}  # eid_hex → last-logged tally phase (dedupes per-poll spam)
@@ -142,10 +142,6 @@ class AutoDKG:
             self._failed.add(eid_hex)
             self.log.warning("op=dkg status=failed election=%s (voting_start passed without a key)", eid_hex)
             return "dkg_failed"
-        if state is ElectionState.VOID:
-            self._failed.add(eid_hex)
-            self.log.warning("op=tally status=void election=%s (no result by tally_deadline)", eid_hex)
-            return "void"
         if state is ElectionState.REGISTERED:
             return self._drive_dkg(election_id, rec, now)
         if state is ElectionState.TALLYING:

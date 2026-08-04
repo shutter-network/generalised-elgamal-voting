@@ -10,7 +10,7 @@ without the key is useless):
   - ``encryption_key.enc``   the X25519 keypair used to unseal /auth/bootstrap
   - ``bootstrap_tokens.enc`` installed api/peer tokens + peers map
 
-Shares carry an ``expires_at`` (past the election's ``tally_deadline``); a prune
+Shares carry an ``expires_at`` (a TTL past the election's ``voting_end``); a prune
 loop drops expired entries so secrets don't pile up over time.
 """
 

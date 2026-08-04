@@ -13,7 +13,6 @@
     "duplicatePolicy": "last-wins",
     "votingStart": 1000,
     "votingEnd": 2000,
-    "tallyDeadline": 3000,
     "threshold": {
       "t": 1,
       "n": 3

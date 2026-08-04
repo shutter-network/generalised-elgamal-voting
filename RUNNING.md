@@ -170,25 +170,23 @@ rm -rf deploy/keyper-state* coordinator-state      # encrypted keyper state + co
 
 ### Admin API (admin-only)
 
-The admin service also runs as an HTTP endpoint (`serve`, port 8300), gated by a
-fail-closed bearer token (`ADMIN_API_TOKEN`) — auth model **A** (the service holds
-`ADMIN_SIGNING_KEY`; a frontend holds the token). Model B (frontend signs, server
-relays) is a later-version TODO. Endpoints:
+The admin service also runs as an HTTP endpoint (`serve`, port 8300) — **auth model B**:
+each write is authorized by the **admin wallet's signature** (no bearer token). The admin
+EOA is one identity shared by the wallet, `config.admin_key`, and the service's
+`ADMIN_SIGNING_KEY`. The frontend (`frontend/apps/admin`) signs `POST /elections`
+`{config, signature}` / `POST /elections/<eid>/cancel` `{signature}`; the service relays
+the signature (the database data layer `ecrecover`s it; on chain the service fires the tx
+as that EOA, so `msg.sender == adminAddr`). Reproducing the exact request signature by
+hand isn't practical — use the admin app.
+
+The **CLI** is the scripted path (it signs locally with `ADMIN_SIGNING_KEY`):
 
 ```bash
-TOKEN=$(grep '^ADMIN_API_TOKEN=' deploy/.env | cut -d= -f2)
-
-# register an election (the committee — keyper identities + URLs — is in the config)
-curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d "{\"config\": $(cat deploy/sample-election.json)}" \
-  http://127.0.0.1:8300/elections            # → {"electionId":"0x..01"}
-
-# cancel before voting_start
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8300/elections/<eid-hex>/cancel
+docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env \
+  run --rm admin register --config /config/sample-election.json   # → registered election <id>
 ```
 
-The equivalent CLI (`run --rm admin register --config …`) still works. "Changing
+"Changing
 keypers" is per **new** election: each `POST /elections` names its own committee in
 the config, so successive elections can use different or partly-replaced keyper sets
 (k1,k2,k3 then k2,k3,k4). The keyper URLs travel in that config and are stored in the

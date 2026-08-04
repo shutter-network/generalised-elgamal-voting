@@ -23,6 +23,8 @@
 #                          in the election config. Default 8100.
 #   KEYPER_STATE_DIR_HOST  host path for encrypted state (default ./keyper-state).
 #                          Give each local instance its own path.
+#   KEYPER_SECRET_TTL_S    seconds past voting_end to retain per-election secret
+#                          shares before pruning. Default 90 days (7776000).
 #
 # Quick start (one real operator):
 #   cp deploy/.env.keyper.example deploy/.env.keyper   # fill in your values
@@ -48,6 +50,10 @@ services:
       COORDINATOR_URL: ${COORDINATOR_URL:-http://host.docker.internal:8400}
       KEYPER_PORT: ${KEYPER_PORT:-8100}
       KEYPER_STATE_DIR: /keyper-state
+      # How long (seconds past voting_end) this keyper retains its per-election secret
+      # shares before the prune loop drops them. There is no tally deadline, so this is
+      # the sole bound on late decryption. Default 90 days.
+      KEYPER_SECRET_TTL_S: ${KEYPER_SECRET_TTL_S:-7776000}
     ports:
       - "${KEYPER_PORT:-8100}:${KEYPER_PORT:-8100}"
     volumes:

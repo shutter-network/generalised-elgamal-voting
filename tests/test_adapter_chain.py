@@ -114,8 +114,7 @@ class ChainEnv:
             election_id=ELECTION_ID, num_candidates=NUM_CANDIDATES, budget=BUDGET,
             mode=Mode.EXACT, variant=Variant.A, weighted=True, max_weight=10,
             duplicate_policy=DuplicatePolicy.LAST_WINS,
-            voting_start=self.base + 1000, voting_end=self.base + 2000, tally_deadline=self.base + 3000,
-            threshold=Threshold(t=T, n=N),
+            voting_start=self.base + 1000, voting_end=self.base + 2000, threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self._addr(f"keyper{i}"), url=f"http://keyper{i}:8100")
                           for i in range(1, N + 1)),
             eligibility_key=_b(48, 0xE1), result_publisher_key=self._addr("result_publisher"),

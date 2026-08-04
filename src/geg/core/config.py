@@ -77,7 +77,7 @@ class ElectionConfig:
 
     Superset of the on-chain ``ElectionConfigView``: this generalised config
     adds ``mode``, ``variant``, ``weighted``, ``max_weight``, ``duplicate_policy``,
-    ``tally_deadline``, per-keyper URLs, and the explicit authorization
+    per-keyper URLs, and the explicit authorization
     identities (``eligibility_key``, ``result_publisher_key``, ``gateway_keys``,
     ``admin_key``) plus ``protocol_version``.
     """
@@ -92,7 +92,6 @@ class ElectionConfig:
     duplicate_policy: DuplicatePolicy
     voting_start: int  # absolute unix timestamp (seconds)
     voting_end: int  # absolute unix timestamp (seconds)
-    tally_deadline: int  # after this, an election without a result is Void
     threshold: Threshold
     keypers: tuple[KeyperIdentity, ...]  # n keyper identities + URLs
     eligibility_key: bytes  # public key attestations must verify against
@@ -112,9 +111,16 @@ class ElectionConfig:
             raise ValueError("unweighted elections must have max_weight == 1")
         if self.voting_end <= self.voting_start:
             raise ValueError("voting_end must be after voting_start")
-        if self.tally_deadline < self.voting_end:
-            raise ValueError("tally_deadline must be >= voting_end")
         if len(self.keypers) != self.threshold.n:
             raise ValueError(
                 f"expected {self.threshold.n} keypers, got {len(self.keypers)}"
             )
+        # The committee must be n *distinct* members. Two entries with the same
+        # signing key are the same keyper (e.g. two URLs that resolve to one keyper's
+        # /status identity) and would corrupt the t-of-n threshold — reject
+        # authoritatively here, independent of any frontend check. (URLs are not
+        # deduped: in-process deployments leave them empty; duplicate-URL rejection is
+        # a frontend UX guard.)
+        keys = [k.signing_key for k in self.keypers]
+        if len(set(keys)) != len(keys):
+            raise ValueError("duplicate keyper signing key: the committee must be n distinct keypers")

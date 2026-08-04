@@ -39,19 +39,18 @@ def sign_request(private_key: int, op: str, election_id: bytes, payload: bytes =
 
 def register_digest(config) -> bytes:
     """Digest a register signature is taken over: the canonical config with
-    ``election_id`` zeroed.
-
-    Registration can't bind the id (the backend assigns the next sequential id),
-    so the admin authorizes the *config content* instead. Both signer and verifier
-    zero ``election_id`` so the placeholder the caller supplies is irrelevant.
+    ``election_id`` zeroed (the backend assigns the next sequential id, so the admin
+    authorizes the rest of the *config content*; both signer and verifier zero the id
+    placeholder so whatever the caller supplies for it is irrelevant to the signature).
     """
-    import dataclasses
     import json
 
     from geg.envelopes import codecs
 
-    cfg0 = dataclasses.replace(config, election_id=b"\x00" * 32)
-    return keccak(json.dumps(codecs.enc_config(cfg0), sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    # Zero the placeholder electionId in the *encoded dict* (the backend assigns the id).
+    d = codecs.enc_config(config)
+    d["electionId"] = codecs.enc_bytes(b"\x00" * 32)
+    return keccak(json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
 def sign_register(private_key: int, config) -> bytes:

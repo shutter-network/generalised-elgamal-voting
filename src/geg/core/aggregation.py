@@ -68,7 +68,7 @@ def recover_result(
 
     ``committee_pks`` is the finalized ``committee_pks`` tuple (index
     ``keyper_index - 1``). Returns ``None`` if any candidate lacks ``t+1`` valid
-    shares or BSGS fails — the caller treats that as a ``Void`` election.
+    shares or BSGS fails — the caller leaves the election in ``Tallying``.
     """
     bound = bsgs_bound(config, aggregate.total_admitted_weight)
     totals: list[int] = []

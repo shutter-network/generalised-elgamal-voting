@@ -18,7 +18,8 @@ EID_HEX = (1).to_bytes(32, "big").hex()  # registry-assigned first id
 
 
 def _ready(fe):
-    admin.register_election(fe.dl, fe.config, fe.admin, clock=fe.clock, dkg_lead_time=0)
+    admin.register_election(fe.dl, fe.config, fe.admin.sign_register(fe.config),
+                            admin_identity=fe.admin.identity, clock=fe.clock, dkg_lead_time=0)
     assert coord.ensure_dkg(fe.config.election_id, fe.keypers, fe.dl, n=fe.n, t=fe.t,
                             clock=fe.clock, deadline=fe.config.voting_start)
 

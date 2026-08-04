@@ -1,7 +1,7 @@
 """Coordinator as the single keyper-facing orchestrator: one ``AutoDKG`` drives an
 election end to end — DKG, then (once Tallying) trigger keypers to aggregate → quorum
 → decrypt → recover + publish the result. The coordinator is also the result publisher
-(``result_publisher_key == coordinator identity``). ``Void`` past ``tally_deadline``.
+(``result_publisher_key == coordinator identity``).
 
 Full admin-plane pipeline against live keyper HTTP servers.
 """
@@ -56,11 +56,11 @@ class World:
         for s in self._servers:
             s.shutdown()
 
-    def register(self, *, voting_start=1000, voting_end=2000, tally_deadline=3000) -> bytes:
+    def register(self, *, voting_start=1000, voting_end=2000) -> bytes:
         cfg = ElectionConfig(
             election_id=b"\x00" * 32, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
-            voting_start=voting_start, voting_end=voting_end, tally_deadline=tally_deadline,
+            voting_start=voting_start, voting_end=voting_end,
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url=self.urls[i + 1])
                           for i in range(N)),
@@ -106,14 +106,3 @@ def test_coordinator_drives_dkg_then_tally(world):
     assert outcomes[eid.hex()] == "tallied"
     result = w.dl.get_result(eid)
     assert result is not None and list(result.totals) == [6, 15, 0]
-
-
-def test_coordinator_marks_void_past_deadline(world):
-    w = world
-    eid = w.register()
-    watcher = AutoDKG(w.dl, w.coordinator, clock=w.clock)
-    watcher.scan_once()  # DKG
-    # No ballots, no shares; jump past tally_deadline → terminal Void, no result.
-    w.clock.set(3500)
-    assert watcher.scan_once()[eid.hex()] == "void"
-    assert w.dl.get_result(eid) is None

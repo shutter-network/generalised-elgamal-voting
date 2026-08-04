@@ -45,8 +45,6 @@ abstract contract ElectionBase is AccessControl, IElection {
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
     uint64 public immutable votingEnd;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    uint64 public immutable tallyDeadline;
-    // forge-lint: disable-next-line(screaming-snake-case-immutable)
     uint256 public immutable selfSubmitFee;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
     uint32 public immutable numCandidates;
@@ -99,7 +97,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         if (
             admin == address(0) || address(keyperSet_) == address(0) || params.resultPublisher == address(0)
                 || params.voteProxy == address(0) || params.votingEnd <= params.votingStart || params.numCandidates == 0
-                || params.budget == 0 || params.tallyDeadline < params.votingEnd || params.maxWeight == 0
+                || params.budget == 0 || params.maxWeight == 0
                 || (!params.weighted && params.maxWeight != 1)
         ) {
             revert InvalidConfig();
@@ -113,7 +111,6 @@ abstract contract ElectionBase is AccessControl, IElection {
         keyperSet = keyperSet_;
         votingStart = params.votingStart;
         votingEnd = params.votingEnd;
-        tallyDeadline = params.tallyDeadline;
         selfSubmitFee = params.selfSubmitFee;
         numCandidates = params.numCandidates;
         budget = params.budget;
@@ -157,7 +154,6 @@ abstract contract ElectionBase is AccessControl, IElection {
         config.electionId = electionId;
         config.votingStart = votingStart;
         config.votingEnd = votingEnd;
-        config.tallyDeadline = tallyDeadline;
         config.selfSubmitFee = selfSubmitFee;
         config.numCandidates = numCandidates;
         config.budget = budget;

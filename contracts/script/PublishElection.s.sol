@@ -17,7 +17,6 @@ import {VotingTypes} from "../src/VotingTypes.sol";
 ///
 ///   REGISTRY, KEYPER_SET, PRIVATE_KEY    required
 ///   VOTING_START, VOTING_END             required
-///   TALLY_DEADLINE                       default uint64.max
 ///   NUM_CANDIDATES, BUDGET               required
 ///   MODE (0=exact,1=atMost)              default 0
 ///   VARIANT (0=A,1=B)                    default 0
@@ -30,7 +29,6 @@ import {VotingTypes} from "../src/VotingTypes.sol";
 ///   SELF_SUBMIT_FEE                      default 0
 contract PublishElection is Script {
     error InvalidVotingWindow(uint256 votingStart, uint256 votingEnd);
-    error InvalidTallyDeadline(uint256 tallyDeadline, uint256 votingEnd);
     error ValueTooLarge(string name, uint256 value, uint256 maxValue);
 
     function run() external returns (address electionAddr) {
@@ -40,14 +38,11 @@ contract PublishElection is Script {
 
         uint64 votingStart = _toUint64("VOTING_START", vm.envUint("VOTING_START"));
         uint64 votingEnd = _toUint64("VOTING_END", vm.envUint("VOTING_END"));
-        uint64 tallyDeadline = _toUint64("TALLY_DEADLINE", vm.envOr("TALLY_DEADLINE", uint256(type(uint64).max)));
         if (votingEnd <= votingStart) revert InvalidVotingWindow(votingStart, votingEnd);
-        if (tallyDeadline < votingEnd) revert InvalidTallyDeadline(tallyDeadline, votingEnd);
 
         VotingTypes.ElectionParams memory params = VotingTypes.ElectionParams({
             votingStart: votingStart,
             votingEnd: votingEnd,
-            tallyDeadline: tallyDeadline,
             selfSubmitFee: vm.envOr("SELF_SUBMIT_FEE", uint256(0)),
             numCandidates: _toUint32("NUM_CANDIDATES", vm.envUint("NUM_CANDIDATES")),
             budget: _toUint32("BUDGET", vm.envUint("BUDGET")),

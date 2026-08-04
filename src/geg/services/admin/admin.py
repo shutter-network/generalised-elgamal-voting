@@ -12,58 +12,82 @@ so a new election can name a different or partly-replaced keyper set (k1,k2,k3 v
 k2,k3,k4); on the database backend those URLs are stored and read back by the
 coordinator (no env needed).
 
-Auth is model **A**: the service holds ``ADMIN_SIGNING_KEY`` and the HTTP endpoints
-are gated by a fail-closed bearer token (``ADMIN_API_TOKEN``). Model B (frontend signs,
-server relays — key never on the server) is a later-version TODO.
+Auth is model **B**: the admin authorizes each write with a **wallet signature** from
+the admin EOA (the frontend signs; there is no shared bearer token). The admin EOA is
+one identity shared across the wallet, ``config.admin_key``, and the service's
+``ADMIN_SIGNING_KEY``. The HTTP service **relays** the frontend's signature: the
+database data layer ``ecrecover``s it against ``config.admin_key``; on the blockchain
+backend the service fires the tx with that same EOA (so ``msg.sender == adminAddr``),
+and the frontend signature is the gate the service verifies before firing.
 """
 
 from __future__ import annotations
 
 import logging
 
-from geg.core.authz import Signer
+from geg.core.authz import Signer, verify_register, verify_request
 from geg.core.config import ElectionConfig
-from geg.ports.data_layer import ElectionDataLayer
+from geg.ports.data_layer import ElectionDataLayer, WriteAuthorizationError
 
 _LOG = logging.getLogger("geg.admin")
 
 
 class RegistrationError(ValueError):
-    pass
+    """Config rejected before the data layer is touched. ``code`` is a stable machine id
+    for HTTP clients (e.g. ``InsufficientDkgLeadTime``); ``str(self)`` is human-readable."""
+
+    def __init__(self, message: str, *, code: str = "RegistrationError"):
+        super().__init__(message)
+        self.code = code
 
 
 def register_election(
     dl: ElectionDataLayer,
     config: ElectionConfig,
-    admin: Signer,
+    admin_sig: bytes,
     *,
+    admin_identity: bytes,
     clock,
     dkg_lead_time: int,
 ) -> bytes:
-    """Register an election. Rejected unless ``voting_start - now >= dkg_lead_time``.
+    """Register an election, authorized by a relayed admin **signature** (model B).
 
-    ``ElectionConfig`` already validates its internal invariants (candidate count,
-    budget, weight bounds, schedule ordering, keyper count) at construction; this
-    adds the deployment lead-time gate (the ``MIN_DKG_LEAD_TIME`` pattern) so the
-    DKG has room to complete and retry before voting opens.
+    ``admin_sig`` is the admin EOA's EIP-191 signature over the config (from the wallet,
+    or the CLI signing locally). We enforce ``config.admin_key == admin_identity`` (so
+    the on-chain ``adminAddr`` the service will set as the tx sender matches the config's
+    admin) and verify the signature recovers to it. Then the same signature is relayed to
+    the data layer (the database backend re-``ecrecover``s it; the chain adapter fires the
+    tx as this EOA). Rejected unless ``voting_start - now >= dkg_lead_time``.
     """
-    if config.admin_key != admin.identity:
-        raise RegistrationError("admin signer does not match config.admin_key")
+    if config.admin_key != admin_identity:
+        raise RegistrationError("config.admin_key must equal the admin identity")
+    if not verify_register(config.admin_key, admin_sig, config):
+        raise WriteAuthorizationError("bad admin signature over the config")
     now = clock()
-    if config.voting_start - now < dkg_lead_time:
+    lead = config.voting_start - now
+    if lead < dkg_lead_time:
         raise RegistrationError(
-            f"insufficient DKG lead time: voting_start - now = {config.voting_start - now} "
-            f"< dkg_lead_time = {dkg_lead_time}"
+            f"Voting start is too soon for DKG: only {lead}s until voting starts, "
+            f"but at least {dkg_lead_time}s is required. Choose a later voting start.",
+            code="InsufficientDkgLeadTime",
         )
-    eid = dl.register_election(config, admin.sign_register(config))
+    eid = dl.register_election(config, admin_sig)
     _LOG.info("op=register status=ok election=%s keypers=%d voting_start=%d",
               eid.hex(), len(config.keypers), config.voting_start)
     return eid
 
 
-def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin: Signer) -> None:
-    """Cancel before ``voting_start`` (the data layer rejects it once voting starts)."""
-    dl.cancel_election(election_id, admin.sign("cancel", election_id))
+def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes, *, admin_identity: bytes) -> None:
+    """Cancel before ``voting_start``, authorized by a relayed admin signature.
+
+    Verifies ``admin_sig`` recovers to *this election's* admin and that it is our admin
+    identity, then relays it (the data layer rejects a cancel once voting has started)."""
+    admin_key = dl.get_election(election_id).config.admin_key
+    if admin_key != admin_identity:
+        raise WriteAuthorizationError("not the admin of this election")
+    if not verify_request(admin_key, admin_sig, "cancel", election_id):
+        raise WriteAuthorizationError("bad admin signature over the cancel request")
+    dl.cancel_election(election_id, admin_sig)
     _LOG.info("op=cancel status=ok election=%s", election_id.hex())
 
 
@@ -71,47 +95,49 @@ def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin: Signer) ->
 #  Admin HTTP service (auth model A: bearer token, admin-only, fail-closed)
 # --------------------------------------------------------------------------- #
 
-def build_admin_app(dl: ElectionDataLayer, admin: Signer, *, clock, dkg_lead_time: int, api_token: str | None):
-    """Flask app exposing register/cancel to the admin (a frontend, later).
-
-    Every route requires ``Authorization: Bearer <ADMIN_API_TOKEN>``; if no token is
-    configured the service is fail-closed (503 on writes). ``/health`` is open.
-    """
+def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
+    """Flask app exposing register/cancel, authorized by a relayed admin **signature**
+    (model B — no bearer token). ``admin_identity`` is the admin EOA's 20-byte address
+    (the shared identity every request must sign as). The DKG lead-time gate is set
+    per-election by the admin frontend (required ``dkgLeadTime`` body field on register);
+    the service holds no default. ``/health`` is open."""
     from flask import Flask, jsonify, request
 
     from geg.envelopes import codecs
-    from geg.ports.data_layer import ImmutabilityError, WriteAuthorizationError
+    from geg.ports.data_layer import ImmutabilityError
 
     app = Flask(__name__)
+
+    @app.after_request
+    def _cors(resp):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
 
     @app.errorhandler(KeyError)
     def _not_found(e):
         return jsonify(error="KeyError", message=str(e)), 404
 
     @app.errorhandler(WriteAuthorizationError)
-    def _forbidden(e):
-        return jsonify(error="WriteAuthorizationError", message=str(e)), 403
+    def _unauthorized(e):
+        # A bad/missing admin signature is the model-B authorization failure.
+        _LOG.warning("op=admin status=unauthorized reason=%s", e)
+        return jsonify(error="Unauthorized", message=str(e)), 401
 
     @app.errorhandler(ImmutabilityError)
     def _conflict(e):
         return jsonify(error="ImmutabilityError", message=str(e)), 409
 
-    @app.errorhandler(ValueError)  # includes RegistrationError
+    @app.errorhandler(RegistrationError)
+    def _registration(e):
+        _LOG.warning("op=admin status=rejected code=%s reason=%s", e.code, e)
+        return jsonify(error=e.code, message=str(e)), 400
+
+    @app.errorhandler(ValueError)
     def _bad_request(e):
         _LOG.warning("op=admin status=rejected reason=%s", e)
         return jsonify(error="ValueError", message=str(e)), 400
-
-    @app.before_request
-    def _auth():
-        if request.path == "/health":
-            return None
-        if not api_token:  # fail-closed: no token configured → no admin API
-            return jsonify(error="Unauthorized", message="admin API not configured"), 503
-        header = request.headers.get("Authorization", "")
-        presented = header[7:] if header.startswith("Bearer ") else ""
-        if presented != api_token:
-            return jsonify(error="Unauthorized", message="bad or missing admin token"), 401
-        return None
 
     @app.get("/health")
     def health():
@@ -121,13 +147,22 @@ def build_admin_app(dl: ElectionDataLayer, admin: Signer, *, clock, dkg_lead_tim
     def register():
         body = request.get_json(force=True)
         config = codecs.dec_config(body["config"])
-        lead = int(body.get("dkgLeadTime", dkg_lead_time))
-        eid = register_election(dl, config, admin, clock=clock, dkg_lead_time=lead)
+        admin_sig = codecs.dec_bytes(body["signature"], name="signature")
+        # DKG lead time is set by the admin per-election (frontend field). It gates
+        # registration but is not part of the config; there is no service-side default.
+        if body.get("dkgLeadTime") is None:
+            raise RegistrationError("dkgLeadTime is required (set per-election by the admin)",
+                                    code="MissingDkgLeadTime")
+        lead = int(body["dkgLeadTime"])
+        eid = register_election(dl, config, admin_sig, admin_identity=admin_identity,
+                                clock=clock, dkg_lead_time=lead)
         return jsonify(electionId=codecs.enc_bytes(eid)), 200
 
     @app.post("/elections/<eid>/cancel")
     def cancel(eid):
-        cancel_election(dl, bytes.fromhex(eid), admin)
+        body = request.get_json(force=True)
+        admin_sig = codecs.dec_bytes(body["signature"], name="signature")
+        cancel_election(dl, bytes.fromhex(eid), admin_sig, admin_identity=admin_identity)
         return "", 204
 
     return app
@@ -142,11 +177,16 @@ def main() -> None:
       cancel   --election-id <hex>       cancel before voting_start
       serve                              run the admin HTTP service (register/cancel)
 
-    Env: ``ADMIN_SIGNING_KEY`` (hex secp256k1 — the adminKey identity, and on the
-    blockchain backend the tx sender / on-chain ``adminAddr``), ``GEG_DATA_LAYER`` +
-    ``GEG_DATA_LAYER_URL`` (http backends), ``DKG_LEAD_TIME`` (default 0). For
-    ``serve``: ``ADMIN_API_TOKEN`` (bearer token; fail-closed if unset), ``ADMIN_HOST``/
-    ``ADMIN_PORT`` (default 8300).
+    The DKG lead-time gate (seconds of headroom required before ``voting_start``) is set
+    per-election by the caller: the HTTP register takes it from the required ``dkgLeadTime``
+    body field (the admin frontend), and the CLI ``register`` from ``--dkg-lead-time``
+    (default 0). The service holds no default.
+
+    Env: ``ADMIN_SIGNING_KEY`` (hex secp256k1 — the adminKey identity; the CLI signs with
+    it, and on the blockchain backend it is the tx sender / on-chain ``adminAddr``),
+    ``GEG_DATA_LAYER`` + ``GEG_DATA_LAYER_URL`` (http backends). For ``serve``
+    (model B): the admin **signature** authorizes each write (no bearer token); the
+    frontend wallet signs and the service relays. ``ADMIN_HOST``/``ADMIN_PORT`` (default 8300).
     """
     import argparse
     import json
@@ -161,6 +201,8 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     reg = sub.add_parser("register", help="register an election from a config JSON envelope")
     reg.add_argument("--config", required=True)
+    reg.add_argument("--dkg-lead-time", type=int, default=0,
+                     help="seconds of headroom required before voting_start (default 0)")
     can = sub.add_parser("cancel", help="cancel an election before voting_start")
     can.add_argument("--election-id", required=True)
     sub.add_parser("serve", help="run the admin HTTP service")
@@ -169,21 +211,24 @@ def main() -> None:
     admin_key = os.environ["ADMIN_SIGNING_KEY"]
     admin = Signer.from_sk(int(admin_key, 16))
     dl = data_layer_for_service(admin_key)
-    lead_time = int(os.environ.get("DKG_LEAD_TIME", "0"))
 
     if args.command == "register":
         config = codecs.dec_config(json.loads(open(args.config).read()))
-        eid = register_election(dl, config, admin, clock=lambda: int(time.time()), dkg_lead_time=lead_time)
+        eid = register_election(dl, config, admin.sign_register(config), admin_identity=admin.identity,
+                                clock=lambda: int(time.time()), dkg_lead_time=args.dkg_lead_time)
         print("registered election", eid.hex())
     elif args.command == "cancel":
-        cancel_election(dl, bytes.fromhex(args.election_id.removeprefix("0x")), admin)
+        eid = bytes.fromhex(args.election_id.removeprefix("0x"))
+        cancel_election(dl, eid, admin.sign("cancel", eid), admin_identity=admin.identity)
         print("cancelled election", args.election_id)
     elif args.command == "serve":
         logging.basicConfig(level=logging.INFO)
         port = int(os.environ.get("ADMIN_PORT", "8300"))
-        _LOG.info("op=start service=admin port=%d admin_identity=%s", port, admin.identity.hex())
-        app = build_admin_app(dl, admin, clock=lambda: int(time.time()), dkg_lead_time=lead_time,
-                              api_token=os.environ.get("ADMIN_API_TOKEN"))
+        _LOG.info(
+            "op=start service=admin port=%d admin_identity=%s auth=model-B-signature",
+            port, admin.identity.hex(),
+        )
+        app = build_admin_app(dl, admin.identity, clock=lambda: int(time.time()))
         app.run(host=os.environ.get("ADMIN_HOST", "0.0.0.0"), port=port)
 
 

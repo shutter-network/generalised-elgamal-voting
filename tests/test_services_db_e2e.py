@@ -55,7 +55,8 @@ def db_full_env():
 
 def test_full_weighted_election_over_postgres(db_full_env):
     fe = db_full_env
-    admin.register_election(fe.dl, fe.config, fe.admin, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
+    admin.register_election(fe.dl, fe.config, fe.admin.sign_register(fe.config),
+                            admin_identity=fe.admin.identity, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
     assert coord.ensure_dkg(
         fe.config.election_id, fe.keypers, fe.dl, n=fe.n, t=fe.t, clock=fe.clock, deadline=fe.config.voting_start
     )
@@ -78,7 +79,8 @@ def test_result_persists_across_client_reconnect(db_full_env):
     from geg.adapters.db.client import HttpDataLayerClient
 
     fe = db_full_env
-    admin.register_election(fe.dl, fe.config, fe.admin, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
+    admin.register_election(fe.dl, fe.config, fe.admin.sign_register(fe.config),
+                            admin_identity=fe.admin.identity, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
     coord.ensure_dkg(fe.config.election_id, fe.keypers, fe.dl, n=fe.n, t=fe.t, clock=fe.clock, deadline=fe.config.voting_start)
     fe.clock.set(1_500)
     submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)

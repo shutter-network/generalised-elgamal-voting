@@ -71,7 +71,6 @@ class Env:
             duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1_000,
             voting_end=2_000,
-            tally_deadline=3_000,
             threshold=Threshold(t=self.threshold_t, n=self.n),
             keypers=tuple(
                 KeyperIdentity(signing_key=bytes([i]) * 20, url=f"http://k{i}") for i in range(self.n)
@@ -226,7 +225,6 @@ def build_full_env(dl, clock) -> FullEnv:
         duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000,
         voting_end=2_000,
-        tally_deadline=3_000,
         threshold=Threshold(t=t, n=n),
         keypers=tuple(
             KeyperIdentity(signing_key=keyper_signers[i].identity, url=f"http://k{i}") for i in range(n)

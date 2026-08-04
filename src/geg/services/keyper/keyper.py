@@ -92,7 +92,7 @@ class KeyperService:
             result_published=self.dl.get_result(election_id) is not None,
         )
         state = derive_state(cfg, facts, self._clock())
-        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE, ElectionState.VOID):
+        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE):
             raise KeyperRefusal(f"refuse: state is {state.value}, not tallying")
         if rec.finalized_key is None:
             raise KeyperRefusal("refuse: no finalized key")
@@ -151,7 +151,7 @@ class KeyperService:
             result_published=self.dl.get_result(election_id) is not None,
         )
         state = derive_state(cfg, facts, self._clock())
-        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE, ElectionState.VOID):
+        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE):
             raise KeyperRefusal(f"refuse: state is {state.value}, not tallying")
         if rec.finalized_key is None:
             raise KeyperRefusal("refuse: no finalized key")

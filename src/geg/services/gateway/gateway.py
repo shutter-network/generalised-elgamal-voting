@@ -77,6 +77,14 @@ def build_gateway_app(data_layer, *, clock, filter_on: bool = True):
 
     app = Flask(__name__)
 
+    @app.after_request
+    def _cors(resp):
+        # Browser voter apps POST ballots here directly; allow the JSON preflight.
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
     @app.get("/health")
     def health():
         return jsonify(ok=True)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 
 import requests
@@ -34,7 +35,12 @@ from .keyper import KeyperService
 
 _OPEN = {"/status", "/health", "/auth/bootstrap"}
 _PEER = {"/dkg/receive_commitments", "/dkg/receive_share"}
-_SECRET_RETENTION_BUFFER_S = 86_400  # keep the share ~1 day past tally_deadline
+# Retention TTL for a keyper's per-election secrets, measured from voting_end (there is no
+# tally deadline any more — a keyper can decrypt however late, up to this bound). The default
+# is owned by the deployment (compose `KEYPER_SECRET_TTL_S`); when unset the secret is kept
+# indefinitely (expires_at=None → never pruned) rather than baking a default value in here.
+_ttl = os.environ.get("KEYPER_SECRET_TTL_S")
+_SECRET_RETENTION_S = int(_ttl) if _ttl else None
 
 
 def _is_benign_write_conflict(err: Exception) -> bool:
@@ -74,6 +80,18 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     state_dir = pathlib.Path(state_dir)
     app = Flask(__name__)
     lock = threading.Lock()
+
+    @app.after_request
+    def _cors(resp):
+        # The admin browser app reads the open /status (GET, no custom headers → a
+        # "simple" request, so no preflight) to resolve this keyper's address at
+        # registration time. Expose it cross-origin. Auth'd routes still require the
+        # bearer regardless of origin, so this only widens read access to /status,
+        # /health, /auth/bootstrap.
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
 
     fernet = persist.derive_fernet(signer.private_key)
     x25519 = persist.load_or_create_x25519(fernet, state_dir, log)
@@ -269,7 +287,8 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         with lock:
             completed[eid_hex] = persist.DkgEntry(
                 combined_share=st.combined_share,
-                expires_at=int(config.tally_deadline) + _SECRET_RETENTION_BUFFER_S,
+                expires_at=(int(config.voting_end) + _SECRET_RETENTION_S
+                            if _SECRET_RETENTION_S is not None else None),
             )
             persist.save_dkg_secrets(fernet, completed, state_dir)
         return jsonify(verified=True)

@@ -113,9 +113,8 @@ contract ElectionExtensionsTest is Test {
         assertEq(stored.totalAdmittedWeight, 5);
     }
 
-    function test_tallyDeadlineExposedInConfig() external view {
+    function test_configFieldsExposed() external view {
         (VotingTypes.ElectionConfigView memory config,) = election.getElection();
-        assertEq(config.tallyDeadline, type(uint64).max);
         assertEq(config.protocolVersion, "v1");
         assertEq(config.duplicatePolicy, 1);
     }
@@ -158,7 +157,6 @@ contract ElectionExtensionsTest is Test {
         return VotingTypes.ElectionParams({
             votingStart: votingStart,
             votingEnd: votingEnd,
-            tallyDeadline: type(uint64).max,
             selfSubmitFee: 0,
             numCandidates: 3,
             budget: 1,

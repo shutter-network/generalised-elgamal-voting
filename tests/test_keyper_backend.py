@@ -51,7 +51,7 @@ class World:
         self.config = ElectionConfig(
             election_id=ELECTION_ID, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
-            voting_start=1000, voting_end=2000, tally_deadline=3000, threshold=Threshold(t=T, n=N),
+            voting_start=1000, voting_end=2000, threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url="") for i in range(N)),
             eligibility_key=self.elig.eligibility_key, result_publisher_key=self.result_publisher.identity,
             gateway_keys=(self.gateway.identity,), admin_key=self.admin.identity, protocol_version="v1",

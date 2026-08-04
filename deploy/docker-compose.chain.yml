@@ -99,8 +99,10 @@ services:
       - "8500:8500"
     depends_on: [data-layer]
 
-  # Admin service — HTTP register/cancel on :8300 (admin-only, ADMIN_API_TOKEN).
-  # `up` runs `serve`; register still works as a one-shot CLI:
+  # Admin service — HTTP register/cancel on :8300. Auth model B: the admin wallet signs
+  # each write (relayed by the service; no token). On chain the service fires the tx with
+  # ADMIN_SIGNING_KEY (msg.sender = adminAddr = the same EOA). `up` runs `serve`; register
+  # still works as a one-shot CLI (signs locally):
   #   docker compose ... run --rm admin register --config /config/election.json
   # Registering deploys the KeyperSet + Election, so it needs the Foundry artifacts.
   admin:
@@ -111,7 +113,6 @@ services:
     environment:
       <<: *chain-env
       ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
-      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN}
       ADMIN_PORT: "8300"
       GEG_CONTRACTS_OUT: /contracts-out
     ports:

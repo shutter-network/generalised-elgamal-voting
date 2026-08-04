@@ -127,7 +127,7 @@ def gen_flow():
     config = ElectionConfig(
         election_id=ELECTION_ID, num_candidates=num_candidates, budget=budget, mode=Mode.EXACT,
         variant=Variant.A, weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
-        voting_start=1000, voting_end=2000, tally_deadline=3000, threshold=Threshold(t=t, n=n),
+        voting_start=1000, voting_end=2000, threshold=Threshold(t=t, n=n),
         keypers=tuple(KeyperIdentity(signing_key=bytes([i]) * 20, url="") for i in range(n)),
         eligibility_key=elig_key, result_publisher_key=b"\xa1" * 20, gateway_keys=(b"\x91" * 20,),
         admin_key=b"\xad" * 20, protocol_version="SHUTTER-VOTE-v1",

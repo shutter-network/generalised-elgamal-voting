@@ -318,7 +318,6 @@ def enc_config(c: ElectionConfig) -> dict:
         "duplicatePolicy": c.duplicate_policy.value,
         "votingStart": c.voting_start,
         "votingEnd": c.voting_end,
-        "tallyDeadline": c.tally_deadline,
         "threshold": {"t": c.threshold.t, "n": c.threshold.n},
         "keypers": [
             {"signingKey": enc_bytes(k.signing_key), "url": k.url} for k in c.keypers
@@ -353,7 +352,6 @@ def dec_config(d: Any) -> ElectionConfig:
             duplicate_policy=_enum(DuplicatePolicy, _req(d, "duplicatePolicy"), name="duplicatePolicy"),
             voting_start=_int(_req(d, "votingStart"), name="votingStart"),
             voting_end=_int(_req(d, "votingEnd"), name="votingEnd"),
-            tally_deadline=_int(_req(d, "tallyDeadline"), name="tallyDeadline"),
             threshold=Threshold(t=_int(_req(th, "t"), name="threshold.t"),
                                 n=_int(_req(th, "n"), name="threshold.n")),
             keypers=tuple(

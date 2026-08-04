@@ -33,7 +33,6 @@ def make_config(**overrides) -> ElectionConfig:
         duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000,
         voting_end=2_000,
-        tally_deadline=3_000,
         threshold=Threshold(t=1, n=3),
         keypers=_keypers(3),
         eligibility_key=b"\xe1" * 48,
@@ -66,7 +65,6 @@ def test_conformance_level_1_defaults():
         (dict(max_weight=0), "max_weight"),
         (dict(weighted=False, max_weight=5), "unweighted"),
         (dict(voting_start=2_000, voting_end=2_000), "voting_end must be after"),
-        (dict(tally_deadline=1_500), "tally_deadline"),
         (dict(threshold=Threshold(t=1, n=3), keypers=_keypers(2)), "expected 3 keypers"),
     ],
 )
@@ -82,6 +80,28 @@ def test_invalid_config_rejected(overrides, match):
 def test_invalid_threshold_rejected(t, n):
     with pytest.raises(ValueError):
         Threshold(t=t, n=n)
+
+
+def test_duplicate_keyper_signing_key_rejected():
+    """Two committee entries with the same address are the same keyper (e.g. two URLs
+    resolving to one keyper's /status identity) and must be rejected."""
+    dup = (
+        KeyperIdentity(signing_key=b"\x07" * 20, url="https://a.example"),
+        KeyperIdentity(signing_key=b"\x07" * 20, url="https://b.example"),
+        KeyperIdentity(signing_key=b"\x08" * 20, url="https://c.example"),
+    )
+    with pytest.raises(ValueError, match="duplicate keyper signing key"):
+        make_config(keypers=dup)
+
+
+def test_duplicate_keyper_url_allowed():
+    """URLs are not deduped at the config level: in-process deployments leave them
+    empty (duplicate-URL rejection is a frontend UX guard, not a protocol invariant)."""
+    same_url = tuple(
+        KeyperIdentity(signing_key=bytes([i + 1]) * 20, url="") for i in range(3)
+    )
+    cfg = make_config(keypers=same_url)
+    assert len(cfg.keypers) == 3
 
 
 def test_threshold_t_plus_one_of_n():

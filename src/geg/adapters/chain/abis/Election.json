@@ -33,11 +33,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "tallyDeadline",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
             "name": "selfSubmitFee",
             "type": "uint256",
             "internalType": "uint256"
@@ -467,11 +462,6 @@
           },
           {
             "name": "votingEnd",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "tallyDeadline",
             "type": "uint64",
             "internalType": "uint64"
           },
@@ -1130,19 +1120,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tallyDeadline",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"

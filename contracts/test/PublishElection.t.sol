@@ -28,7 +28,6 @@ contract PublishElectionScriptTest is Test {
         vm.setEnv("KEYPER_SET", vm.toString(address(keyperSet)));
         vm.setEnv("VOTING_START", "1000");
         vm.setEnv("VOTING_END", "2000");
-        vm.setEnv("TALLY_DEADLINE", "3000");
         vm.setEnv("NUM_CANDIDATES", "3");
         vm.setEnv("BUDGET", "3");
         vm.setEnv("MODE", "0");
@@ -51,7 +50,6 @@ contract PublishElectionScriptTest is Test {
         assertEq(election.budget(), 3);
         assertTrue(election.weighted());
         assertEq(election.maxWeight(), 10);
-        assertEq(election.tallyDeadline(), 3000);
         assertEq(election.duplicatePolicy(), 1);
 
         (VotingTypes.ElectionConfigView memory config,) = election.getElection();

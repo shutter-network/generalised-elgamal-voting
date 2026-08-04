@@ -191,11 +191,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "tallyDeadline",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
             "name": "selfSubmitFee",
             "type": "uint256",
             "internalType": "uint256"

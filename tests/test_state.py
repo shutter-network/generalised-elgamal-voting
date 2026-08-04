@@ -6,7 +6,7 @@ import pytest
 
 from geg.core.state import ElectionState, StateFacts, derive_state, is_voting_open
 
-# voting_start=1000, voting_end=2000, tally_deadline=3000 (from env.config defaults)
+# voting_start=1000, voting_end=2000 (from env.config defaults)
 
 
 def _facts(cancelled=False, key=False, result=False):
@@ -39,7 +39,7 @@ def test_voting_end_boundary_is_tallying_not_voting(env):
     assert derive_state(cfg, _facts(key=True), now=2000) is ElectionState.TALLYING
 
 
-def test_tallying_before_deadline(env):
+def test_tallying_after_voting_end(env):
     cfg = env.config()
     assert derive_state(cfg, _facts(key=True), now=2500) is ElectionState.TALLYING
 
@@ -50,15 +50,16 @@ def test_dkg_failed_when_no_key_at_start(env):
     assert derive_state(cfg, _facts(key=False), now=1500) is ElectionState.DKG_FAILED
 
 
-def test_void_at_deadline_without_result(env):
+def test_tallying_is_unbounded_without_result(env):
+    """Tallying has no deadline: it stays TALLYING indefinitely until a result posts."""
     cfg = env.config()
-    assert derive_state(cfg, _facts(key=True), now=3000) is ElectionState.VOID
-    assert derive_state(cfg, _facts(key=True), now=5000) is ElectionState.VOID
+    assert derive_state(cfg, _facts(key=True), now=3000) is ElectionState.TALLYING
+    assert derive_state(cfg, _facts(key=True), now=5000) is ElectionState.TALLYING
 
 
 def test_complete_when_result_published(env):
     cfg = env.config()
-    # Complete wins even after the deadline.
+    # Complete wins long after voting ends.
     assert derive_state(cfg, _facts(key=True, result=True), now=2500) is ElectionState.COMPLETE
     assert derive_state(cfg, _facts(key=True, result=True), now=9999) is ElectionState.COMPLETE
 

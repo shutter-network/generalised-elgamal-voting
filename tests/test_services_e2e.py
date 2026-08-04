@@ -22,7 +22,8 @@ DKG_LEAD_TIME = 100
 
 
 def _register_and_dkg(fe):
-    admin.register_election(fe.dl, fe.config, fe.admin, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
+    admin.register_election(fe.dl, fe.config, fe.admin.sign_register(fe.config),
+                            admin_identity=fe.admin.identity, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
     ok = coord.ensure_dkg(
         fe.config.election_id, fe.keypers, fe.dl, n=fe.n, t=fe.t,
         clock=fe.clock, deadline=fe.config.voting_start,
@@ -78,8 +79,9 @@ def test_full_weighted_election(full_env):
 def test_registration_rejected_without_lead_time(full_env):
     fe = full_env
     fe.clock.set(950)  # voting_start=1000, lead time 100 → only 50 left
-    with pytest.raises(admin.RegistrationError, match="lead time"):
-        admin.register_election(fe.dl, fe.config, fe.admin, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
+    with pytest.raises(admin.RegistrationError, match="too soon for DKG"):
+        admin.register_election(fe.dl, fe.config, fe.admin.sign_register(fe.config),
+                            admin_identity=fe.admin.identity, clock=fe.clock, dkg_lead_time=DKG_LEAD_TIME)
 
 
 # --------------------------------------------------------------------------- #

@@ -119,7 +119,7 @@ Immutable election configuration (generalised — beyond the original Munich set
 
 - `electionId` (registry-assigned, sequential)
 - `keyperSet`
-- `votingStart`, `votingEnd`, `tallyDeadline`
+- `votingStart`, `votingEnd`
 - `selfSubmitFee`
 - `numCandidates`, `budget`
 - `mode`, `variant`, `weighted`, `maxWeight`, `duplicatePolicy`, `protocolVersion`

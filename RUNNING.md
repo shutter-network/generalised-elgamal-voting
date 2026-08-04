@@ -134,8 +134,9 @@ curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000
 #   → {"result":{"totals":[6,15,0],"keyperIndices":[1,2],"bsgsBound":21,...}}
 ```
 
-Voting window and tally deadline are set relative to generation time
-(`voting_start` ≈ now + 5 min by default). For a quick demo use a short real-time
+The voting window is set relative to generation time
+(`voting_start` ≈ now + 5 min by default). There is no tally deadline — once voting
+closes the election stays in `Tallying` until the committee publishes a result. For a quick demo use a short real-time
 window: `VOTING_START_OFFSET=90 VOTING_DURATION=90 python scripts/gen_deploy_env.py`.
 Voters submit ballots to the gateway (`http://127.0.0.1:8200`) during the window;
 after `voting_end` the **coordinator** triggers the keypers to aggregate (they
@@ -315,7 +316,15 @@ and slower poll intervals (12s) suited to real block times. `GEG_CHAIN_RPC` and
 
 > **Eligibility and ballot gas are the integrator's responsibility, not geg's.**
 > Eligibility is the `EligibilityService` port (the integrator supplies the issuance
-> adapter). Ballot gas is not baked in: `submitVote` is `msg.sender`, so the
+> adapter). **The eligibility service is the sole authority on voter weight**: it
+> assigns each voter a weight and binds it into the signed `ATTESTATION_V1` credential
+> (over `electionId, pseudonym, vk, weight`). Neither the voter nor the config sets the
+> weight — the config only declares the policy (`weighted`, and `maxWeight` as the
+> ceiling), and admission rejects any attestation with `weight < 1` or `weight > maxWeight`.
+> The tally then scales each ballot by its attested weight (`Σ weightᵢ·ctᵢ`). The bundled
+> stub issuer is a **dummy** that grants a fixed `ELIGIBILITY_DUMMY_WEIGHT` (default 1) to
+> everyone; real per-voter weights come from the integrator's own eligibility source
+> (token balance, registry, membership tier, …). Ballot gas is not baked in: `submitVote` is `msg.sender`, so the
 > integrator chooses by config — **sponsor** (run the submitter with a funded key;
 > the gateway's `GATEWAY_SIGNING_KEY`, or the eligibility service itself) or
 > **voters self-pay** (their wallet sends the tx). `selfSubmitFee` + `VOTE_PROXY_ROLE`

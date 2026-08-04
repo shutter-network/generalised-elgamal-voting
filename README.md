@@ -26,9 +26,11 @@ configuration change, not a code change.
   election by a distributed key generation (DKG) ceremony; no single party ever
   holds the decryption key. Any `t+1` keypers can jointly decrypt the tally; up to
   `t` compromised keypers learn nothing.
-- **Weighted voting.** Each voter carries an attested weight; the tally is the
-  weighted homomorphic sum `Σ wᵢ·ctᵢ` per candidate. Weight 1 is the degenerate
-  one-person-one-vote case.
+- **Weighted voting.** The **eligibility service assigns each voter's weight** and binds
+  it into the signed `ATTESTATION_V1` credential — the voter and the config never set it
+  (the config only declares `weighted` + a `maxWeight` ceiling, enforced at admission). The
+  tally scales each ballot by its attested weight: `Σ wᵢ·ctᵢ` per candidate. Weight 1 is the
+  degenerate one-person-one-vote case.
 - **Publicly auditable.** Every stored artifact is self-verifying (zero-knowledge
   proofs + signatures). From public reads alone, anyone can recompute the DKG
   finalization, re-derive the admitted ballot set, re-verify every decryption
@@ -70,8 +72,9 @@ Register ──▶ DKG ──▶ Vote ──▶ Tally ──▶ Decrypt ──�
 
 **Derived state, never stored.** No service owns a mutable state machine. Every
 service and auditor re-derives the lifecycle state
-(`Registered → KeyReady → Voting → Tallying → Complete`, plus `Cancelled`,
-`DKGFailed`, `Void`) from `(data-layer facts, now)`. Keypers **never trust a
+(`Registered → KeyReady → Voting → Tallying → Complete`, plus `Cancelled` and
+`DKGFailed`) from `(data-layer facts, now)`. `Tallying` is unbounded — there is no
+tally deadline, so a late committee never strands the election. Keypers **never trust a
 trigger** — they re-verify preconditions themselves.
 
 ---

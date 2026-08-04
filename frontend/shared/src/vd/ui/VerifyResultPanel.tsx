@@ -25,6 +25,7 @@ export function VerifyResultPanel({ overview, aggregate, shares, result, totalBa
       threshold: overview.config.thresholdT.toString(),
       totalBallots: totalBallots.toString(),
       budget: overview.config.budget,
+      bsgsBound: result.bsgsBound.toString(),
       aggregate: aggregate.aggregates.map((ct) => ({ c1: ct.c1, c2: ct.c2 })),
       committeePks: overview.dkg.committeePKs,
       shares: shares.map((s) => ({
@@ -61,7 +62,9 @@ export function VerifyResultPanel({ overview, aggregate, shares, result, totalBa
     `  const f = JSON.parse(readFileSync("${fixtureFilename}", "utf8"));`,
     `  const threshold = Number(f.threshold);`,
     `  await initCurves();`,
-    `  const electionIdBytes = electionId32(f.electionId), babyStepTable = buildBabyStepTable(BigInt(f.totalBallots) * BigInt(f.budget));`,
+    `  // BSGS bound = budget · Σ(admitted weights), published as bsgsBound (plain`,
+    `  // totalBallots·budget underflows a weighted tally where weights exceed 1).`,
+    `  const electionIdBytes = electionId32(f.electionId), babyStepTable = buildBabyStepTable(BigInt(f.bsgsBound));`,
     `  const totals = [];`,
     `  for (let j = 0; j < f.numCandidates; j++) {`,
     `    const ct = { c1: g2FromHex(f.aggregate[j].c1), c2: g2FromHex(f.aggregate[j].c2) };`,
@@ -169,7 +172,7 @@ export function VerifyResultPanel({ overview, aggregate, shares, result, totalBa
             <div className="vpCheckItem">
               <div className="vpCheckName">{t("Baby-step / giant-step")}</div>
               <div className="vpCheckDesc">
-                {t("After decryption, a discrete-log solver recovers the integer vote count from a G₂ point. The search space is bounded by totalBallots × budget.")}
+                {t("After decryption, a discrete-log solver recovers the integer vote count from a G₂ point. The search space is bounded by budget × Σ(admitted weights) — the published bsgsBound.")}
               </div>
             </div>
           </div>

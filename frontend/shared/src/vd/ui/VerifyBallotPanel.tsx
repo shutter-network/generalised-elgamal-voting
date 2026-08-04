@@ -50,13 +50,26 @@ export function VerifyBallotPanel({ ballot, globalIndex, overview, selectedElect
     `const fromHex = (h) => Uint8Array.from(Buffer.from(String(h).replace(/^0x/, ""), "hex"));`,
     `const g2FromHex = (h) => G2Point.fromBytes(fromHex(h));`,
     `const electionId32 = (id) => fromHex(BigInt(id).toString(16).padStart(64, "0"));`,
+    `// att packs scheme(1) ‖ weight(32 BE) ‖ R(48) ‖ s(32). The verifier dispatches on`,
+    `// scheme exactly like geg's verify_attestation: 1=ATTESTATION_V1 (domain-separated`,
+    `// transcript over electionId,pseudonym,vk,weight), 0=LEGACY (weightless keccak, weight 1).`,
+    `const u32be = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };`,
+    `const scalar32 = (w) => { const b = Buffer.alloc(32); let x = BigInt(w); for (let i = 31; i >= 0 && x > 0n; i--) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };`,
+    `const tlv = (p, tag, v) => { const tb = Buffer.from(tag, "utf8"); p.push(u32be(tb.length), tb, u32be(v.length), Buffer.from(v)); };`,
+    `const v1Digest = (eid, ps, vk, w) => { const p = [Buffer.from("SHUTTER-VOTE-ATTEST-v1", "utf8")]; tlv(p, "attest:electionId", eid); tlv(p, "attest:pseudonym", ps); tlv(p, "attest:vk", vk); tlv(p, "attest:weight", scalar32(w)); return fromHex(keccak256(Buffer.concat(p))); };`,
+    `const legacyDigest = (eid, ps, vk) => fromHex(keccak256(Buffer.concat([Buffer.from(eid), Buffer.from(ps), Buffer.from(vk)])));`,
     `const makeWrVerifier = (pkWr) => {`,
     `  const wrVk = G1Point.fromBytes(pkWr);`,
-    `  return (electionIdBytes, pseudonym, vk, att) => {`,
-    `    if (electionIdBytes.length !== 32 || pseudonym.length !== 32 || vk.length !== 48) return false;`,
+    `  return (eid, ps, vk, att) => {`,
+    `    if (eid.length !== 32 || ps.length !== 32 || vk.length !== 48) return false;`,
     `    try {`,
-    `      let s = 0n; for (let i = 48; i < 80; i++) s = (s << 8n) + BigInt(att[i]);`,
-    `      return schnorrVerify(wrVk, fromHex(keccak256(Buffer.concat([Buffer.from(electionIdBytes), Buffer.from(pseudonym), Buffer.from(vk)]))), { R: G1Point.fromBytes(att.subarray(0, 48)), s });`,
+    `      const scheme = att[0];`,
+    `      let w = 0n; for (let i = 1; i < 33; i++) w = (w << 8n) + BigInt(att[i]);`,
+    `      if (w < 1n || (scheme !== 1 && w !== 1n)) return false;`,
+    `      const sig = att.subarray(33);`,
+    `      let s = 0n; for (let i = 48; i < 80; i++) s = (s << 8n) + BigInt(sig[i]);`,
+    `      const msg = scheme === 1 ? v1Digest(eid, ps, vk, w) : legacyDigest(eid, ps, vk);`,
+    `      return schnorrVerify(wrVk, msg, { R: G1Point.fromBytes(sig.subarray(0, 48)), s });`,
     `    } catch { return false; }`,
     `  };`,
     `};`,
@@ -141,9 +154,12 @@ export function VerifyBallotPanel({ ballot, globalIndex, overview, selectedElect
             <div className="vpCheckItem">
               <div className="vpCheckName">{t("WR attestation")}</div>
               <div className="vpCheckDesc">
-                {t("The voter's pseudonym is registered for this election.")}{" "}
+                {t("The voter's pseudonym is registered for this election, with an authorized weight.")}{" "}
+                {t("The eligibility authority's Schnorr key (pkWR) signs a domain-separated transcript")}{" "}
+                <span className="mono" style={{ fontSize: 11 }}>SHUTTER-VOTE-ATTEST-v1(electionId, pseudonym, vk, weight)</span>{" "}
+                {t("(ATTESTATION_V1); a legacy weightless credential over")}{" "}
                 <span className="mono" style={{ fontSize: 11 }}>keccak256(electionId ‖ pseudonym ‖ vk)</span>{" "}
-                {t("is signed by the election authority's Schnorr key (pkWR), verified via")}{" "}
+                {t("is also accepted at weight 1. Verified via")}{" "}
                 <span className="mono" style={{ fontSize: 11 }}>schnorrVerify</span>.
               </div>
             </div>

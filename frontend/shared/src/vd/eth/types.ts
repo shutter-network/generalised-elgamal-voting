@@ -49,5 +49,8 @@ export type DecryptionShare = {
 export type ElectionResult = {
   tally: bigint[];
   keyperIndices: number[];
+  /** BSGS plaintext bound = budget · Σ(admitted weights); needed to size the discrete-log
+   * table when reproducing a weighted tally (plain totalBallots·budget underflows). */
+  bsgsBound: bigint;
 };
 

@@ -18,19 +18,33 @@ export function VerifyAggregatePanel({ aggregate, onDownloadFixture, downloading
   const installCmd = `npm install ${SDK_PACKAGE} viem`;
 
   const scriptCode = [
-    `const { initCurves, G1Point, G2Point, schnorrVerify, verifyBallot, sumCts } = require("${SDK_PACKAGE}");`,
+    `const { initCurves, G1Point, G2Point, schnorrVerify, verifyBallot, sumCts, scalarMulCt } = require("${SDK_PACKAGE}");`,
     `const { readFileSync } = require("node:fs");`,
     `const { keccak256 } = require("viem");`,
     `const fromHex   = (h) => Uint8Array.from(Buffer.from(String(h).replace(/^0x/, ""), "hex"));`,
     `const g2FromHex = (h) => G2Point.fromBytes(fromHex(h));`,
     `const electionId32 = (id) => fromHex(BigInt(id).toString(16).padStart(64, "0"));`,
+    `// weight packed at att[1..33] (32-byte BE) — the aggregate is Σ weightᵢ·ctᵢ.`,
+    `const attWeight = (attHex) => { const a = fromHex(attHex); let w = 0n; for (let i = 1; i < 33; i++) w = (w << 8n) + BigInt(a[i]); return w; };`,
+    `// att packs scheme(1) ‖ weight(32 BE) ‖ R(48) ‖ s(32). Dispatches on scheme like geg's`,
+    `// verify_attestation: 1=ATTESTATION_V1 (transcript+weight), 0=LEGACY (weightless, weight 1).`,
+    `const u32be = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };`,
+    `const scalar32 = (w) => { const b = Buffer.alloc(32); let x = BigInt(w); for (let i = 31; i >= 0 && x > 0n; i--) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };`,
+    `const tlv = (p, tag, v) => { const tb = Buffer.from(tag, "utf8"); p.push(u32be(tb.length), tb, u32be(v.length), Buffer.from(v)); };`,
+    `const v1Digest = (eid, ps, vk, w) => { const p = [Buffer.from("SHUTTER-VOTE-ATTEST-v1", "utf8")]; tlv(p, "attest:electionId", eid); tlv(p, "attest:pseudonym", ps); tlv(p, "attest:vk", vk); tlv(p, "attest:weight", scalar32(w)); return fromHex(keccak256(Buffer.concat(p))); };`,
+    `const legacyDigest = (eid, ps, vk) => fromHex(keccak256(Buffer.concat([Buffer.from(eid), Buffer.from(ps), Buffer.from(vk)])));`,
     `const makeWrVerifier = (pkWr) => {`,
     `  const wrVk = G1Point.fromBytes(pkWr);`,
-    `  return (electionIdBytes, pseudonym, vk, att) => {`,
-    `    if (electionIdBytes.length !== 32 || pseudonym.length !== 32 || vk.length !== 48) return false;`,
+    `  return (eid, ps, vk, att) => {`,
+    `    if (eid.length !== 32 || ps.length !== 32 || vk.length !== 48) return false;`,
     `    try {`,
-    `      let s = 0n; for (let i = 48; i < 80; i++) s = (s << 8n) + BigInt(att[i]);`,
-    `      return schnorrVerify(wrVk, fromHex(keccak256(Buffer.concat([Buffer.from(electionIdBytes), Buffer.from(pseudonym), Buffer.from(vk)]))), { R: G1Point.fromBytes(att.subarray(0, 48)), s });`,
+    `      const scheme = att[0];`,
+    `      let w = 0n; for (let i = 1; i < 33; i++) w = (w << 8n) + BigInt(att[i]);`,
+    `      if (w < 1n || (scheme !== 1 && w !== 1n)) return false;`,
+    `      const sig = att.subarray(33);`,
+    `      let s = 0n; for (let i = 48; i < 80; i++) s = (s << 8n) + BigInt(sig[i]);`,
+    `      const msg = scheme === 1 ? v1Digest(eid, ps, vk, w) : legacyDigest(eid, ps, vk);`,
+    `      return schnorrVerify(wrVk, msg, { R: G1Point.fromBytes(sig.subarray(0, 48)), s });`,
     `    } catch { return false; }`,
     `  };`,
     `};`,
@@ -54,7 +68,7 @@ export function VerifyAggregatePanel({ aggregate, onDownloadFixture, downloading
     `  console.log(\`Using \${validBallots.length} of \${f.ballots.length} ballots (locally valid)\`);`,
     `  let ok = true;`,
     `  for (let j = 0; j < f.numCandidates; j++) {`,
-    `    const sum = sumCts(validBallots.map((b) => ({ c1: g2FromHex(b.ciphertexts[j].c1), c2: g2FromHex(b.ciphertexts[j].c2) })));`,
+    `    const sum = sumCts(validBallots.map((b) => scalarMulCt(attWeight(b.wrAttestation), { c1: g2FromHex(b.ciphertexts[j].c1), c2: g2FromHex(b.ciphertexts[j].c2) })));`,
     `    const pub = { c1: g2FromHex(f.aggregate[j].c1), c2: g2FromHex(f.aggregate[j].c2) };`,
     `    const match = sum.c1.equals(pub.c1) && sum.c2.equals(pub.c2);`,
     `    if (!match) ok = false;`,
@@ -137,7 +151,7 @@ export function VerifyAggregatePanel({ aggregate, onDownloadFixture, downloading
             <div className="vpCheckItem">
               <div className="vpCheckName">{t("Homomorphic sum")}</div>
               <div className="vpCheckDesc">
-                {t("Each ballot ciphertext (c1, c2) is a BLS12-381 G2 point. Point-adding all per-candidate c1s gives the aggregate c1; same for c2. The result must equal the on-chain aggregate byte-for-byte.")}
+                {t("Each ballot ciphertext (c1, c2) is a BLS12-381 G2 point, scaled by the voter's attested weight (weight 1 = one-person-one-vote). The weighted sum Σ weightᵢ·ctᵢ per candidate must equal the published aggregate byte-for-byte.")}
               </div>
             </div>
             <div className="vpCheckItem">

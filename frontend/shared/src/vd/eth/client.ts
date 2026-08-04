@@ -65,11 +65,22 @@ export async function fetchBallotsPage(
     ciphertexts: (b.ciphertexts ?? []).map((ct: any) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })),
     zkProof: b.zkProof as Hex,
     voterSignature: b.voterSignature as Hex,
-    // geg carries a *structured* attestation; the dashboard expects one opaque blob.
-    // Use the attestation signature as a display stand-in (live verify is deferred).
-    wrAttestation: (b.attestation?.signature ?? "0x") as Hex,
+    // geg's attestation is structured (scheme, weight, 80-byte R‖s sig); the SDK's WR
+    // verifier callback only receives one opaque blob, so pack everything the scheme-
+    // directed verifier needs into it: scheme(1) ‖ weight(32 BE) ‖ signature(80).
+    wrAttestation: packWrAttestation(b.attestation?.scheme, b.attestation?.weight, b.attestation?.signature),
   }));
   return { total: BigInt(resp.total), ballots };
+}
+
+/** Pack geg's structured attestation into the single `att` blob the WR verifier reads:
+ * `scheme(1) ‖ weight(32-byte BE) ‖ signature(80 = R‖s)`. scheme byte: 0x01 = ATTESTATION_V1,
+ * 0x00 = LEGACY (weightless). Mirrors geg core `verify_attestation`'s scheme dispatch. */
+function packWrAttestation(scheme: string | undefined, weight: number | undefined, sig: string | undefined): Hex {
+  const schemeByte = scheme === "LEGACY" ? "00" : "01";
+  const weightHex = BigInt(weight ?? 1).toString(16).padStart(64, "0");
+  const sigHex = (sig ?? "0x").replace(/^0x/, "");
+  return ("0x" + schemeByte + weightHex + sigHex) as Hex;
 }
 
 export async function fetchAggregate(electionId: number): Promise<EncryptedTally | null> {
@@ -84,14 +95,22 @@ export async function fetchDecryptionShares(electionId: number): Promise<Decrypt
     keyperIndex: s.keyperIndex,
     submittedAt: 0n,
     shares: s.entries.map((e) => e.sigma as Hex),
-    // DLEQ {e,z} decode is deferred (verify panels are visual-only for now).
-    proofs: s.entries.map(() => ({ e: 0n, z: 0n })),
+    // geg packs each DLEQ proof as a 64-byte big-endian blob `e(32) ‖ z(32)`
+    // (crypto/params.py DLEQ_BYTES, proofs.encode_dleq); decode it back to {e, z}
+    // so the shares/result verification fixtures carry the real challenge + response.
+    proofs: s.entries.map((e) => decodeDleq(e.proof as Hex)),
     rawProofs: s.entries.map((e) => e.proof as Hex),
   }));
+}
+
+/** Split geg's 64-byte DLEQ blob (0x-hex, big-endian `e(32)‖z(32)`) into scalars. */
+function decodeDleq(proof: Hex): { e: bigint; z: bigint } {
+  const hex = proof.replace(/^0x/, "").padStart(128, "0");
+  return { e: BigInt("0x" + hex.slice(0, 64)), z: BigInt("0x" + hex.slice(64, 128)) };
 }
 
 export async function fetchResult(electionId: number): Promise<ElectionResult | null> {
   const { result } = await api.getResult(electionId);
   if (!result) return null;
-  return { tally: result.totals.map((n) => BigInt(n)), keyperIndices: result.keyperIndices };
+  return { tally: result.totals.map((n) => BigInt(n)), keyperIndices: result.keyperIndices, bsgsBound: BigInt(result.bsgsBound) };
 }

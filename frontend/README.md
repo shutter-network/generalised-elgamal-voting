@@ -1,8 +1,5 @@
 # geg frontends
 
-Two React + Vite browser apps and a shared multi-election dashboard. See
-[`PLAN.md`](./PLAN.md) for the design.
-
 ```
 frontend/
   shared/            @geg/shared — typed API client, deriveState(), dashboard components (Vite-aliased)

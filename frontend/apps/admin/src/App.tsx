@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Dashboard } from "@geg/shared";
 import { ConnectButton, useWalletSigner } from "@geg/shared/wallet";
 import { CancelElectionButton } from "./CancelElectionButton";
@@ -7,8 +7,14 @@ import { RegisterForm } from "./RegisterForm";
 type Tab = "dashboard" | "register";
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("dashboard");
+  // Persist the active tab in the URL hash so a refresh stays on it (default: dashboard).
+  const [tab, setTab] = useState<Tab>(() => (window.location.hash === "#register" ? "register" : "dashboard"));
   const [focusId, setFocusId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const h = tab === "register" ? "#register" : "#dashboard";
+    if (window.location.hash !== h) window.history.replaceState(null, "", h);
+  }, [tab]);
   const signer = useWalletSigner();
   const wallet = signer.account ? signer : null; // null until a wallet is connected
 
@@ -36,7 +42,7 @@ export function App() {
         <div className="topbar-spacer" />
         <div className="topbar-actions">
           <div className="topbar-connect">
-            <ConnectButton showBalance={false} chainStatus="none" accountStatus="address" />
+            <ConnectButton />
           </div>
         </div>
       </header>

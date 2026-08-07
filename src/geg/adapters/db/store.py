@@ -99,7 +99,7 @@ class PostgresStore(ElectionDataLayer):
                 raise KeyError(f"unknown election {election_id.hex()}")
             admin_key, voting_start = bytes(row[0]), int(row[1])
             if self._clock() >= voting_start:
-                raise ImmutabilityError("cannot cancel at or after voting_start")
+                raise ImmutabilityError("Voting has already started; an election can only be cancelled before it opens.")
             if not authz.verify_request(admin_key, admin_sig, "cancel", election_id):
                 raise WriteAuthorizationError("cancel: bad admin signature")
             conn.execute("UPDATE elections SET cancelled = TRUE WHERE election_id = %s", (election_id,))

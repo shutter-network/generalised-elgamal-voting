@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Hex } from "./Hex";
+import { StatusIcon } from "./StatusIcon";
 import type { Ballot } from "../eth/types";
 
 type VerifyState =
@@ -12,37 +13,6 @@ function hexBytesLen(hex: string): number {
   if (!hex || hex === "0x") return 0;
   if (!hex.startsWith("0x")) return 0;
   return Math.max(0, (hex.length - 2) / 2);
-}
-
-function StatusIcon({ type }: { type: "ok" | "bad" | "checking" | "idle" }) {
-  if (type === "ok") {
-    return (
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
-        <circle cx="11" cy="11" r="11" fill="#15803d" />
-        <path d="M6 11.5l3.5 3.5 6.5-7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-  if (type === "bad") {
-    return (
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
-        <circle cx="11" cy="11" r="11" fill="#b91c1c" />
-        <path d="M7 7l8 8M15 7l-8 8" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  if (type === "checking") {
-    return (
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden className="bdSpinner">
-        <circle cx="11" cy="11" r="9" stroke="#a16207" strokeWidth="2.5" strokeDasharray="40 20" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden>
-      <circle cx="11" cy="11" r="9" stroke="#9ca3af" strokeWidth="2" />
-    </svg>
-  );
 }
 
 type Props = {
@@ -123,8 +93,11 @@ export function BallotDetail({ ballot, globalIndex, verifyState, onBack, onVerif
           )}
           {vs === "idle" && (
             <>
-              <div className="bdStatusTitle">{t("Pending")}</div>
-              <div className="bdStatusDesc">{t("Verification will run automatically.")}</div>
+              <div className="bdStatusTitle">{t("Not verified yet")}</div>
+              <div className="bdStatusDesc">{t("Run the cryptographic checks for this ballot in your browser.")}</div>
+              <button type="button" className="verifyYourselfBtn" style={{ marginTop: 10 }} onClick={onVerifyLocally}>
+                {t("Verify ballot")}
+              </button>
             </>
           )}
         </div>

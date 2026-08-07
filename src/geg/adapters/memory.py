@@ -88,7 +88,7 @@ class InMemoryDataLayer(ElectionDataLayer):
     def cancel_election(self, election_id: bytes, admin_sig: bytes) -> None:
         st = self._get(election_id)
         if self._clock() >= st.config.voting_start:
-            raise ImmutabilityError("cannot cancel at or after voting_start")
+            raise ImmutabilityError("Voting has already started; an election can only be cancelled before it opens.")
         if not authz.verify_request(st.config.admin_key, admin_sig, "cancel", election_id):
             raise WriteAuthorizationError("cancel: bad admin signature")
         st.cancelled = True

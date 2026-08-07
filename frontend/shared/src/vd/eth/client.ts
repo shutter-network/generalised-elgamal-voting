@@ -35,6 +35,8 @@ export async function fetchElectionOverview(electionId: number): Promise<{
     selfSubmitFee: 0n,
     numCandidates: cfg.numCandidates,
     budget: cfg.budget,
+    mode: cfg.mode,
+    variant: cfg.variant,
     thresholdN: BigInt(cfg.threshold.n),
     thresholdT: BigInt(cfg.threshold.t),
     keyperAddresses: cfg.keypers.map((k) => k.signingKey),

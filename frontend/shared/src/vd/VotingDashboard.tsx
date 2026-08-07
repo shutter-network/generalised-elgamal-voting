@@ -28,6 +28,11 @@ import { Term } from "./ui/Term";
 import { StageLifecycleBadge } from "./ui/StageLifecycleBadge";
 import { StageLockedPanel, type WaitingOnStage } from "./ui/StageLockedPanel";
 import { getStageLifecycle, getWaitingOnStageNums, isStageVerificationAvailable, type StageStatusContext } from "./ui/stageLifecycle";
+import { StatusIcon } from "./ui/StatusIcon";
+import { verifyBallotLocal, verifySharesLocal } from "./verify";
+
+/** On-demand verification state for a stage or a single ballot. */
+type VState = { status: "idle" } | { status: "verifying" } | { status: "ok" } | { status: "bad"; reason: string };
 
 type Overview = { config: ElectionConfigView; dkg: DkgResultView; phase: number; cancelled: boolean; isDKGFinalized: boolean; isResultFinalized: boolean };
 type Tab = "overview" | "dkg" | "ballots" | "aggregate" | "shares" | "result";
@@ -73,9 +78,9 @@ type OverviewDisplay = {
 
 function computeOverviewDisplay(p: {
   overview: Overview; result: ElectionResult | null; aggregate: EncryptedTally | null;
-  shares: DecryptionShare[] | null; ballotTotal: bigint; t: TFunction;
+  shares: DecryptionShare[] | null; ballotTotal: bigint; ballotCounted: number; ballotSuperseded: number; t: TFunction;
 }): OverviewDisplay {
-  const { overview, result, aggregate, shares, ballotTotal, t } = p;
+  const { overview, result, aggregate, shares, ballotTotal, ballotCounted, ballotSuperseded, t } = p;
   const thresholdT = Number(overview.config.thresholdT);
   const thresholdN = Number(overview.config.thresholdN);
   const sharesCount = shares?.length ?? 0;
@@ -114,7 +119,10 @@ function computeOverviewDisplay(p: {
     return { leftLabel: "CURRENTLY", showCurrentlyDot: true, mainTitle: t("{{n}} ballots cast so far", { n: ballotTotal.toString() }), mainSub: label ? t("Closes in {{label}}", { label }) : t("Voting closing now"), stageHeading: stageProgressLabel(t, 2, true), stageDesc: stageDesc(2), rightLabel: "WHAT COMES NEXT", rightDesc: stageDesc(3) };
   }
   if (!aggregate) {
-    return { leftLabel: "CURRENTLY", showCurrentlyDot: true, mainTitle: t("Voting has closed"), mainSub: t("{{n}} ballots accepted", { n: ballotTotal.toString() }), stageHeading: stageProgressLabel(t, 3, true), stageDesc: stageDesc(3), rightLabel: "WHAT COMES NEXT", rightDesc: stageDesc(4) };
+    const mainSub = ballotSuperseded > 0
+      ? t("{{c}} ballots counted · {{s}} superseded by re-votes", { c: ballotCounted, s: ballotSuperseded })
+      : t("{{n}} ballots accepted", { n: ballotTotal.toString() });
+    return { leftLabel: "CURRENTLY", showCurrentlyDot: true, mainTitle: t("Voting has closed"), mainSub, stageHeading: stageProgressLabel(t, 3, true), stageDesc: stageDesc(3), rightLabel: "WHAT COMES NEXT", rightDesc: stageDesc(4) };
   }
   if (sharesCount < thresholdT) {
     return { leftLabel: "CURRENTLY", showCurrentlyDot: true, mainTitle: t("{{count}} of {{total}} keyper shares received", { count: sharesCount, total: thresholdN }), mainSub: t("Need {{n}} valid shares to decrypt", { n: thresholdT }), stageHeading: stageProgressLabel(t, 4, true), stageDesc: stageDesc(4), rightLabel: "WHAT COMES NEXT", rightDesc: stageDesc(5) };
@@ -123,6 +131,37 @@ function computeOverviewDisplay(p: {
 }
 
 const PAGE_SIZE = 10;
+
+/** Client-side re-vote dedup, mirroring the tally's `last-wins` admission (a wallet may
+ * re-cast until close; only the latest same-pseudonym ballot is counted). Computed over the
+ * FULL ordered ballot list — the data layer stores every submission on both backends, so a
+ * duplicate can span pages. Returns the absolute indexes that are superseded (an earlier
+ * ballot with a later same-pseudonym sibling), the pseudonyms that were re-voted at all, and
+ * `counted` = distinct pseudonyms (what actually enters the aggregate). */
+export interface BallotDedup { superseded: Set<number>; revoted: Set<string>; counted: number }
+
+const EMPTY_DEDUP: BallotDedup = { superseded: new Set(), revoted: new Set(), counted: 0 };
+
+async function fetchAllBallotsFor(electionId: number, total: number): Promise<Ballot[]> {
+  const all: Ballot[] = [];
+  for (let off = 0; off < total; off += PAGE_SIZE) {
+    const { ballots: pg } = await fetchBallotsPage(electionId, off, PAGE_SIZE);
+    if (pg.length === 0) break;
+    all.push(...pg);
+  }
+  return all;
+}
+
+function computeBallotDedup(all: Ballot[]): BallotDedup {
+  const latestIdx = new Map<string, number>(); // pseudonym -> highest (latest) index
+  const seen = new Map<string, number>();       // pseudonym -> occurrence count
+  all.forEach((b, i) => { latestIdx.set(b.pseudonym, i); seen.set(b.pseudonym, (seen.get(b.pseudonym) ?? 0) + 1); });
+  const superseded = new Set<number>();
+  all.forEach((b, i) => { if (latestIdx.get(b.pseudonym) !== i) superseded.add(i); });
+  const revoted = new Set<string>();
+  seen.forEach((n, p) => { if (n > 1) revoted.add(p); });
+  return { superseded, revoted, counted: latestIdx.size };
+}
 
 export function VotingDashboard({ electionId, elections, onSelectElection, headerAction }: {
   electionId: number;
@@ -151,6 +190,13 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
   const [detailView, setDetailView] = useState<{ pseudonym: string; globalIndex: number } | null>(null);
   const [downloadingAggFixture, setDownloadingAggFixture] = useState(false);
   const [exportingFixture, setExportingFixture] = useState(false);
+  // Re-vote dedup over the full ballot list (last-wins), for the counted-vs-recorded counts
+  // and the per-row superseded/counted badges.
+  const [dedup, setDedup] = useState<BallotDedup>(EMPTY_DEDUP);
+  // On-demand verification: per-ballot (by absolute index — a pseudonym is NOT unique once a
+  // wallet re-votes) and per-keyper share (by keyperIndex).
+  const [ballotVerify, setBallotVerify] = useState<Record<number, VState>>({});
+  const [shareVerify, setShareVerify] = useState<Record<number, VState>>({});
 
   const selectedElection = String(electionId);
 
@@ -159,6 +205,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
     let alive = true;
     setTab("overview"); setPage(0); setDetailView(null); setShowVerifyGuide(false); setShowVerifyPanel(false);
     setOverview(null); setAggregate(null); setShares(null); setResult(null);
+    setBallotVerify({}); setShareVerify({}); setDedup(EMPTY_DEDUP);
     async function load() {
       try {
         const [ov, agg, sh, res, firstPage] = await Promise.all([
@@ -169,6 +216,11 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
         setLoadError(null); setOverview(ov); setAggregate(agg); setShares(sh); setResult(res);
         setBallotsTotal(firstPage.total); setOverviewBallotTotal(firstPage.total);
         setBallots(firstPage.ballots);
+        // Dedup needs the whole ordered list (a re-vote may span pages). One page suffices
+        // when it already holds everything; otherwise fetch the rest.
+        const total = Number(firstPage.total);
+        const all = total <= PAGE_SIZE ? firstPage.ballots : await fetchAllBallotsFor(electionId, total);
+        if (alive) setDedup(computeBallotDedup(all));
       } catch (e) { if (alive) setLoadError(e instanceof Error ? e.message : String(e)); }
     }
     void load();
@@ -194,14 +246,21 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
 
   const currentStageNum = tab === "dkg" ? 1 : tab === "ballots" ? 2 : tab === "aggregate" ? 3 : tab === "shares" ? 4 : tab === "result" ? 5 : null;
   const isStageView = tab !== "overview";
-  const detailBallot = detailView ? ballots.find((b) => b.pseudonym === detailView.pseudonym) ?? null : null;
+  // Resolve the open ballot by its ABSOLUTE index within the current page — a pseudonym is
+  // not unique once a wallet re-votes, so a pseudonym lookup would return the wrong ballot.
+  const detailBallot = detailView ? (ballots[detailView.globalIndex - page * PAGE_SIZE] ?? null) : null;
+  // Recorded (every stored ballot) vs counted (distinct pseudonyms, last-wins). Fall back to
+  // recorded until the dedup pass has run, so we never flash a premature "0 counted".
+  const recordedBallots = Number(overviewBallotTotal);
+  const countedBallots = dedup.counted || recordedBallots;
+  const supersededBallots = Math.max(0, recordedBallots - countedBallots);
   const isTriple =
     (showVerifyPanel && tab === "ballots" && !!detailBallot && !!detailView) ||
     (showVerifyGuide && ((tab === "aggregate" && !!aggregate) || (tab === "shares" && !!shares && !!aggregate) || (tab === "result" && !!result && !!aggregate && !!shares)));
 
   const overviewDisplay = useMemo(
-    () => (overview ? computeOverviewDisplay({ overview, result, aggregate, shares, ballotTotal: overviewBallotTotal, t }) : null),
-    [overview, result, aggregate, shares, overviewBallotTotal, t],
+    () => (overview ? computeOverviewDisplay({ overview, result, aggregate, shares, ballotTotal: overviewBallotTotal, ballotCounted: countedBallots, ballotSuperseded: supersededBallots, t }) : null),
+    [overview, result, aggregate, shares, overviewBallotTotal, countedBallots, supersededBallots, t],
   );
 
   const totalPages = Math.ceil(Number(ballotsTotal) / PAGE_SIZE);
@@ -225,8 +284,10 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
     if (!overview || stageLifecycle(num) !== "done") return null;
     switch (num) {
       case 1: return { title: t("{{n}} of {{n}} keypers ready", { n: overview.config.thresholdN.toString() }), sub: t("Encryption committee finalized") };
-      case 2: return { title: t("{{n}} ballots accepted", { n: overviewBallotTotal.toString() }), sub: t("Voting closed") };
-      case 3: return aggregate ? { title: t("{{n}} ballots summed", { n: overviewBallotTotal.toString() }), sub: t("Into {{n}} encrypted candidate totals", { n: aggregate.aggregates.length }) } : null;
+      case 2: return supersededBallots > 0
+        ? { title: t("{{c}} of {{r}} ballots counted", { c: countedBallots, r: recordedBallots }), sub: t("{{s}} superseded by re-votes", { s: supersededBallots }) }
+        : { title: t("{{n}} ballots accepted", { n: overviewBallotTotal.toString() }), sub: t("Voting closed") };
+      case 3: return aggregate ? { title: t("{{n}} ballots summed", { n: countedBallots.toString() }), sub: t("Into {{n}} encrypted candidate totals", { n: aggregate.aggregates.length }) } : null;
       case 4: return shares ? { title: t("{{count}} of {{total}} keyper shares received", { count: shares.length, total: overview.config.thresholdN.toString() }), sub: t("Threshold met · tally decrypted") } : null;
       case 5: { if (!result) return null; const o = computeElectionOutcome(result.tally); return { title: formatOutcomeStageTitle(o, t), sub: t("{{n}} total votes counted", { n: o.totalVotes.toString() }) }; }
       default: return null;
@@ -278,6 +339,51 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
     if (!overview) return null;
     return <StageLockedPanel stageNum={stageNum} waitingOn={buildWaitingOn(stageNum)} votingStart={overview.config.votingStart} votingEnd={overview.config.votingEnd} isEasy={false} />;
   }
+  // ── on-demand verification (runs the real crypto in-browser, on click) ──
+  const verifyCfg = () => ({
+    electionId: overview!.config.electionId, numCandidates: overview!.config.numCandidates,
+    budget: overview!.config.budget, mode: overview!.config.mode, variant: overview!.config.variant,
+    pkWR: overview!.config.pkWR,
+  });
+  async function runBallotVerify(b: Ballot, gi: number) {
+    setBallotVerify((m) => ({ ...m, [gi]: { status: "verifying" } }));
+    try {
+      const r = await verifyBallotLocal(b, verifyCfg(), overview!.dkg.pkElection);
+      setBallotVerify((m) => ({ ...m, [gi]: r.ok ? { status: "ok" } : { status: "bad", reason: r.reason } }));
+    } catch (e: any) { setBallotVerify((m) => ({ ...m, [gi]: { status: "bad", reason: e?.message ?? String(e) } })); }
+  }
+  // One keyper's share verified across all candidates (result shown as a ballot-style card).
+  async function runShareVerify(sh: DecryptionShare) {
+    if (!aggregate) return;
+    setShareVerify((m) => ({ ...m, [sh.keyperIndex]: { status: "verifying" } }));
+    try {
+      const res = await verifySharesLocal(overview!.config.electionId, overview!.config.numCandidates, aggregate.aggregates, overview!.dkg.committeePKs, [sh]);
+      const bad = res.verdicts.filter((v) => !v.ok).length;
+      setShareVerify((m) => ({ ...m, [sh.keyperIndex]: res.ok ? { status: "ok" } : { status: "bad", reason: `${bad} candidate share(s) failed DLEQ` } }));
+    } catch (e: any) { setShareVerify((m) => ({ ...m, [sh.keyperIndex]: { status: "bad", reason: e?.message ?? String(e) } })); }
+  }
+
+  /** Per-keyper share verification result, styled like the ballot's status card. */
+  function renderShareVerifyCard(sv: VState, onRun: () => void) {
+    const s = sv.status;
+    const iconType = s === "ok" ? "ok" : s === "bad" ? "bad" : s === "verifying" ? "checking" : "idle";
+    return (
+      <div className={`bdStatusCard bdStatusCard--${iconType}`} style={{ marginTop: 12, marginBottom: 0 }}>
+        <div className="bdStatusIcon"><StatusIcon type={iconType} /></div>
+        <div className="bdStatusBody">
+          {s === "ok" && (<><div className="bdStatusTitle">{t("VALID")}</div><div className="bdStatusDesc">{t("Every candidate's decryption-share DLEQ proof checks out against this keyper's committee key.")}</div></>)}
+          {s === "bad" && (<><div className="bdStatusTitle">{t("INVALID")}</div><div className="bdStatusDesc">{(sv as { reason: string }).reason}</div></>)}
+          {s === "verifying" && (<><div className="bdStatusTitle">{t("Verifying…")}</div><div className="bdStatusDesc">{t("Running the DLEQ checks in your browser.")}</div></>)}
+          {s === "idle" && (<>
+            <div className="bdStatusTitle">{t("Not verified yet")}</div>
+            <div className="bdStatusDesc">{t("Check this keyper's decryption-share proofs in your browser.")}</div>
+            <button type="button" className="verifyYourselfBtn" style={{ marginTop: 10 }} disabled={!aggregate} onClick={onRun}>{t("Verify share")}</button>
+          </>)}
+        </div>
+      </div>
+    );
+  }
+
   function renderVerifySection(stageNum: number) {
     if (isTriple) return null;
     const available = statusCtx !== null && isStageVerificationAvailable(stageNum, statusCtx, { hasAggregate: aggregate !== null, hasShares: shares !== null && shares.length > 0, hasResult: result !== null });
@@ -286,24 +392,25 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
         <div className="verifyYourselfLabel">{t("VERIFY YOURSELF")}</div>
         <p className="verifyYourselfDesc">{available ? t("Don't trust this panel · re-run the same cryptographic check yourself, against this stage's on-chain data, on your own machine.") : t("Once this stage completes, you'll be able to re-run its cryptographic check on your own machine · same code, same fixtures, no trust in the dashboard required.")}</p>
         <button type="button" className="verifyYourselfBtn" disabled={!available} onClick={() => available && setShowVerifyGuide((v) => !v)}>
-          {available ? (showVerifyGuide ? t("Hide verification guide ↑") : t("Open manual verification guide →")) : t("Manual verification not available yet")}
+          {available ? (showVerifyGuide ? t("Hide manual guide ↑") : t("Open manual verification guide →")) : t("Manual verification not available yet")}
         </button>
       </div>
     );
   }
 
-  if (loadError) return <div className="vd"><div className="pageMain"><div className="errorBanner">{t("Error:")} {loadError}</div></div></div>;
+  if (loadError) return (
+    <div className="vd"><div className="pageMain">
+      <div className="errorBanner">
+        {t("Couldn't load election data.")}{" "}
+        <span style={{ opacity: 0.7 }}>({loadError})</span>
+      </div>
+    </div></div>
+  );
   if (!overview) return <div className="vd"><div className="pageMain"><div className="emptyState dim">Loading…</div></div></div>;
 
   return (
     <div className="vd">
       <div className="pageMain">
-        {overview.cancelled && (
-          <div className="cancelledBanner" role="status">
-            <span className="cancelledBanner__tag">{t("CANCELLED")}</span>
-            <span>{t("This election was cancelled before voting opened — no key setup, voting, counting, or decryption will take place.")}</span>
-          </div>
-        )}
         {/* Election header */}
         <div className="elecHeader">
           <div className="elecHeaderTop">
@@ -311,6 +418,12 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
               <div className="elecHeaderLabel">{t("Election #{{n}}", { n: overview.config.electionId.toString() })}</div>
               <div className="elecHeaderTitle">{t("Encrypted Election")}</div>
               <div className="elecHeaderSubtitle">{t("A secret-ballot, end-to-end verifiable vote.")}</div>
+              {overview.cancelled && (
+                <div className="elecHeaderCancelled" role="status">
+                  <span className="elecHeaderCancelled__tag">{t("CANCELLED")}</span>
+                  <span>{t("This election was cancelled before voting opened — no key setup, voting, counting, or decryption will take place.")}</span>
+                </div>
+              )}
             </div>
             <div className="elecHeaderSwitch">
               <div className="switchElecLabel">{t("SWITCH ELECTION")}</div>
@@ -477,11 +590,23 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                         <div className="blList">
                           {ballots.map((b, index) => {
                             const globalIndex = page * PAGE_SIZE + index;
+                            const isSuperseded = dedup.superseded.has(globalIndex);
+                            const isRevoted = dedup.revoted.has(b.pseudonym);
                             return (
-                              <div key={`ballot-${b.pseudonym}`} className="blRow" role="button" tabIndex={0} onClick={() => { setDetailView({ pseudonym: b.pseudonym, globalIndex }); setShowVerifyPanel(false); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailView({ pseudonym: b.pseudonym, globalIndex }); setShowVerifyPanel(false); } }}>
+                              <div key={`ballot-${globalIndex}`} className={`blRow${isSuperseded ? " blRow--superseded" : ""}`} role="button" tabIndex={0} onClick={() => { setDetailView({ pseudonym: b.pseudonym, globalIndex }); setShowVerifyPanel(false); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailView({ pseudonym: b.pseudonym, globalIndex }); setShowVerifyPanel(false); } }}>
                                 <div className="blRowIndex"><div className="blRowIndexLabel">index {globalIndex}</div></div>
                                 <div className="blRowPseudonym"><span className="blRowPseudonymLabel dim">pseudonym</span><span className="blRowPseudonymGroup"><span className="mono"><Hex value={b.pseudonym} trim={14} copyable={false} /></span><span onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}><CopyTextButton text={b.pseudonym} ariaLabel={t("Copy pseudonym")} /></span></span></div>
-                                <div className="blRowStatus" />
+                                <div className="blRowStatus">
+                                  {isSuperseded ? (
+                                    <span className="tip tip--end" data-tip={t("A later ballot from this wallet replaced it — not counted")}>
+                                      <span className="blBadge blBadge--superseded">{t("superseded")}</span>
+                                    </span>
+                                  ) : isRevoted ? (
+                                    <span className="tip tip--end" data-tip={t("The wallet's latest re-vote — this is the one counted")}>
+                                      <span className="blBadge blBadge--counted">{t("counted")}</span>
+                                    </span>
+                                  ) : null}
+                                </div>
                               </div>
                             );
                           })}
@@ -489,7 +614,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                         <p className="blHelpText">Click any ballot to see its cryptographic details (ciphertexts, ZK proof, voter signature, attestation).</p>
                       </>
                     ) : !isTriple ? (
-                      <BallotDetail ballot={detailBallot!} globalIndex={detailView!.globalIndex} verifyState={{ status: "idle" }} onBack={() => { setDetailView(null); setShowVerifyPanel(false); }} onVerifyLocally={() => setShowVerifyPanel(true)} txHash={null} explorerUrl={undefined} />
+                      <BallotDetail ballot={detailBallot!} globalIndex={detailView!.globalIndex} verifyState={{ ...(ballotVerify[detailView!.globalIndex] ?? { status: "idle" }), token: 0 } as any} onBack={() => { setDetailView(null); setShowVerifyPanel(false); }} onVerifyLocally={() => void runBallotVerify(detailBallot!, detailView!.globalIndex)} txHash={null} explorerUrl={undefined} />
                     ) : null}
                   </div>
                 )}
@@ -517,9 +642,11 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                       {!isTriple && (<>
                         <div className="stageCountBadge">{t("shares submitted: {{n}}", { n: shares.length })}</div>
                         <div className="dataCardList">
-                          {shares.map((sh, rowIdx) => (
+                          {shares.map((sh, rowIdx) => { const sv = shareVerify[sh.keyperIndex] ?? { status: "idle" as const };
+                            return (
                             <div key={`sh-${rowIdx}-${sh.keyperIndex}`} className="dataCard shareBlock">
                               <div className="shareBlockHeader"><span className="shareBlockKeyper"><span className="shareBlockKeyperIndex">#{sh.keyperIndex}</span><span className="shareBlockKeyperLabel"> {t("KEYPER")}</span></span></div>
+                              {renderShareVerifyCard(sv, () => void runShareVerify(sh))}
                               <div className="shareBlockBody">
                                 {sh.shares.map((shareHex, j) => (
                                   <div key={j} className="shareCandidate">
@@ -536,7 +663,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                                 ))}
                               </div>
                             </div>
-                          ))}
+                          ); })}
                         </div>
                       </>)}
                       {renderVerifySection(4)}

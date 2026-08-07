@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, isVotingOpen, type ElectionRecord } from "@geg/shared";
+import { api, formatApiError, isVotingOpen, type ElectionRecord } from "@geg/shared";
 import { useWalletSigner } from "@geg/shared/wallet";
 import { castVote } from "./ballot";
 
@@ -10,6 +10,8 @@ type Status = { kind: "ok" | "err" | "info"; msg: string } | null;
 export function VoteButton({ electionId }: { electionId: number }) {
   const [open, setOpen] = useState(false);
   const [cancelled, setCancelled] = useState(false);
+  const { account } = useWalletSigner();
+  const connected = !!account;
 
   useEffect(() => {
     let alive = true;
@@ -20,15 +22,19 @@ export function VoteButton({ electionId }: { electionId: number }) {
     return () => { alive = false; clearInterval(h); };
   }, [electionId]);
 
+  const disabled = cancelled || !connected;
+  // A disabled <button> swallows its own `title`, so the reason lives on the wrapper span.
+  const reason = cancelled ? "This election was cancelled" : !connected ? "Connect your wallet to vote" : undefined;
+
   return (
     <>
       {/* Same size/shape as the admin Cancel button (.btn btn--sm), blue instead of red. */}
-      <button className="btn btn--primary btn--sm" disabled={cancelled}
-        title={cancelled ? "This election was cancelled" : undefined}
-        onClick={() => !cancelled && setOpen(true)}>
-        {cancelled ? "Election cancelled" : "Vote for this election"}
-      </button>
-      {open && !cancelled && (
+      <span className="tip" data-tip={reason}>
+        <button className="btn btn--primary btn--sm" disabled={disabled} onClick={() => !disabled && setOpen(true)}>
+          {cancelled ? "Election cancelled" : "Vote for this election"}
+        </button>
+      </span>
+      {open && !disabled && (
         <div className="modal-overlay" onClick={() => setOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={() => setOpen(false)} aria-label="Close">×</button>
@@ -87,7 +93,9 @@ export function VoteForm({ electionId }: { electionId: number }) {
       });
       setStatus({ kind: "ok", msg: `Ballot accepted — sequence #${sequenceNumber}` });
     } catch (e: any) {
-      setStatus({ kind: "err", msg: e?.shortMessage ?? e?.message ?? String(e) });
+      // Wallet/signing errors expose `shortMessage`; API errors carry a friendly `message`
+      // (via formatApiError) rather than the raw "400 CODE".
+      setStatus({ kind: "err", msg: e?.shortMessage ?? formatApiError(e) });
     } finally {
       setBusy(false);
     }
@@ -96,7 +104,7 @@ export function VoteForm({ electionId }: { electionId: number }) {
   return (
     <section className="card">
       <div className="card-head"><h3 className="card-title">Cast a ballot</h3></div>
-      {!account && <div className="banner" style={{ marginBottom: 12 }}>Connect your wallet (top-right) to vote — one wallet, one vote.</div>}
+      {!account && <div className="banner" style={{ marginBottom: 12 }}>Connect your wallet to vote — one wallet, one vote.</div>}
       {account && !hasKey && <div className="banner" style={{ marginBottom: 12 }}>Waiting for the DKG to finalize the election key…</div>}
       {account && hasKey && !open && <div className="banner" style={{ marginBottom: 12 }}>Voting window is not open for this election.</div>}
 

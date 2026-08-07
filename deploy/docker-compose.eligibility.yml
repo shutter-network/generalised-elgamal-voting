@@ -1,0 +1,49 @@
+# Standalone eligibility-attestation issuer.
+#
+# Eligibility is the OPERATOR's own concern — it decides who may vote and with what
+# weight, and signs the ATTESTATION_V1 credential every ballot carries. It is therefore
+# NOT bundled into the backend stacks (db / chain / chain-devnet): a real deployment plugs
+# in its own issuer (wallet / OIDC / registry / Wahlregister), whose ATTESTATION_V1 public
+# key goes into each election config's `eligibilityKey`. This file runs the bundled **dev
+# stub** the same way an operator would run their own — a separate service — so local runs
+# mirror real deployment.
+#
+# The stub authenticates nobody and grants a fixed ELIGIBILITY_DUMMY_WEIGHT to any wallet.
+# Do NOT use it in production.
+#
+# Optional deny-path testing: the file deploy/eligibility-allowlist.json (a JSON
+# address -> weight map, or a bare [address] array) is always mounted at
+# /app/eligibility-allowlist.json, but only ENFORCED when ELIGIBILITY_ALLOWLIST points at
+# it. Set ELIGIBILITY_ALLOWLIST=/app/eligibility-allowlist.json (in deploy/.env) and the
+# stub gates issuance — listed wallets get their weight, unlisted wallets get a 403 ("This
+# wallet isn't eligible…"). The file is re-read per request, so edit who's eligible with no
+# restart (only flipping ELIGIBILITY_ALLOWLIST on/off needs a recreate). Unset -> allow all.
+#
+# Run alongside any backend stack:
+#   docker compose -f deploy/docker-compose.eligibility.yml --env-file deploy/.env up -d --build
+#
+# Required: ELIGIBILITY_PRIVATE_KEY (its vk must equal each election's `eligibilityKey`).
+
+services:
+  eligibility:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: geg-app
+    command: ["python", "-m", "geg.services.eligibility"]
+    restart: unless-stopped
+    environment:
+      ELIGIBILITY_PRIVATE_KEY: ${ELIGIBILITY_PRIVATE_KEY:?set ELIGIBILITY_PRIVATE_KEY (issuer secp256k1 key)}
+      ELIGIBILITY_PORT: "8600"
+      # Dummy weight granted to any recovered wallet (one-per-vote = 1). A real issuer
+      # derives per-voter weight from its own source of voting power. When an allowlist is
+      # used, this is the default weight for entries that don't specify one (array form).
+      ELIGIBILITY_DUMMY_WEIGHT: ${ELIGIBILITY_DUMMY_WEIGHT:-1}
+      # Optional allowlist path (inside the container). Unset -> allow all.
+      ELIGIBILITY_ALLOWLIST: ${ELIGIBILITY_ALLOWLIST:-}
+    volumes:
+      # Mount the allowlist read-only when one is configured on the host. Harmless when
+      # ELIGIBILITY_ALLOWLIST is unset (the file is present but never read).
+      - ./eligibility-allowlist.json:/app/eligibility-allowlist.json:ro
+    ports:
+      - "${ELIGIBILITY_PORT:-8600}:8600"

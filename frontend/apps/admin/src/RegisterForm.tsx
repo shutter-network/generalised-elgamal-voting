@@ -1,9 +1,10 @@
 import { forwardRef, useState } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import { cancelElection, eidToBareHex, eidToHex, formatApiError, registerElection } from "@geg/shared";
+import { cancelElection, eidToBareHex, eidToHex, ELIGIBILITY_URL, fetchEligibilityKey, formatApiError, registerElection } from "@geg/shared";
 import { type WalletSigner } from "@geg/shared/wallet";
 import { cancelDigest, lowercaseHex, registerDigest } from "./adminSign";
+import { FieldHint } from "./FieldHint";
 
 // A connected signer (its account is non-null wherever a Wallet is passed).
 type Wallet = WalletSigner;
@@ -16,24 +17,46 @@ type Status = { kind: "ok" | "err" | "info"; msg: string } | null;
 // Module-scope so its identity is stable across renders. (Defining it inside a
 // component re-creates the type every keystroke → React remounts the input and the
 // cursor/focus is lost after one character.)
-function F({ label, children, newRow, asDiv }: { label: string; children: React.ReactNode; newRow?: boolean; asDiv?: boolean }) {
+type Hint = { title: string; body: string };
+
+function F({ label, children, newRow, asDiv, hint }: { label: string; children: React.ReactNode; newRow?: boolean; asDiv?: boolean; hint?: Hint }) {
   // newRow pins the field to column 1 so it always starts a fresh row (stays below the
   // previous field) while keeping the normal half-row width.
   // asDiv renders a <div> instead of a <label> — a <label> forwards any click within it to
   // its first form control (e.g. the calendar icon), which we don't want for multi-control
   // fields like the date/time picker.
   const style = newRow ? { gridColumn: "1" as const } : undefined;
-  const inner = <><span className="label-inline">{label}</span>{children}</>;
+  const labelNode = hint ? <FieldHint title={hint.title} body={hint.body}>{label}</FieldHint> : label;
+  const inner = <><span className="label-inline">{labelNode}</span>{children}</>;
   return asDiv
     ? <div className="field" style={style}>{inner}</div>
     : <label className="field" style={style}>{inner}</label>;
 }
 
+/** Per-field explanations shown on label hover (what the field + its options mean). */
+const HINT: Record<string, Hint> = {
+  candidates: { title: "Candidates", body: "Number of candidates for the election — a ballot has one encrypted vote value per candidate." },
+  budget: { title: "Budget", body: "Points each voter distributes across the candidates. With a budget of 3 you might give 3 to one, or 1+1+1, or 2+1. A per-candidate ZK range proof enforces it." },
+  mode: { title: "Mode", body: "How the per-voter points must add up. exact: the votes must sum to exactly the budget. atMost: they may sum to at most the budget (a voter can spend fewer)." },
+  variant: { title: "Variant", body: "The per-candidate validity-proof construction. A: a (B+1)-branch OR proof per candidate (the standard). B: bit-decomposition proofs per candidate." },
+  weighting: { title: "Weighting", body: "One per voter: every voter counts once. Weighted: the eligibility service assigns each voter a weight, and their whole ballot is multiplied by it in the tally." },
+  maxWeight: { title: "Max weight", body: "The largest weight the eligibility service may attest for a single voter. Admission rejects any attestation above it. Fixed to 1 when weighting is one-per-voter." },
+  duplicate: { title: "Vote duplicate policy", body: "If one voter (pseudonym) submits more than one ballot, which counts at tally time. last-wins: the most recent. first-wins: the first." },
+  votingStart: { title: "Voting start", body: "Ballots are only accepted from this moment. The DKG must finalize before it (see DKG lead time)." },
+  votingEnd: { title: "Voting end", body: "When voting closes. After this the committee aggregates and decrypts." },
+  dkgLeadTime: { title: "DKG lead time", body: "Seconds of headroom the keyper committee needs to run the distributed key generation before voting opens. Must be ≤ the time from now until voting start." },
+  threshold: { title: "Threshold (t / n)", body: "n keypers form the committee; any t+1 of them, acting together, can decrypt — fewer learn nothing. Enter t and n. n must match the number of keyper URLs." },
+  keyperUrls: { title: "Keyper URLs", body: "One HTTPS endpoint per committee member (n total), one per line. Each keyper's own address is read from its /status and pinned into the signed config." },
+  eligibilityKey: { title: "Eligibility public key", body: "The 48-byte BLS12-381 G1 public key of the eligibility issuer. Every ballot carries an ATTESTATION_V1 credential signed by its private counterpart; admission verifies it." },
+  resultPublisher: { title: "Result-publisher address", body: "The EOA account authorized to publish the final decrypted tally. Others cannot post a result." },
+  gatewayKeys: { title: "Authorized ballot-writers", body: "Addresses allowed to submit ballots (the ballot ingest / vote-proxy). Leave blank for open writes; on chain these hold VOTE_PROXY_ROLE so submission is fee-free." },
+};
+
 export function RegisterForm({ wallet, onViewElection }: { wallet: Wallet | null; onViewElection?: (id: number) => void }) {
   const [panel, setPanel] = useState<"register" | "cancel">("register");
   return (
     <div className="stack" style={{ maxWidth: 780, margin: "0 auto", width: "100%" }}>
-      {!wallet && <div className="banner">Connect the admin wallet (top-right) to sign register / cancel requests.</div>}
+      {!wallet && <div className="banner">Connect the admin wallet to sign register / cancel requests.</div>}
       <div className="subtabs">
         <button className={`navtab${panel === "register" ? " navtab--on" : ""}`} onClick={() => setPanel("register")}>Register Election</button>
         <button className={`navtab${panel === "cancel" ? " navtab--on" : ""}`} onClick={() => setPanel("cancel")}>Cancel Election</button>
@@ -247,6 +270,31 @@ export async function resolveKeypers(rawUrls: string[]): Promise<ResolvedKeyper[
   return resolved;
 }
 
+/** Confirm the eligibility public key being registered matches the running issuer at
+ * `ELIGIBILITY_URL` (its `/health` publishes its key). A mismatch means every ballot would
+ * fail attestation verification at ingestion, so we block the registration with a clear
+ * reason. If the issuer is unreachable we also block — the key can't be confirmed, and
+ * registering blind is exactly what this guard exists to prevent. */
+async function verifyEligibilityKey(enteredKey: string): Promise<void> {
+  const entered = enteredKey.trim().toLowerCase();
+  if (!entered) throw new Error("Enter the eligibility public key.");
+  let issuerKey: string;
+  try {
+    issuerKey = (await fetchEligibilityKey()).eligibilityKey.toLowerCase();
+  } catch {
+    throw new Error(
+      `Could not reach the eligibility service at ${ELIGIBILITY_URL} to verify the public key. ` +
+      `Is it running and CORS-enabled?`,
+    );
+  }
+  if (entered !== issuerKey) {
+    throw new Error(
+      "Eligibility public key does not match the issuer you have configured. " +
+      "Ballots would fail verification, fix the key.",
+    );
+  }
+}
+
 const FORM_STEPS = [
   { id: "ballot", label: "Ballot" },
   { id: "schedule", label: "Schedule" },
@@ -308,6 +356,8 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
       if (keypers.length !== Number(f.n)) {
         throw new Error(`Threshold n = ${f.n} but ${keypers.length} keyper URL(s) provided — they must match.`);
       }
+      setStatus({ kind: "info", msg: "Verifying eligibility public key with the issuer…" });
+      await verifyEligibilityKey(f.eligibilityKey);
       const votingStart = fromLocalInputValue(f.votingStart);
       const votingEnd = fromLocalInputValue(f.votingEnd);
       setStatus({ kind: "info", msg: "Awaiting wallet signature…" });
@@ -345,13 +395,13 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
     <div className="reg-sec" data-sec="ballot">
       <p className="reg-sec__title">Ballot rules</p>
       <div className="reg-sec__grid">
-        <F label="Candidates"><input type="number" value={f.numCandidates} onChange={(e) => set("numCandidates", e.target.value)} /></F>
-        <F label="Budget"><input type="number" value={f.budget} onChange={(e) => set("budget", e.target.value)} /></F>
-        <F label="Mode"><Seg value={f.mode} onChange={(v) => set("mode", v)} options={[{ value: "exact", label: "exact" }, { value: "atMost", label: "atMost" }]} /></F>
-        <F label="Variant"><Seg value={f.variant} onChange={(v) => set("variant", v)} options={[{ value: "A", label: "A" }, { value: "B", label: "B" }]} /></F>
-        <F label="Weighting"><Seg value={f.weighted ? "yes" : "no"} onChange={(v) => setWeighted(v === "yes")} options={[{ value: "no", label: "One per voter" }, { value: "yes", label: "Weighted" }]} /></F>
-        <F label="Max weight"><input type="number" min={1} value={f.weighted ? f.maxWeight : 1} disabled={!f.weighted} onChange={(e) => set("maxWeight", e.target.value)} /></F>
-        <F label="Vote Duplicate Policy" newRow><Seg value={f.duplicatePolicy} onChange={(v) => set("duplicatePolicy", v)} options={[{ value: "last-wins", label: "last-wins" }, { value: "first-wins", label: "first-wins" }]} /></F>
+        <F label="Candidates" hint={HINT.candidates}><input type="number" value={f.numCandidates} onChange={(e) => set("numCandidates", e.target.value)} /></F>
+        <F label="Budget" hint={HINT.budget}><input type="number" value={f.budget} onChange={(e) => set("budget", e.target.value)} /></F>
+        <F label="Mode" hint={HINT.mode}><Seg value={f.mode} onChange={(v) => set("mode", v)} options={[{ value: "exact", label: "exact" }, { value: "atMost", label: "atMost" }]} /></F>
+        <F label="Variant" hint={HINT.variant}><Seg value={f.variant} onChange={(v) => set("variant", v)} options={[{ value: "A", label: "A" }, { value: "B", label: "B" }]} /></F>
+        <F label="Weighting" hint={HINT.weighting}><Seg value={f.weighted ? "yes" : "no"} onChange={(v) => setWeighted(v === "yes")} options={[{ value: "no", label: "One per voter" }, { value: "yes", label: "Weighted" }]} /></F>
+        <F label="Max weight" hint={HINT.maxWeight}><input type="number" min={1} value={f.weighted ? f.maxWeight : 1} disabled={!f.weighted} onChange={(e) => set("maxWeight", e.target.value)} /></F>
+        <F label="Vote Duplicate Policy" hint={HINT.duplicate} newRow><Seg value={f.duplicatePolicy} onChange={(v) => set("duplicatePolicy", v)} options={[{ value: "last-wins", label: "last-wins" }, { value: "first-wins", label: "first-wins" }]} /></F>
       </div>
     </div>
   );
@@ -360,14 +410,14 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
     <div className="reg-sec" data-sec="schedule">
       <p className="reg-sec__title">Schedule</p>
       <div className="reg-sec__grid">
-        <F label="Voting start" asDiv>
+        <F label="Voting start" hint={HINT.votingStart} asDiv>
           <DateTimeField value={f.votingStart} onChange={(v) => set("votingStart", v)} minDate={new Date()} />
         </F>
-        <F label="Voting end" asDiv>
+        <F label="Voting end" hint={HINT.votingEnd} asDiv>
           <DateTimeField value={f.votingEnd} onChange={(v) => set("votingEnd", v)}
             minDate={f.votingStart ? new Date(f.votingStart) : new Date()} />
         </F>
-        <F label="DKG lead time (seconds)">
+        <F label="DKG lead time (seconds)" hint={HINT.dkgLeadTime}>
           <input type="number" min={0} value={f.dkgLeadTime} onChange={(e) => set("dkgLeadTime", e.target.value)} />
         </F>
       </div>
@@ -384,13 +434,13 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
     <div className="reg-sec" data-sec="committee">
       <p className="reg-sec__title">Committee</p>
       <div className="reg-sec__grid">
-        <F label="Threshold t / n">
+        <F label="Threshold t / n" hint={HINT.threshold}>
           <span style={{ display: "flex", gap: 6 }}>
             <input type="number" value={f.t} onChange={(e) => set("t", e.target.value)} style={{ width: 70 }} />
             <input type="number" value={f.n} onChange={(e) => set("n", e.target.value)} style={{ width: 70 }} />
           </span>
         </F>
-        <F label="Keyper URLs (one per line)"><textarea className="input-mono" value={f.keyperUrls} onChange={(e) => set("keyperUrls", e.target.value)} rows={3} placeholder={"https://keyper1.example.org\nhttps://keyper2.example.org\nhttps://keyper3.example.org"} /></F>
+        <F label="Keyper URLs (one per line)" hint={HINT.keyperUrls}><textarea className="input-mono" value={f.keyperUrls} onChange={(e) => set("keyperUrls", e.target.value)} rows={3} placeholder={"https://keyper1.example.org\nhttps://keyper2.example.org\nhttps://keyper3.example.org"} /></F>
       </div>
     </div>
   );
@@ -400,9 +450,9 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
       <p className="reg-sec__title">Roles</p>
       <p className="dim" style={{ margin: "0 0 8px" }}>Public addresses / public keys (0x)</p>
       <div className="reg-sec__grid">
-        <F label="Eligibility public key (BLS G1)"><input className="input-mono" value={f.eligibilityKey} onChange={(e) => set("eligibilityKey", e.target.value)} placeholder="0x… 48-byte BLS12-381 G1 public key" /></F>
-        <F label="Result-publisher address"><input className="input-mono" value={f.resultPublisherKey} onChange={(e) => set("resultPublisherKey", e.target.value)} placeholder="0x… public address" /></F>
-        <F label="Authorized ballot-writer addresses (optional, blank = open)"><textarea className="input-mono" value={f.gatewayKeys} onChange={(e) => set("gatewayKeys", e.target.value)} rows={2} placeholder="0x… one address per line — leave blank for open writes" /></F>
+        <F label="Eligibility public key (BLS G1)" hint={HINT.eligibilityKey}><input className="input-mono" value={f.eligibilityKey} onChange={(e) => set("eligibilityKey", e.target.value)} placeholder="0x… 48-byte BLS12-381 G1 public key" /></F>
+        <F label="Result-publisher address" hint={HINT.resultPublisher}><input className="input-mono" value={f.resultPublisherKey} onChange={(e) => set("resultPublisherKey", e.target.value)} placeholder="0x… public address" /></F>
+        <F label="Authorized ballot-writer addresses (optional, blank = open)" hint={HINT.gatewayKeys}><textarea className="input-mono" value={f.gatewayKeys} onChange={(e) => set("gatewayKeys", e.target.value)} rows={2} placeholder="0x… one address per line — leave blank for open writes" /></F>
       </div>
     </div>
   );
@@ -434,7 +484,9 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
             disabled={FORM_STEPS[step].id === "schedule" && !!schedErr}
             onClick={() => setStep((s) => s + 1)}>Continue</button>
         ) : (
-          <button className="btn btn--primary" onClick={submit} disabled={!wallet || !!schedErr}>Sign &amp; register</button>
+          <span className="tip tip--end" data-tip={!wallet ? "Connect the admin wallet to register." : undefined}>
+            <button className="btn btn--primary" onClick={submit} disabled={!wallet || !!schedErr}>Sign &amp; register</button>
+          </span>
         )}
       </div>
       {/* On the last step the schedule notice isn't visible, so surface the reason here. */}
@@ -494,7 +546,9 @@ function CancelPanel({ wallet }: { wallet: Wallet | null }) {
       <p className="dim" style={{ margin: "0 0 10px" }}>Only valid before voting_start.</p>
       <label className="field"><span className="label-inline">Election id (decimal)</span>
         <input value={id} onChange={(e) => setId(e.target.value)} placeholder="1" /></label>
-      <button className="btn btn--danger" onClick={submit} disabled={!wallet || !id.trim()} style={{ marginTop: 10 }}>Sign &amp; cancel</button>
+      <span className="tip" data-tip={!wallet ? "Connect the admin wallet to cancel." : undefined} style={{ marginTop: 10 }}>
+        <button className="btn btn--danger" onClick={submit} disabled={!wallet || !id.trim()}>Sign &amp; cancel</button>
+      </span>
       <StatusView status={status} />
     </section>
   );

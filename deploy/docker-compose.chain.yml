@@ -1,13 +1,17 @@
 # Blockchain-backend deployment against a REAL chain. See RUNNING.md.
 #
 # Unlike docker-compose.chain-devnet.yml, this does NOT run a node, fund accounts,
-# or deploy a registry — a real chain already exists and the ElectionRegistry is a
-# long-lived, pre-deployed contract. You supply:
+# deploy a registry, or bundle an eligibility issuer — a real chain already exists,
+# the ElectionRegistry is a long-lived pre-deployed contract, and eligibility is the
+# operator's own identity/registry service (the bundled stub is dev-only; see
+# deploy/docker-compose.eligibility.yml for a standalone reference issuer). You supply:
 #   GEG_CHAIN_RPC         the node/provider endpoint
 #   GEG_REGISTRY_ADDRESS  the address of the already-deployed ElectionRegistry
 #   the actor keys        in deploy/.env (see .env.example)
+#   an eligibility issuer its ATTESTATION_V1 public key goes in each election config
 #
-# Chain authorization is by tx sender: admin/gateway each submit their own txs; the
+# Chain authorization is by tx sender: admin + the API's ballot sender each submit their
+# own txs; the
 # coordinator relays keyper content-signed DKG/aggregate/decryption writes (pays gas)
 # AND sends publishResult (it holds RESULT_PUBLISHER_ROLE). Keypers hold no chain key.
 # The coordinator's COORDINATOR_SIGNING_KEY is that funded chain account.
@@ -73,27 +77,20 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on: [data-layer]
 
-  gateway:
-    <<: *image
-    command: ["python", "-m", "geg.services.gateway"]
-    restart: unless-stopped
-    environment:
-      <<: *chain-env
-      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
-      GATEWAY_PORT: "8200"
-      GATEWAY_FILTER: "1"
-    ports:
-      - "8200:8200"
-    depends_on: [data-layer]
-
-  # Public read-only API (frontend / external integrators). Backend-blind: reads
-  # through the data-layer service, so it is identical on db and chain. CORS-enabled.
+  # Public API (frontend / external integrators): reads + ballot ingest on :8500.
+  # Reads are backend-blind (through the data-layer service — GEG_DATA_LAYER_URL).
+  # The ballot POST (formerly the standalone gateway) submits `submitVote` as this
+  # service's own funded tx sender (GATEWAY_SIGNING_KEY, msg.sender authz) — the one
+  # chain credential the public service holds (see RUNNING.md, "key on the public API").
   api:
     <<: *image
     command: ["python", "-m", "geg.services.api"]
     restart: unless-stopped
     environment:
-      GEG_DATA_LAYER_URL: http://data-layer:8000
+      <<: *chain-env
+      GEG_DATA_LAYER_URL: http://data-layer:8000   # reads proxy through the data-layer service
+      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}   # ballot tx sender (writes are chain-direct)
+      GATEWAY_FILTER: "1"                           # ballot admission filter; 0 to disable
       API_PORT: "8500"
     ports:
       - "8500:8500"

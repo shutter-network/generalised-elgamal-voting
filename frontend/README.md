@@ -13,9 +13,9 @@ serves identical JSON whether a database or blockchain data layer is behind it.
 ## Prerequisites
 
 - Node 18+ and npm.
-- A running geg stack with the **public API**, **gateway**, **admin**, and the
-  **eligibility** service reachable (see the repo's `RUNNING.md`; the eligibility service
-  is in `deploy/docker-compose.{db,chain-devnet}.yml` on `:8600`).
+- A running geg stack with the **public API** (reads + ballot ingest, `:8500`), the
+  **admin** service (`:8300`), and an **eligibility** issuer (`:8600`, run standalone via
+  `deploy/docker-compose.eligibility.yml`) reachable (see the repo's `RUNNING.md`).
 
 ## Install
 
@@ -33,7 +33,7 @@ cp frontend/apps/admin/.env.example frontend/apps/admin/.env
 cp frontend/apps/voter/.env.example frontend/apps/voter/.env
 ```
 
-`VITE_API_URL` (8500), `VITE_GATEWAY_URL` (8200), `VITE_ADMIN_URL` (8300),
+`VITE_API_URL` (8500, reads + ballot ingest), `VITE_ADMIN_URL` (8300),
 `VITE_ELIGIBILITY_URL` (8600).
 
 ## Voter app: blst wasm assets

@@ -41,6 +41,12 @@ class RegistrationError(ValueError):
         self.code = code
 
 
+def _short(addr: bytes) -> str:
+    """Short 0x address (0xabcd…1234) for human-readable, actionable error messages."""
+    h = addr.hex()
+    return f"0x{h[:4]}…{h[-4:]}" if len(h) >= 8 else f"0x{h}"
+
+
 def register_election(
     dl: ElectionDataLayer,
     config: ElectionConfig,
@@ -60,9 +66,14 @@ def register_election(
     tx as this EOA). Rejected unless ``voting_start - now >= dkg_lead_time``.
     """
     if config.admin_key != admin_identity:
-        raise RegistrationError("config.admin_key must equal the admin identity")
+        raise RegistrationError(
+            f"This wallet is not the election administrator, so it "
+            f"cannot register elections. Connect the admin wallet and try again.",
+            code="NotAdminWallet",
+        )
     if not verify_register(config.admin_key, admin_sig, config):
-        raise WriteAuthorizationError("bad admin signature over the config")
+        raise WriteAuthorizationError(
+            "Could not verify your admin signature on this registration. Reconnect your wallet and sign again.")
     now = clock()
     lead = config.voting_start - now
     if lead < dkg_lead_time:
@@ -84,9 +95,12 @@ def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes,
     identity, then relays it (the data layer rejects a cancel once voting has started)."""
     admin_key = dl.get_election(election_id).config.admin_key
     if admin_key != admin_identity:
-        raise WriteAuthorizationError("not the admin of this election")
+        raise WriteAuthorizationError(
+            f"This wallet is not the admin wallet, so it cannot cancel this election.")
     if not verify_request(admin_key, admin_sig, "cancel", election_id):
-        raise WriteAuthorizationError("bad admin signature over the cancel request")
+        raise WriteAuthorizationError(
+            "Could not verify that you are this election's administrator. Connect the admin wallet that "
+            "registered it and sign again.")
     dl.cancel_election(election_id, admin_sig)
     _LOG.info("op=cancel status=ok election=%s", election_id.hex())
 
@@ -117,7 +131,7 @@ def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
 
     @app.errorhandler(KeyError)
     def _not_found(e):
-        return jsonify(error="KeyError", message=str(e)), 404
+        return jsonify(error="NotFound", message="No election found with that id."), 404
 
     @app.errorhandler(WriteAuthorizationError)
     def _unauthorized(e):
@@ -151,8 +165,9 @@ def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
         # DKG lead time is set by the admin per-election (frontend field). It gates
         # registration but is not part of the config; there is no service-side default.
         if body.get("dkgLeadTime") is None:
-            raise RegistrationError("dkgLeadTime is required (set per-election by the admin)",
-                                    code="MissingDkgLeadTime")
+            raise RegistrationError(
+                "DKG lead time is required — set how many seconds the key setup needs before voting opens.",
+                code="MissingDkgLeadTime")
         lead = int(body["dkgLeadTime"])
         eid = register_election(dl, config, admin_sig, admin_identity=admin_identity,
                                 clock=clock, dkg_lead_time=lead)

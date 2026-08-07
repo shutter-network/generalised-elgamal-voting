@@ -20,15 +20,20 @@ and needs **no chain**: proving control of an address is just a signature.
 
 This is a **dummy** issuer: it grants a fixed weight (``ELIGIBILITY_DUMMY_WEIGHT``) to any
 recovered address; a real deployment authenticates differently and reads voting power from
-a registry. The returned ``attestation`` is the exact :func:`geg.envelopes.codecs.enc_attestation`
-envelope the gateway / tally verify against ``config.eligibility_key`` — swapping issuers
-needs no client change. CORS-enabled (the browser calls it directly).
+a registry. To exercise the **deny path**, an optional ``ELIGIBILITY_ALLOWLIST`` JSON file
+(address → weight, re-read per request so edits are live) gates issuance: a listed wallet
+gets its weight, an unlisted one is refused with a 403. Unset → allow all (the default, and
+what a bare dev run does). The returned ``attestation`` is the exact
+:func:`geg.envelopes.codecs.enc_attestation` envelope the gateway / tally verify against
+``config.eligibility_key`` — swapping issuers needs no client change. CORS-enabled (the
+browser calls it directly).
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 
@@ -60,10 +65,38 @@ def derive_pseudonym(secret: bytes, election_id: bytes, address: bytes) -> bytes
     return hmac.new(secret, bytes(election_id) + bytes(address), hashlib.sha256).digest()[:32]
 
 
+def _norm_addr(a: str) -> str:
+    """Normalize an address to lowercase, 0x-less, 40-hex (checksum-insensitive)."""
+    h = a.strip().lower().removeprefix("0x")
+    if len(h) != 40:
+        raise ValueError(f"bad address in allowlist: {a!r} (want 20-byte hex)")
+    bytes.fromhex(h)  # validate hex
+    return h
+
+
+def load_allowlist(path: str, default_weight: int) -> dict[str, int]:
+    """Read the (dev) eligibility allowlist into ``{normalized_address: weight}``.
+
+    Two shapes are accepted: a JSON **object** ``{address: weight}`` (per-wallet voting
+    power) or a bare JSON **array** ``[address, ...]`` (each listed wallet gets
+    ``default_weight``). Called once per ``/attest`` so the file is hot-editable — no
+    restart needed to change who is eligible. Raises ``ValueError`` on a malformed file."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return {_norm_addr(a): default_weight for a in data}
+    if isinstance(data, dict):
+        return {_norm_addr(a): int(w) for a, w in data.items()}
+    raise ValueError("allowlist must be a JSON object {address: weight} or array [address]")
+
+
 def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: bytes,
-                          weight: int = 1) -> Flask:
+                          weight: int = 1, allowlist_path: str | None = None) -> Flask:
     """Build the wallet-authenticated eligibility HTTP app. ``pseudonym_secret`` keys the
-    pseudonym; ``weight`` is the (dummy) voting weight granted to any recovered address."""
+    pseudonym; ``weight`` is the (dummy) default voting weight. If ``allowlist_path`` is
+    given, that JSON file gates issuance (re-read per request): a listed wallet gets its
+    weight, an unlisted wallet is denied (403). If ``None``, every wallet is granted
+    ``weight`` — the original allow-all dummy behavior."""
     app = Flask(__name__)
 
     @app.errorhandler(ValueError)
@@ -85,7 +118,7 @@ def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: 
     def attest():
         body = request.get_json(force=True)
         if not body.get("signature"):
-            return jsonify(error="Unauthorized", message="missing wallet signature"), 401
+            return jsonify(error="Unauthorized", message="Connect your wallet to vote."), 401
         election_id = codecs.dec_bytes(body["electionId"], name="electionId")
         vk = codecs.dec_bytes(body["vk"], name="vk")
 
@@ -95,12 +128,32 @@ def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: 
             recovered = Account.recover_message(
                 message, signature=codecs.dec_bytes(body["signature"], name="signature"))
         except Exception:
-            return jsonify(error="Unauthorized", message="bad wallet signature"), 401
+            return jsonify(error="Unauthorized",
+                           message="Could not verify your wallet signature."), 401
         address = bytes.fromhex(recovered[2:])
+        addr_hex = recovered[2:].lower()
+
+        # Eligibility policy (dev stub). No allowlist → grant the default weight to any
+        # authenticated wallet (allow-all). With one configured, the file is re-read here
+        # (hot-editable): a listed wallet gets its weight, an unlisted one is denied. A real
+        # issuer replaces this with its own registry / voting-power lookup.
+        voter_weight = weight
+        if allowlist_path is not None:
+            try:
+                allow = load_allowlist(allowlist_path, weight)
+            except (OSError, ValueError) as exc:
+                _LOG.error("op=attest status=error allowlist=%s err=%s", allowlist_path, exc)
+                return jsonify(error="ServerError",
+                               message="The eligibility allowlist is misconfigured — contact the operator."), 500
+            if addr_hex not in allow:
+                _LOG.info("op=attest status=denied election=%s addr=0x%s", election_id.hex(), addr_hex)
+                return jsonify(error="Forbidden",
+                               message="This wallet isn't eligible for this election."), 403
+            voter_weight = allow[addr_hex]
 
         pseudonym = derive_pseudonym(pseudonym_secret, election_id, address)
         att = service.issue_attestation(AttestationRequest(
-            election_id=election_id, pseudonym=pseudonym, vk=vk, weight=weight))
+            election_id=election_id, pseudonym=pseudonym, vk=vk, weight=voter_weight))
         _LOG.info("op=attest status=ok election=%s weight=%d", election_id.hex(), att.weight)
         return jsonify(attestation=codecs.enc_attestation(att),
                        pseudonym=codecs.enc_bytes(pseudonym))
@@ -123,19 +176,23 @@ def main() -> None:
 
     Env: ``ELIGIBILITY_PRIVATE_KEY`` (issuing key; its public key is ``eligibility_key``),
     ``ELIGIBILITY_PSEUDONYM_SECRET`` (hex; optional — derived from the issuing key if unset),
-    ``ELIGIBILITY_DUMMY_WEIGHT`` (weight granted to any wallet; default 1),
-    ``ELIGIBILITY_HOST`` / ``ELIGIBILITY_PORT`` (default 8600).
+    ``ELIGIBILITY_DUMMY_WEIGHT`` (default weight granted to an eligible wallet; default 1),
+    ``ELIGIBILITY_ALLOWLIST`` (optional path to a JSON allowlist gating issuance; unset →
+    allow all), ``ELIGIBILITY_HOST`` / ``ELIGIBILITY_PORT`` (default 8600).
     """
     logging.basicConfig(level=logging.INFO)
     elig_sk_hex = os.environ["ELIGIBILITY_PRIVATE_KEY"]
     service = StubEligibilityService(int(elig_sk_hex, 16))
     port = int(os.environ.get("ELIGIBILITY_PORT", "8600"))
-    _LOG.info("op=start service=eligibility port=%d eligibility_key=%s auth=wallet-personal-sign",
-              port, codecs.enc_bytes(service.eligibility_key))
+    allowlist_path = os.environ.get("ELIGIBILITY_ALLOWLIST") or None
+    _LOG.info("op=start service=eligibility port=%d eligibility_key=%s auth=wallet-personal-sign policy=%s",
+              port, codecs.enc_bytes(service.eligibility_key),
+              f"allowlist:{allowlist_path}" if allowlist_path else "allow-all")
     app = build_eligibility_app(
         service,
         pseudonym_secret=_pseudonym_secret(elig_sk_hex),
         weight=int(os.environ.get("ELIGIBILITY_DUMMY_WEIGHT", "1")),
+        allowlist_path=allowlist_path,
     )
     app.run(host=os.environ.get("ELIGIBILITY_HOST", "0.0.0.0"), port=port)
 

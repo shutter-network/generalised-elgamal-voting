@@ -111,41 +111,24 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on: [data-layer]
 
-  gateway:
-    <<: *image
-    command: ["python", "-m", "geg.services.gateway"]
-    environment:
-      <<: *chain-env
-      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
-      GATEWAY_PORT: "8200"
-      GATEWAY_FILTER: "1"
-    ports:
-      - "8200:8200"
-    depends_on: [data-layer]
-
-  # Public read-only API (frontend / external integrators). Backend-blind: reads
-  # through the data-layer service, so it is identical on db and chain. CORS-enabled.
+  # Public API (frontend / external integrators): reads + ballot ingest on :8500.
+  # Reads are backend-blind (through the data-layer service). The ballot POST (formerly
+  # the standalone gateway) sends `submitVote` as this service's own funded tx sender.
   api:
     <<: *image
     command: ["python", "-m", "geg.services.api"]
     environment:
-      GEG_DATA_LAYER_URL: http://data-layer:8000
+      <<: *chain-env
+      GEG_DATA_LAYER_URL: http://data-layer:8000   # reads proxy through the data-layer service
+      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}   # ballot tx sender (writes are chain-direct)
+      GATEWAY_FILTER: "1"                           # ballot admission filter; 0 to disable
       API_PORT: "8500"
     ports:
       - "8500:8500"
     depends_on: [data-layer]
 
-  # Dummy eligibility-attestation issuer: browser voter clients fetch an attestation
-  # here to attach to a ballot. Backend-blind (it only signs); swap in a real issuer
-  # (wallet / OIDC / Wahlregister) without touching the frontends.
-  eligibility:
-    <<: *image
-    command: ["python", "-m", "geg.services.eligibility"]
-    environment:
-      ELIGIBILITY_PRIVATE_KEY: ${ELIGIBILITY_PRIVATE_KEY}
-      ELIGIBILITY_PORT: "8600"
-    ports:
-      - "8600:8600"
+  # Eligibility is not bundled (operator-supplied; see chain.yml note). For a
+  # self-contained devnet run also bring up deploy/docker-compose.eligibility.yml.
 
   # Admin service — HTTP register/cancel on :8300. Auth model B: the admin wallet
   # signs each write (relayed by the service; no token). On chain the service fires the

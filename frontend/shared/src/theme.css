@@ -57,7 +57,7 @@ a { color: var(--accent); }
   color: #fff; display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 15px; letter-spacing: -0.03em;
 }
-.topbar-logo-img { width: 34px; height: 34px; border-radius: 8px; object-fit: contain; flex-shrink: 0; }
+.topbar-logo-img { width: 34px; height: 34px; object-fit: contain; flex-shrink: 0; }
 .topbar-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
 .topbar-sub { font-size: 12px; color: var(--muted); }
 .topbar-spacer { flex: 1; }
@@ -98,7 +98,7 @@ a { color: var(--accent); }
 }
 .modal-close:hover { color: var(--text); background: rgba(0, 0, 0, 0.04); }
 
-/* shrink the RainbowKit ConnectButton a touch (button + its font) */
+/* shrink the RainbowKit ConnectButton a touch so it fits the topbar height */
 .topbar-connect { transform: scale(0.85); transform-origin: right center; }
 
 /* ── buttons ─────────────────────────────────────────────── */
@@ -121,11 +121,70 @@ a { color: var(--accent); }
 .btn--active { background: var(--shutter-blue); border-color: var(--shutter-blue); color: #fff; }
 .btn--sm { padding: 7px 10px; font-size: 14px; }
 
+/* Instant, styled tooltip for disabled CTAs (the native `title` is delayed + unstyled).
+   Wrap the control: `<span className="tip" data-tip="reason">…</span>`. A disabled button
+   inside passes hover through to the wrapper (pointer-events:none) so the tip still shows. */
+.tip { position: relative; display: inline-flex; }
+.tip > button:disabled { pointer-events: none; }
+.tip[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 9px); transform: translateX(-50%);
+  z-index: 200; width: max-content; max-width: 240px; white-space: normal; text-align: center;
+  background: #0b1220; color: #fff; font-size: 12px; font-weight: 600; line-height: 1.45;
+  letter-spacing: normal; text-transform: none;
+  padding: 8px 11px; border-radius: 9px; box-shadow: 0 10px 28px rgba(11, 18, 32, 0.3);
+  pointer-events: none;
+}
+.tip[data-tip]:hover::before {
+  content: ""; position: absolute; left: 50%; bottom: calc(100% + 3px); transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: #0b1220; z-index: 201; pointer-events: none;
+}
+/* Right-anchor variant: for a button near a container's right edge, extend the bubble
+   leftward (keeps it inside an overflow:hidden ancestor). Arrow stays over the button. */
+.tip--end[data-tip]:hover::after { left: auto; right: 0; transform: none; }
+
 /* Register-panel Form / Paste-JSON tabs keep the original white-inactive / blue-active
    look (exception to the all-blue buttons, so the selected tab stays distinguishable). */
 .reg-a__head .tabs .btn { background: var(--panel); color: var(--text); border-color: var(--border); }
 .reg-a__head .tabs .btn:hover:not(:disabled) { background: rgba(0, 0, 0, 0.03); color: var(--text); }
 .reg-a__head .tabs .btn--active { background: var(--shutter-blue); border-color: var(--shutter-blue); color: #fff; }
+
+/* Register form is fully purple (matching .vd .verifyYourselfBtn, #4f46e5): recolor the
+   accent variables in the register subtree so the step tabs, every toggle (Mode/Variant/
+   Weighting/AM-PM), the calendar icon and input focus all pick it up. The react-datepicker
+   popup renders in a body-level portal (#rdp-portal), so recolor that too. */
+.reg-a,
+#rdp-portal {
+  --shutter-blue: #4f46e5;
+  --shutter-blue-hover: #5b52e8;
+  --shutter-blue-deep: #4038c4;
+  --accent: #4f46e5;
+  --accent-soft: rgba(79, 70, 229, 0.10);
+  --accent-border: rgba(79, 70, 229, 0.28);
+}
+.reg-a input:focus, .reg-a select:focus, .reg-a textarea:focus {
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.10);
+}
+
+/* Register form action buttons use the flat manual-verification purple (not the gradient).
+   Scoped to the step footer + success dialog; the red Cancel is exempt. */
+.reg-steps .btn:not(.btn--danger) {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
+  transition: background .12s, color .12s, border-color .12s, box-shadow .12s;
+}
+.reg-steps .btn:disabled { box-shadow: none; }
+
+/* Footer nav buttons (Back / Continue / Sign & register): hover to a light purple
+   with black text. */
+.reg-steps__footer .btn:hover:not(:disabled) {
+  background: #ece9fd;
+  border-color: #c7c0f5;
+  color: #000;
+  filter: none;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.18);
+}
 
 /* ── cards + layout ──────────────────────────────────────── */
 .stack { display: grid; gap: 16px; }
@@ -148,10 +207,12 @@ a { color: var(--accent); }
  * (specificity 0,1,1) outranks our `.btn` classes (0,1,0) and steals the danger red.
  * Re-assert our button classes with `.vd .btn*` (0,2,0) so they win. */
 .vd .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.22); background: linear-gradient(180deg, var(--shutter-blue-hover) 0%, var(--shutter-blue) 55%, var(--shutter-blue-deep) 100%); color: #fff; font-size: 13px; font-weight: 500; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 68, 164, 0.35); }
-.vd .btn:hover:not(:disabled) { filter: brightness(1.06); color: var(--text);}
+/* Hover = a lighter shade of the button's own colour (blue → lighter blue), white text. */
+.vd .btn:hover:not(:disabled) { background: #cfdef8; border-color: #2f7ae5; filter: none; color: var(--text); }
 .vd .btn--sm { padding: 7px 10px; font-size: 14px; }
 .vd .btn--danger { background: #b91c1c; border-color: #b91c1c; color: #fff; }
-.vd .btn--danger:hover:not(:disabled) { filter: brightness(1.08); }
+/* Cancel: red → lighter red on hover (declared after `.vd .btn:hover` so danger wins). */
+.vd .btn--danger:hover:not(:disabled) { background: #f4d3d3; border-color: #e04b4b; filter: none; color: var(--text); }
 .vd .btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 
 /* ── election picker (full-width dropdown) ────────────────── */
@@ -421,6 +482,32 @@ textarea { resize: vertical; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* Register field-label hover hints: dotted-underlined label + info dot; the explanation
+   renders as a dark popover in a <body> portal (see FieldHint.tsx). */
+.fieldHint { display: inline-flex; align-items: center; gap: 4px; cursor: help; }
+.fieldHint__label { border-bottom: 1px dotted currentColor; }
+.fieldHint__icon { flex: none; opacity: 0.55; }
+.fieldHint:hover .fieldHint__icon { opacity: 1; color: #4f46e5; }
+.fieldHint:hover .fieldHint__label { border-bottom-color: #4f46e5; }
+.fieldHintPop {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: #0b1220;
+  color: #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.30);
+  pointer-events: none;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.fieldHintPop__title { font-size: 12px; font-weight: 700; color: #a5b4fc; letter-spacing: 0.02em; }
+.fieldHintPop__body { font-size: 12px; font-weight: 400; line-height: 1.5; }
 .reg-a input,
 .reg-a select,
 .reg-a textarea {

@@ -16,7 +16,7 @@ export function App() {
         <div className="topbar-spacer" />
         <div className="topbar-actions">
           <div className="topbar-connect">
-            <ConnectButton showBalance={false} chainStatus="none" accountStatus="address" />
+            <ConnectButton />
           </div>
         </div>
       </header>

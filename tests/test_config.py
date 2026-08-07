@@ -60,12 +60,12 @@ def test_conformance_level_1_defaults():
 @pytest.mark.parametrize(
     "overrides,match",
     [
-        (dict(num_candidates=0), "num_candidates"),
+        (dict(num_candidates=0), "at least one candidate"),
         (dict(budget=0), "budget"),
-        (dict(max_weight=0), "max_weight"),
+        (dict(max_weight=0), "Max weight"),
         (dict(weighted=False, max_weight=5), "unweighted"),
-        (dict(voting_start=2_000, voting_end=2_000), "voting_end must be after"),
-        (dict(threshold=Threshold(t=1, n=3), keypers=_keypers(2)), "expected 3 keypers"),
+        (dict(voting_start=2_000, voting_end=2_000), "Voting end must be after"),
+        (dict(threshold=Threshold(t=1, n=3), keypers=_keypers(2)), "exactly 3 keypers"),
     ],
 )
 def test_invalid_config_rejected(overrides, match):
@@ -90,7 +90,7 @@ def test_duplicate_keyper_signing_key_rejected():
         KeyperIdentity(signing_key=b"\x07" * 20, url="https://b.example"),
         KeyperIdentity(signing_key=b"\x08" * 20, url="https://c.example"),
     )
-    with pytest.raises(ValueError, match="duplicate keyper signing key"):
+    with pytest.raises(ValueError, match="Duplicate keyper"):
         make_config(keypers=dup)
 
 

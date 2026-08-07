@@ -149,11 +149,11 @@ Every actor is a deployable service (`python -m geg.services.<name>`):
 | Service | Package | Role |
 |---|---|---|
 | **Data layer** | `data_layer` | Uniform HTTP service fronting any backend via `GEG_DATA_LAYER=memory\|database\|blockchain` |
-| **Public read API** | `api` | Read-only, CORS-enabled HTTP surface for frontends / external callers (port 8500); backend-blind — reads through the data-layer service |
+| **Public API** | `api` | CORS-enabled HTTP surface for frontends / external callers (port 8500). Reads are backend-blind (through the data-layer service); also hosts **ballot ingest** (`POST .../ballots`, formerly the gateway) with an on-by-default (non-authoritative) filter — keyless on db, the funded `submitVote` sender on chain |
 | **Keyper** (×n) | `keyper` | Holds its identity + encrypted private state; runs DKG over HTTP; precondition-guarded `/decrypt` |
 | **Coordinator** | `coordinator` | Auto-DKG watcher: drives the DKG ceremony; **relays** keyper DKG/decryption writes to the data layer |
 | **Tally aggregator** | `tally_aggregator` | Polls for closed elections; admit → aggregate → trigger keypers → recover → publish result |
-| **Gateway** | `gateway` | Ballot ingest + on-by-default (non-authoritative) filter |
+| **Ballot admission** | `gateway` | Library (single-ballot filter) used by the API's ballot ingest; no standalone service |
 | **Admin** | `admin` | `register`/`cancel` as CLI and admin-only HTTP service (bearer-gated) |
 | **Auditor** | `auditor` | Independent re-verification of a finalized election from public reads |
 

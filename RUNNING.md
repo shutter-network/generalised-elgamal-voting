@@ -112,9 +112,19 @@ sealed, signed `/auth/bootstrap` channel once it can reach your `/status`.
 
 ```bash
 # build + start the admin/operator stack: postgres, data-layer, coordinator,
-# gateway, api. (The coordinator drives DKG *and* the tally.
+# api (reads + ballot ingest). (The coordinator drives DKG *and* the tally.
 # Keypers are SEPARATE — start them first, per "Keypers (run separately)" above.)
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env up --build -d
+
+# eligibility is the operator's own service — run it standalone (dev stub here):
+docker compose -f deploy/docker-compose.eligibility.yml --env-file deploy/.env up --build -d
+
+# (optional) test the DENY path: the dummy grants everyone by default. To gate on an
+# allowlist, edit deploy/eligibility-allowlist.json (a JSON {address: weight} map, or a
+# bare [address] array), set ELIGIBILITY_ALLOWLIST=/app/eligibility-allowlist.json in
+# deploy/.env, and recreate the service. The file is re-read per /attest request, so you
+# can add/remove wallets live (no restart) — an unlisted wallet gets a 403 and its ballot
+# is never built. Unset the var to go back to allow-all.
 
 # register the sample election (admin CLI, one-shot)
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env \
@@ -124,8 +134,8 @@ docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env \
 # within a few seconds the finalized key is readable:
 curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000000000000000000000000001/dkg/finalized
 
-# once inside the voting window, cast ballots via the gateway (reference voter):
-GEG_DATA_LAYER_URL=http://127.0.0.1:8000 GATEWAY_URL=http://127.0.0.1:8200 \
+# once inside the voting window, cast ballots via the public API ingest (reference voter):
+GEG_DATA_LAYER_URL=http://127.0.0.1:8000 API_URL=http://127.0.0.1:8500 \
   ELIGIBILITY_PRIVATE_KEY=$(grep '^ELIGIBILITY_PRIVATE_KEY=' deploy/.env | cut -d= -f2) \
   python scripts/vote_sample.py               # submits [3,0,0]w2 + [0,3,0]w5
 
@@ -138,7 +148,7 @@ The voting window is set relative to generation time
 (`voting_start` ≈ now + 5 min by default). There is no tally deadline — once voting
 closes the election stays in `Tallying` until the committee publishes a result. For a quick demo use a short real-time
 window: `VOTING_START_OFFSET=90 VOTING_DURATION=90 python scripts/gen_deploy_env.py`.
-Voters submit ballots to the gateway (`http://127.0.0.1:8200`) during the window;
+Voters submit ballots to the public API ingest (`http://127.0.0.1:8500`) during the window;
 after `voting_end` the **coordinator** triggers the keypers to aggregate (they
 submit; the aggregate is canonical at the t+1 quorum), triggers them to decrypt,
 recovers the result, and publishes it (signed by the coordinator = result publisher).
@@ -164,10 +174,10 @@ rm -rf deploy/keyper-state* coordinator-state      # encrypted keyper state + co
 |---|---|
 | data-layer | 8000 |
 | keypers | separate stacks, host-published (local: 8101–8103) |
-| gateway | 8200 |
 | admin | 8300 |
 | coordinator | 8400 |
-| public read API | 8500 |
+| public API (reads + ballot ingest) | 8500 |
+| eligibility (standalone `docker-compose.eligibility.yml`) | 8600 |
 
 ### Admin API (admin-only)
 
@@ -233,8 +243,8 @@ docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env 
 # 7. auto-DKG finalizes the key within a few seconds (keyper writes relayed to chain):
 curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000000000000000000000000001/dkg/finalized
 
-# 8. once inside the voting window, cast ballots via the gateway (reference voter):
-GEG_DATA_LAYER_URL=http://127.0.0.1:8000 GATEWAY_URL=http://127.0.0.1:8200 \
+# 8. once inside the voting window, cast ballots via the public API ingest (reference voter):
+GEG_DATA_LAYER_URL=http://127.0.0.1:8000 API_URL=http://127.0.0.1:8500 \
   ELIGIBILITY_PRIVATE_KEY=$(grep '^ELIGIBILITY_PRIVATE_KEY=' deploy/.env | cut -d= -f2) \
   python scripts/vote_sample.py               # submits [3,0,0]w2 + [0,3,0]w5
 

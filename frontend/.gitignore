@@ -4,5 +4,5 @@ dist/
 .env
 
 # blst assets copied from the SDK by apps/voter postinstall (generated, not source)
-apps/voter/public/blst.js
-apps/voter/public/blst.wasm
+blst.js
+blst.wasm

@@ -7,6 +7,8 @@ export type ElectionConfigView = {
   selfSubmitFee: bigint;
   numCandidates: number;
   budget: number;
+  mode: "exact" | "atMost";      // budget constraint (needed by verifyBallot)
+  variant: "A" | "B";            // validity-proof construction (needed by verifyBallot)
   thresholdN: bigint;
   thresholdT: bigint;
   keyperAddresses: string[];

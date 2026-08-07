@@ -53,9 +53,9 @@ class Threshold:
 
     def __post_init__(self) -> None:
         if self.n < 1:
-            raise ValueError("threshold.n must be >= 1")
+            raise ValueError("The committee size (n) must be at least 1.")
         if not (0 <= self.t < self.n):
-            raise ValueError("threshold requires 0 <= t < n")
+            raise ValueError("The threshold must satisfy 0 <= t < n (you need t+1 keypers to decrypt).")
 
 
 @dataclass(frozen=True)
@@ -102,18 +102,18 @@ class ElectionConfig:
 
     def __post_init__(self) -> None:
         if self.num_candidates < 1:
-            raise ValueError("num_candidates must be >= 1")
+            raise ValueError("There must be at least one candidate.")
         if self.budget < 1:
-            raise ValueError("budget must be >= 1")
+            raise ValueError("The budget must be at least 1.")
         if self.max_weight < 1:
-            raise ValueError("max_weight must be >= 1")
+            raise ValueError("Max weight must be at least 1.")
         if not self.weighted and self.max_weight != 1:
-            raise ValueError("unweighted elections must have max_weight == 1")
+            raise ValueError("An unweighted election must have a max weight of 1 (enable weighting to allow higher weights).")
         if self.voting_end <= self.voting_start:
-            raise ValueError("voting_end must be after voting_start")
+            raise ValueError("Voting end must be after voting start.")
         if len(self.keypers) != self.threshold.n:
             raise ValueError(
-                f"expected {self.threshold.n} keypers, got {len(self.keypers)}"
+                f"The committee needs exactly {self.threshold.n} keypers, but got {len(self.keypers)}."
             )
         # The committee must be n *distinct* members. Two entries with the same
         # signing key are the same keyper (e.g. two URLs that resolve to one keyper's
@@ -123,4 +123,4 @@ class ElectionConfig:
         # a frontend UX guard.)
         keys = [k.signing_key for k in self.keypers]
         if len(set(keys)) != len(keys):
-            raise ValueError("duplicate keyper signing key: the committee must be n distinct keypers")
+            raise ValueError("Duplicate keyper: each committee member must be a distinct wallet.")

@@ -1,9 +1,9 @@
 /** Typed client for the geg service surfaces the browser apps talk to.
  *
- * - Public read API (`:8500`) — everything the dashboard renders (backend-blind).
- * - Gateway (`:8200`) — ballot submission (voter app).
- * - Admin (`:8300`) — register/cancel (admin app, Bearer token).
- * - Eligibility (`:8600`) — dummy attestation issuer (voter app).
+ * - Public API (`:8500`) — backend-blind reads (dashboard) + ballot ingest (voter app;
+ *   the former standalone gateway, now merged into this service).
+ * - Admin (`:8300`) — register/cancel (admin app, wallet EIP-191 signature).
+ * - Eligibility (`:8600`) — dummy attestation issuer (voter app; called from the browser).
  *
  * Base URLs come from Vite env (`VITE_*`) with localhost defaults. */
 
@@ -21,7 +21,6 @@ import type { Hex } from "./hex";
 
 const env: Record<string, string | undefined> = (import.meta as any).env ?? {};
 export const API_URL = env.VITE_API_URL ?? "http://127.0.0.1:8500";
-export const GATEWAY_URL = env.VITE_GATEWAY_URL ?? "http://127.0.0.1:8200";
 export const ADMIN_URL = env.VITE_ADMIN_URL ?? "http://127.0.0.1:8300";
 export const ELIGIBILITY_URL = env.VITE_ELIGIBILITY_URL ?? "http://127.0.0.1:8600";
 
@@ -97,11 +96,12 @@ export const api = {
   getCapability: () => req<{ verifiabilityTier: string }>(`${API_URL}/capability`),
 };
 
-// -- gateway (voter) -------------------------------------------------------- //
+// -- ballot ingest (voter) -------------------------------------------------- //
 
-/** POST a fully-assembled ballot envelope. `eidBareHex` is the 64-char hex (no 0x). */
+/** POST a fully-assembled ballot envelope to the public API's ingest route (formerly the
+ * standalone gateway). `eidBareHex` is the 64-char hex (no 0x). */
 export const submitBallot = (eidBareHex: string, ballot: BallotJson) =>
-  req<{ sequenceNumber: number }>(`${GATEWAY_URL}/elections/${eidBareHex}/ballots`, jsonPost({ ballot }));
+  req<{ sequenceNumber: number }>(`${API_URL}/elections/${eidBareHex}/ballots`, jsonPost({ ballot }));
 
 // -- admin ------------------------------------------------------------------ //
 
@@ -124,3 +124,9 @@ export const cancelElection = (idBareHex: string, signature: Hex) =>
  * enforcing one wallet, one vote). */
 export const attest = (r: { electionId: Hex; vk: Hex; signature: Hex }) =>
   req<{ attestation: AttestationJson; pseudonym: Hex }>(`${ELIGIBILITY_URL}/attest`, jsonPost(r));
+
+/** The eligibility issuer's public key, from its `/health`. Used by the admin register form
+ * to confirm the `eligibilityKey` being registered matches the running issuer (otherwise
+ * every ballot for the election would fail attestation verification at ingestion). */
+export const fetchEligibilityKey = (url: string = ELIGIBILITY_URL) =>
+  req<{ ok: boolean; eligibilityKey: Hex }>(`${url.replace(/\/+$/, "")}/health`);

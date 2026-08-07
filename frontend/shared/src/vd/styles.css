@@ -415,19 +415,25 @@
   color: var(--red);
   font-size: 13px;
 }
-.vd .cancelledBanner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 24px;
+/* Cancelled notice: a compact inline pill under the header subtitle (not a full-width strip). */
+.vd .elecHeaderCancelled {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 9px 14px;
+  border-radius: 10px;
   background: rgba(185, 28, 28, 0.06);
-  border-bottom: 1px solid rgba(185, 28, 28, 0.22);
+  border: 1px solid rgba(185, 28, 28, 0.22);
   color: #b91c1c;
   font-size: 13px;
   font-weight: 500;
+  line-height: 1.4;
+  max-width: 620px;
 }
-.vd .cancelledBanner__tag {
+.vd .elecHeaderCancelled__tag {
   flex: none;
+  margin-top: 1px;
   padding: 2px 8px;
   border-radius: 6px;
   background: #b91c1c;
@@ -2050,7 +2056,7 @@
 .vd button {
   cursor: pointer;
 }
-.vd button:hover:not(:disabled):not(.primary):not(.hexCopyBtn):not(.verifyYourselfBtn):not(.stageDetailTechLink):not(.topBarRefreshBtn):not(.topBarFindVoteBtn):not(.findVotePromptBtn):not(.fmvClose):not(.fmvInputClear) {
+.vd button:hover:not(:disabled):not(.btn):not(.primary):not(.hexCopyBtn):not(.verifyYourselfBtn):not(.stageDetailTechLink):not(.topBarRefreshBtn):not(.topBarFindVoteBtn):not(.findVotePromptBtn):not(.fmvClose):not(.fmvInputClear) {
   background: rgba(0, 0, 0, 0.05);
 }
 .vd button.primary {
@@ -2381,6 +2387,35 @@
 .vd .blRowStatus {
   flex-shrink: 0;
 }
+/* Re-vote badges: a superseded (earlier) ballot vs the counted (latest) one. */
+.vd .blBadge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.vd .blBadge--superseded {
+  color: #7a6400;
+  background: rgba(214, 178, 0, 0.14);
+  border-color: rgba(214, 178, 0, 0.4);
+}
+.vd .blBadge--counted {
+  color: #1a7a3c;
+  background: rgba(22, 163, 74, 0.12);
+  border-color: rgba(22, 163, 74, 0.4);
+}
+/* A superseded ballot is still a real record (clickable/verifiable) — just de-emphasized. */
+.vd .blRow--superseded {
+  opacity: 0.62;
+}
+.vd .blRow--superseded:hover {
+  opacity: 1;
+}
 .vd .blHelpText {
   margin-top: 18px;
   font-size: 0.82rem;
@@ -2692,7 +2727,10 @@
 .vd .termWrap:hover .termTrigger {
   color: #4f46e5;
 }
-.vd .termTooltip {
+/* The tooltip is portaled to <body> (to escape the dashboard's overflow/stacking), so it is
+   NOT inside `.vd` — these rules must be UNSCOPED or they never match the portaled node and
+   it falls back to unstyled static flow at the page bottom. */
+.termTooltip {
   position: fixed;
   z-index: 9999;
   background: #111827;
@@ -2704,7 +2742,7 @@
   pointer-events: none;
   animation: tooltipFadeIn 0.15s ease-out both;
 }
-.vd .termTooltip[data-below="true"] {
+.termTooltip[data-below="true"] {
   animation-name: tooltipFadeInBelow;
 }
 @keyframes tooltipFadeIn {
@@ -2715,7 +2753,7 @@
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.vd .termTooltip::after {
+.termTooltip::after {
   content: '';
   position: absolute;
   width: 0;
@@ -2723,26 +2761,26 @@
   left: 50%;
   transform: translateX(-50%);
 }
-.vd .termTooltip:not([data-below])::after {
+.termTooltip:not([data-below])::after {
   bottom: -6px;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
   border-top: 6px solid #111827;
 }
-.vd .termTooltip[data-below="true"]::after {
+.termTooltip[data-below="true"]::after {
   top: -6px;
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
   border-bottom: 6px solid #111827;
 }
-.vd .termTooltipTitle {
+.termTooltipTitle {
   display: block;
   font-size: 12px;
   font-weight: 700;
   margin-bottom: 6px;
   color: #fff;
 }
-.vd .termTooltipBody {
+.termTooltipBody {
   display: block;
   font-size: 12px;
   line-height: 1.55;

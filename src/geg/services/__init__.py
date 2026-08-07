@@ -11,7 +11,8 @@ modules and re-exports its public API; deployable ones expose ``__main__`` so
   ceremony primitives).
 * :mod:`geg.services.tally_aggregator` — tally *library*: ``finalize`` (recover +
   publish the result, called by the coordinator) plus the in-process test harness.
-* :mod:`geg.services.gateway` — ballot ingest with an on-by-default filter.
+* :mod:`geg.services.gateway` — ballot admission filter (library; the ingest HTTP
+  endpoint is hosted on :mod:`geg.services.api`).
 * :mod:`geg.services.admin` — sole writer of election config (CLI + HTTP).
 * :mod:`geg.services.auditor` — re-verifies an election from public reads.
 * :mod:`geg.services.data_layer` — the uniform data-layer HTTP service.

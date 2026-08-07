@@ -1,5 +1,5 @@
 import "@rainbow-me/rainbowkit/styles.css";
-import { RainbowKitProvider, lightTheme } from "@rainbow-me/rainbowkit";
+import { ConnectButton as RKConnectButton, RainbowKitProvider, lightTheme } from "@rainbow-me/rainbowkit";
 
 // Match the app's shutter-blue so the ConnectButton is the same #0044a4 as every other button.
 const rkTheme = lightTheme({ accentColor: "#0044a4", accentColorForeground: "#ffffff" });
@@ -21,4 +21,14 @@ export function Web3Providers({ children }: { children: React.ReactNode }) {
   );
 }
 
-export { ConnectButton } from "@rainbow-me/rainbowkit";
+/** The wallet connect / account control. This is RainbowKit's own <ConnectButton>, so the
+ * connected-account popup is RainbowKit's real account modal (ENS name/avatar, balance,
+ * copy, explorer, disconnect) — not a hand-rolled replica.
+ *
+ * The app never sends a transaction (it only EIP-191 *signs*), so the network is cosmetic:
+ * we hide the chain pill (`chainStatus="none"`) and the balance. RainbowKit only works /
+ * avoids a "Wrong network" nag when the connected chain is in wagmi's `chains` — see
+ * config.ts, which lists the chains this app is realistically used on. */
+export function ConnectButton() {
+  return <RKConnectButton chainStatus="none" showBalance={false} />;
+}

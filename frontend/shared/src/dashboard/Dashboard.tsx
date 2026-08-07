@@ -53,7 +53,9 @@ export function Dashboard({
   if (selected == null) {
     return (
       <div className="stack" style={{ maxWidth: 960, margin: "0 auto", width: "100%" }}>
-        <div className="card"><div className="empty">{err ? `Error: ${err}` : "No elections registered yet."}</div></div>
+        <div className="card"><div className="empty">{err
+          ? <>Couldn't load elections<span style={{ opacity: 0.7 }}>({err})</span></>
+          : "No elections registered yet."}</div></div>
       </div>
     );
   }

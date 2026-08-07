@@ -5,6 +5,8 @@ and a missing/invalid signature is rejected."""
 
 from __future__ import annotations
 
+import json
+
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
@@ -90,6 +92,56 @@ def test_health_exposes_eligibility_key():
 def test_cors_headers_present():
     r = _client().get("/health")
     assert r.headers["Access-Control-Allow-Origin"] == "*"
+
+
+def _allow_client(tmp_path, mapping, weight=3):
+    """A test client whose issuance is gated by an ``ELIGIBILITY_ALLOWLIST`` file holding
+    ``mapping`` (object or array). Returns (client, path) so the file can be re-edited."""
+    p = tmp_path / "allow.json"
+    p.write_text(json.dumps(mapping))
+    svc = StubEligibilityService(ELIG_SK)
+    app = build_eligibility_app(svc, pseudonym_secret=SECRET, weight=weight, allowlist_path=str(p))
+    return app.test_client(), p
+
+
+def test_allowlist_denies_unlisted_wallet(tmp_path):
+    c, _ = _allow_client(tmp_path, {"0x" + "11" * 20: 1})
+    r = _post(c, Account.create(), EID, _vk())
+    assert r.status_code == 403, r.get_json()
+    assert "eligible" in r.get_json()["message"].lower()
+
+
+def test_allowlist_allows_listed_wallet_with_its_weight(tmp_path):
+    acct = Account.create()  # checksummed address; the allowlist is case-insensitive
+    c, _ = _allow_client(tmp_path, {acct.address: 5}, weight=1)
+    r = _post(c, acct, EID, _vk())
+    assert r.status_code == 200, r.get_json()
+    assert codecs.dec_attestation(r.get_json()["attestation"]).weight == 5
+
+
+def test_allowlist_array_form_uses_default_weight(tmp_path):
+    acct = Account.create()
+    c, _ = _allow_client(tmp_path, [acct.address], weight=2)
+    r = _post(c, acct, EID, _vk())
+    assert r.status_code == 200, r.get_json()
+    assert codecs.dec_attestation(r.get_json()["attestation"]).weight == 2
+
+
+def test_allowlist_hot_reload_takes_effect_without_restart(tmp_path):
+    acct = Account.create()
+    c, p = _allow_client(tmp_path, {"0x" + "11" * 20: 1})
+    assert _post(c, acct, EID, _vk()).status_code == 403  # not listed yet
+    p.write_text(json.dumps({acct.address: 1}))            # edit the file mid-flight
+    assert _post(c, acct, EID, _vk()).status_code == 200   # now eligible, no restart
+
+
+def test_allowlist_malformed_file_is_server_error(tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text("this is not json")
+    svc = StubEligibilityService(ELIG_SK)
+    c = build_eligibility_app(svc, pseudonym_secret=SECRET, allowlist_path=str(p)).test_client()
+    r = _post(c, Account.create(), EID, _vk())
+    assert r.status_code == 500, r.get_json()
 
 
 def test_challenge_message_fixture():

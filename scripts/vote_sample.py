@@ -7,7 +7,7 @@ proof randomness never leave here), issues each an attestation with the eligibil
 secret, and POSTs the ballot envelope to the gateway. Backend-agnostic — it
 only speaks HTTP to the data-layer + gateway services.
 
-    GEG_DATA_LAYER_URL=http://127.0.0.1:8000 GATEWAY_URL=http://127.0.0.1:8200 \
+    GEG_DATA_LAYER_URL=http://127.0.0.1:8000 API_URL=http://127.0.0.1:8500 \
       ELIGIBILITY_PRIVATE_KEY=0x... python scripts/vote_sample.py
 
 Submits two ballots: [3,0,0] weight 2 and [0,3,0] weight 5 → expected tally
@@ -47,7 +47,8 @@ def _discover_election(dl_url: str) -> bytes:
 
 def main() -> None:
     dl_url = os.environ.get("GEG_DATA_LAYER_URL", "http://127.0.0.1:8000").rstrip("/")
-    gw_url = os.environ.get("GATEWAY_URL", "http://127.0.0.1:8200").rstrip("/")
+    # Ballot ingest now lives on the public API (formerly the standalone gateway).
+    gw_url = os.environ.get("API_URL", os.environ.get("GATEWAY_URL", "http://127.0.0.1:8500")).rstrip("/")
     elig = StubEligibilityService(int(os.environ["ELIGIBILITY_PRIVATE_KEY"], 16))
 
     EID = _discover_election(dl_url)

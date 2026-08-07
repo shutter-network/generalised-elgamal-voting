@@ -8,6 +8,9 @@ build/
 .DS_Store
 .env
 
+# Postgres data
+postgres-data/
+
 # Shared keyper-token hand-off dir (bind-mounted into coordinator/tally-aggregator).
 # Holds secret bootstrap tokens — never commit.
 coordinator-state/
@@ -26,3 +29,4 @@ docs/
 
 # Generated sample election config (gen_deploy_env.py output; stale + tied to gitignored keys).
 deploy/sample-election.json
+deploy/eligibility-allowlist.json

@@ -11,7 +11,7 @@ from __future__ import annotations
 from geg.core import authz
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 
-_EXPECTED_REGISTER = "0x733c8ed677fc41ea3ba2dca024dc1ee1c9ed1c0acda77294c8b912f651c7da28"
+_EXPECTED_REGISTER = "0x61d01b9779cd7681537c0a6ccc21cd82b7ea51c04c2cbaae66ab349b5e563482"
 _EXPECTED_CANCEL = "0x2fe6f4c5c76a0413ccc9bd1b4b11bfc872c0c6c747f4477ff0c7033d69410669"
 
 _CONFIG = ElectionConfig(

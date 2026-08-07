@@ -36,6 +36,28 @@ def test_gateway_accepts_valid_ballot_in_window(full_env):
     assert fe.dl.count_ballots(fe.config.election_id) == 1
 
 
+def test_gateway_rejects_stale_or_replayed_nonce(full_env):
+    """Ingestion replay filter (funds/DoS defense): once a nonce-2 re-vote is stored, a
+    ballot with an equal-or-lower nonce for the same pseudonym is rejected before it can
+    become a (gas-paying) write. The tally's nonce ordering remains the integrity boundary."""
+    fe = full_env
+    _ready(fe)
+    fe.clock.set(1500)
+    client = build_api_app(fe.dl, clock=fe.clock).test_client()
+    ps = b"\x01" * 32
+
+    def post(votes, nonce):
+        ballot = codecs.enc_ballot(fe.voter_ballot(votes, ps, nonce=nonce))
+        return client.post(f"/elections/{EID_HEX}/ballots", json={"ballot": ballot})
+
+    assert post([3, 0, 0], 1).status_code == 200   # first vote
+    assert post([0, 3, 0], 2).status_code == 200   # genuine re-vote
+    r = post([3, 0, 0], 1)                          # replay of the old (nonce-1) ballot
+    assert r.status_code == 400
+    assert r.get_json()["reason"] == "STALE_OR_REPLAYED"
+    assert fe.dl.count_ballots(fe.config.election_id) == 2  # replay was NOT stored
+
+
 def test_gateway_rejects_outside_window(full_env):
     fe = full_env
     _ready(fe)

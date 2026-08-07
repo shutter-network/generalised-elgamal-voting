@@ -195,6 +195,7 @@ def test_attestation_vector(name, v):
     att = Attestation(
         election_id=_hx(i["electionId"]), pseudonym=_hx(i["pseudonym"]), vk=_hx(i["vk"]),
         weight=i["weight"], signature=_hx(i["signature"]), scheme=AttestationScheme(i["scheme"]),
+        nonce=i.get("nonce", 1),
     )
     ok = verify_attestation(_hx(i["eligibilityKey"]), att, election_id=_hx(i["electionId"]), max_weight=i["maxWeight"])
     assert ok is v["expected"]["verify"]

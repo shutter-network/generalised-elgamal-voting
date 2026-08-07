@@ -36,6 +36,9 @@ import hmac
 import json
 import logging
 import os
+import sqlite3
+import threading
+from typing import Callable
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -47,6 +50,10 @@ from geg.envelopes import codecs
 from geg.ports.eligibility import AttestationRequest
 
 _LOG = logging.getLogger("geg.eligibility")
+
+# A nonce allocator returns the next monotonic re-vote counter for an (election, pseudonym):
+# 1 for a first vote, then 2, 3, … on each subsequent /attest for the same voter.
+NonceAllocator = Callable[[bytes, bytes], int]
 
 
 def challenge_message(election_id: bytes, vk: bytes) -> str:
@@ -90,14 +97,71 @@ def load_allowlist(path: str, default_weight: int) -> dict[str, int]:
     raise ValueError("allowlist must be a JSON object {address: weight} or array [address]")
 
 
+class SqliteNonceStore:
+    """Durable monotonic re-vote counter, one sequence per (election, pseudonym).
+
+    The nonce goes into the (eligibility-signed) attestation, and the tally keeps the
+    highest-nonce ballot per pseudonym — so it MUST be strictly increasing across a voter's
+    successive attestations and MUST survive restarts (a reset that regressed the nonce would
+    make a genuine re-vote lose to an already-stored ballot). SQLite gives durability +
+    atomic increment; a process-wide lock serializes concurrent /attest calls (the dev server
+    may be threaded). ``next(...)`` returns 1 on the first call for a voter, then 2, 3, …
+    """
+
+    def __init__(self, path: str):
+        self._lock = threading.Lock()
+        # check_same_thread=False: the lock (not sqlite's thread affinity) serializes access.
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS revote_nonce ("
+            "election_id TEXT NOT NULL, pseudonym TEXT NOT NULL, last INTEGER NOT NULL, "
+            "PRIMARY KEY (election_id, pseudonym))"
+        )
+        self._conn.commit()
+
+    def next(self, election_id: bytes, pseudonym: bytes) -> int:
+        eid, ps = election_id.hex(), pseudonym.hex()
+        with self._lock, self._conn:  # `with conn` = one atomic transaction
+            row = self._conn.execute(
+                "SELECT last FROM revote_nonce WHERE election_id=? AND pseudonym=?", (eid, ps)
+            ).fetchone()
+            n = (row[0] if row else 0) + 1
+            self._conn.execute(
+                "INSERT INTO revote_nonce (election_id, pseudonym, last) VALUES (?,?,?) "
+                "ON CONFLICT(election_id, pseudonym) DO UPDATE SET last=excluded.last",
+                (eid, ps, n),
+            )
+            return n
+
+
+def _in_memory_nonce_allocator() -> NonceAllocator:
+    """A non-durable per-(election, pseudonym) counter for tests / non-persistent dev runs.
+    Resets on restart — do NOT use where re-votes must survive a restart (main() uses the
+    durable SQLite store instead)."""
+    counts: dict[tuple[bytes, bytes], int] = {}
+    lock = threading.Lock()
+
+    def alloc(election_id: bytes, pseudonym: bytes) -> int:
+        key = (bytes(election_id), bytes(pseudonym))
+        with lock:
+            counts[key] = counts.get(key, 0) + 1
+            return counts[key]
+
+    return alloc
+
+
 def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: bytes,
-                          weight: int = 1, allowlist_path: str | None = None) -> Flask:
+                          weight: int = 1, allowlist_path: str | None = None,
+                          next_nonce: NonceAllocator | None = None) -> Flask:
     """Build the wallet-authenticated eligibility HTTP app. ``pseudonym_secret`` keys the
     pseudonym; ``weight`` is the (dummy) default voting weight. If ``allowlist_path`` is
     given, that JSON file gates issuance (re-read per request): a listed wallet gets its
     weight, an unlisted wallet is denied (403). If ``None``, every wallet is granted
-    ``weight`` — the original allow-all dummy behavior."""
+    ``weight`` — the original allow-all dummy behavior. ``next_nonce`` allocates the monotonic
+    per-(election, pseudonym) re-vote counter bound into each attestation; it defaults to an
+    in-memory counter (fine for tests; ``main()`` supplies a durable SQLite store)."""
     app = Flask(__name__)
+    alloc_nonce = next_nonce if next_nonce is not None else _in_memory_nonce_allocator()
 
     @app.errorhandler(ValueError)
     def _bad_request(e):
@@ -152,9 +216,13 @@ def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: 
             voter_weight = allow[addr_hex]
 
         pseudonym = derive_pseudonym(pseudonym_secret, election_id, address)
+        # Monotonic re-vote nonce for THIS (election, pseudonym): a first vote gets 1, each
+        # re-vote a higher value. Bound into the attestation so the tally keeps the latest
+        # genuine ballot and a replayed old ballot (lower nonce) can never override it.
+        nonce = alloc_nonce(election_id, pseudonym)
         att = service.issue_attestation(AttestationRequest(
-            election_id=election_id, pseudonym=pseudonym, vk=vk, weight=voter_weight))
-        _LOG.info("op=attest status=ok election=%s weight=%d", election_id.hex(), att.weight)
+            election_id=election_id, pseudonym=pseudonym, vk=vk, weight=voter_weight, nonce=nonce))
+        _LOG.info("op=attest status=ok election=%s weight=%d nonce=%d", election_id.hex(), att.weight, att.nonce)
         return jsonify(attestation=codecs.enc_attestation(att),
                        pseudonym=codecs.enc_bytes(pseudonym))
 
@@ -178,21 +246,25 @@ def main() -> None:
     ``ELIGIBILITY_PSEUDONYM_SECRET`` (hex; optional — derived from the issuing key if unset),
     ``ELIGIBILITY_DUMMY_WEIGHT`` (default weight granted to an eligible wallet; default 1),
     ``ELIGIBILITY_ALLOWLIST`` (optional path to a JSON allowlist gating issuance; unset →
-    allow all), ``ELIGIBILITY_HOST`` / ``ELIGIBILITY_PORT`` (default 8600).
+    allow all), ``ELIGIBILITY_NONCE_DB`` (SQLite path for the durable per-(election,
+    pseudonym) re-vote counter; default ``eligibility-nonces.db`` — mount it on a volume so
+    re-votes survive restarts), ``ELIGIBILITY_HOST`` / ``ELIGIBILITY_PORT`` (default 8600).
     """
     logging.basicConfig(level=logging.INFO)
     elig_sk_hex = os.environ["ELIGIBILITY_PRIVATE_KEY"]
     service = StubEligibilityService(int(elig_sk_hex, 16))
     port = int(os.environ.get("ELIGIBILITY_PORT", "8600"))
     allowlist_path = os.environ.get("ELIGIBILITY_ALLOWLIST") or None
-    _LOG.info("op=start service=eligibility port=%d eligibility_key=%s auth=wallet-personal-sign policy=%s",
+    nonce_db = os.environ.get("ELIGIBILITY_NONCE_DB", "eligibility-nonces.db")
+    _LOG.info("op=start service=eligibility port=%d eligibility_key=%s auth=wallet-personal-sign policy=%s nonce_db=%s",
               port, codecs.enc_bytes(service.eligibility_key),
-              f"allowlist:{allowlist_path}" if allowlist_path else "allow-all")
+              f"allowlist:{allowlist_path}" if allowlist_path else "allow-all", nonce_db)
     app = build_eligibility_app(
         service,
         pseudonym_secret=_pseudonym_secret(elig_sk_hex),
         weight=int(os.environ.get("ELIGIBILITY_DUMMY_WEIGHT", "1")),
         allowlist_path=allowlist_path,
+        next_nonce=SqliteNonceStore(nonce_db).next,
     )
     app.run(host=os.environ.get("ELIGIBILITY_HOST", "0.0.0.0"), port=port)
 

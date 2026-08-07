@@ -93,7 +93,7 @@ export const api = {
   getAggregate: (id: number) => req<{ aggregate: AggregateJson | null }>(`${API_URL}/elections/${id}/aggregate`),
   getShares: (id: number) => req<{ shares: DecryptionShareJson[] }>(`${API_URL}/elections/${id}/shares`),
   getResult: (id: number) => req<{ result: ResultJson | null }>(`${API_URL}/elections/${id}/result`),
-  getCapability: () => req<{ verifiabilityTier: string }>(`${API_URL}/capability`),
+  getCapability: () => req<{ verifiabilityTier: string; dataStore: "database" | "blockchain" }>(`${API_URL}/capability`),
 };
 
 // -- ballot ingest (voter) -------------------------------------------------- //
@@ -107,6 +107,7 @@ export const submitBallot = (eidBareHex: string, ballot: BallotJson) =>
 
 // Model B: the admin authorizes with a wallet signature (no bearer token). `signature`
 // is the admin EOA's EIP-191 sig over the register/cancel digest; the service relays it.
+// selfSubmitFee is part of `config` (signed), so it is not a separate param here.
 export const registerElection = (config: unknown, signature: Hex, dkgLeadTime?: number) =>
   req<{ electionId: Hex }>(
     `${ADMIN_URL}/elections`,

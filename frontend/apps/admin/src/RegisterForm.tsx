@@ -1,7 +1,8 @@
-import { forwardRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import { cancelElection, eidToBareHex, eidToHex, ELIGIBILITY_URL, fetchEligibilityKey, formatApiError, registerElection } from "@geg/shared";
+import { parseEther } from "viem";
+import { api, cancelElection, eidToBareHex, eidToHex, ELIGIBILITY_URL, fetchEligibilityKey, formatApiError, registerElection } from "@geg/shared";
 import { type WalletSigner } from "@geg/shared/wallet";
 import { cancelDigest, lowercaseHex, registerDigest } from "./adminSign";
 import { FieldHint } from "./FieldHint";
@@ -49,7 +50,8 @@ const HINT: Record<string, Hint> = {
   keyperUrls: { title: "Keyper URLs", body: "One HTTPS endpoint per committee member (n total), one per line. Each keyper's own address is read from its /status and pinned into the signed config." },
   eligibilityKey: { title: "Eligibility public key", body: "The 48-byte BLS12-381 G1 public key of the eligibility issuer. Every ballot carries an ATTESTATION_V1 credential signed by its private counterpart; admission verifies it." },
   resultPublisher: { title: "Result-publisher address", body: "The EOA account authorized to publish the final decrypted tally. Others cannot post a result." },
-  gatewayKeys: { title: "Authorized ballot-writers", body: "Addresses allowed to submit ballots (the ballot ingest / vote-proxy). Leave blank for open writes; on chain these hold VOTE_PROXY_ROLE so submission is fee-free." },
+  gatewayKeys: { title: "On-chain ballot sponsor", body: "Blockchain elections only: the single account that submits ballots fee-free (it is granted VOTE_PROXY_ROLE on the contract). Required for a blockchain-backed election." },
+  selfSubmitFee: { title: "Self-submit fee (ETH)", body: "Blockchain elections only: the per-ballot fee a voter pays to submit their OWN ballot on-chain (not through the sponsor). 0 = free for everyone. Enter ETH, e.g. 0.0010." },
 };
 
 export function RegisterForm({ wallet, onViewElection }: { wallet: Wallet | null; onViewElection?: (id: number) => void }) {
@@ -86,7 +88,7 @@ async function doRegister(wallet: Wallet, config: Record<string, unknown>, dkgLe
   // Model B: the admin is ALWAYS the connected wallet. The signature must recover to
   // config.adminKey, and the service only accepts its own admin EOA — so adminKey is never
   // a free-form field; we force it to the signing account here (also for pasted JSON).
-  // dkgLeadTime is a separate (unsigned) gate param the admin service enforces.
+  // dkgLeadTime is a separate (unsigned) gate param; selfSubmitFee is inside `config` (signed).
   if (!wallet.account) throw new Error("Connect a wallet first.");
   const full = lowercaseHex({ ...config, adminKey: wallet.account });
   const signature = await wallet.signDigest(registerDigest(full));
@@ -326,7 +328,7 @@ function initialForm() {
     numCandidates: 3, budget: 1, mode: "exact", variant: "A", weighted: false, maxWeight: 1,
     duplicatePolicy: "last-wins", ...defaultSchedule(), dkgLeadTime: 180,
     t: 1, n: 3,
-    keyperUrls: "", eligibilityKey: "", resultPublisherKey: "", gatewayKeys: "",
+    keyperUrls: "", eligibilityKey: "", resultPublisherKey: "", gatewayKeys: "", selfSubmitFee: "0",
   };
 }
 
@@ -340,6 +342,17 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
   const [step, setStep] = useState(0);
   // Decimal id of a just-registered election → drives the success dialog.
   const [registeredId, setRegisteredId] = useState<number | null>(null);
+
+  // Which data store the api runs on, so we only show the chain-only options (vote-proxy,
+  // self-submit fee). null = not yet known / unreachable → show them (they're required on
+  // chain and harmless — ignored — on db).
+  const [dataStore, setDataStore] = useState<"database" | "blockchain" | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.getCapability().then((c) => { if (alive) setDataStore(c.dataStore); }).catch(() => { if (alive) setDataStore(null); });
+    return () => { alive = false; };
+  }, []);
+  const showChainOnly = dataStore !== "database"; // true for blockchain or unknown
 
   let voteSecs = 0;
   try {
@@ -361,7 +374,24 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
       const votingStart = fromLocalInputValue(f.votingStart);
       const votingEnd = fromLocalInputValue(f.votingEnd);
       setStatus({ kind: "info", msg: "Awaiting wallet signature…" });
-      const gatewayKeys = f.gatewayKeys.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+      // One sponsor only (see the field hint): a single vote-proxy address, sent as a
+      // 1-element list because config.gatewayKeys is a list. On-chain requires it; the db
+      // backend ignores it. Blank → empty list (fine on db; the chain adapter returns a
+      // clear error).
+      const gw = f.gatewayKeys.trim();
+      const gatewayKeys = gw ? [gw] : [];
+      // Self-submit fee → wei string, inside the SIGNED config. parseEther gives an exact wei
+      // bigint from the ETH decimal (no float precision loss). Only meaningful on chain; on
+      // db it rides along as "0" and is ignored. Sent as a decimal string (matches the
+      // Python codec, which keeps it a string so the register digest byte-matches).
+      let selfSubmitFee = "0";
+      if (showChainOnly) {
+        try {
+          selfSubmitFee = parseEther((f.selfSubmitFee || "0").trim()).toString();
+        } catch {
+          throw new Error(`Invalid self-submit fee "${f.selfSubmitFee}" — enter ETH, e.g. 0.0010 (or 0).`);
+        }
+      }
       const config = {
         electionId: ZERO_EID,
         numCandidates: Number(f.numCandidates), budget: Number(f.budget), mode: f.mode, variant: f.variant,
@@ -374,6 +404,7 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
         gatewayKeys,
         // adminKey is injected by doRegister (always the connected wallet).
         protocolVersion: PROTOCOL_VERSION,
+        selfSubmitFee,
       };
       const { electionId } = await doRegister(wallet, config, Number(f.dkgLeadTime));
       setStatus(null);
@@ -452,8 +483,21 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
       <div className="reg-sec__grid">
         <F label="Eligibility public key (BLS G1)" hint={HINT.eligibilityKey}><input className="input-mono" value={f.eligibilityKey} onChange={(e) => set("eligibilityKey", e.target.value)} placeholder="0x… 48-byte BLS12-381 G1 public key" /></F>
         <F label="Result-publisher address" hint={HINT.resultPublisher}><input className="input-mono" value={f.resultPublisherKey} onChange={(e) => set("resultPublisherKey", e.target.value)} placeholder="0x… public address" /></F>
-        <F label="Authorized ballot-writer addresses (optional, blank = open)" hint={HINT.gatewayKeys}><textarea className="input-mono" value={f.gatewayKeys} onChange={(e) => set("gatewayKeys", e.target.value)} rows={2} placeholder="0x… one address per line — leave blank for open writes" /></F>
       </div>
+
+      {/* Submission / economics — blockchain-only settings, hidden on the database data
+          store (which has no on-chain submission or fees). */}
+      {showChainOnly ? (
+        <div className="reg-subsec">
+          <p className="reg-subsec__title">Submission / Economics</p>
+          <div className="reg-sec__grid">
+            <F label="On-chain ballot sponsor (vote-proxy)" hint={HINT.gatewayKeys}><input className="input-mono" value={f.gatewayKeys} onChange={(e) => set("gatewayKeys", e.target.value)} placeholder="0x… signer — required" /></F>
+            <F label="Self-submit fee (ETH)" hint={HINT.selfSubmitFee}><input type="number" min={0} step="0.0001" value={f.selfSubmitFee} onChange={(e) => set("selfSubmitFee", e.target.value)} placeholder="0" /></F>
+          </div>
+        </div>
+      ) : dataStore === "database" ? (
+        <p className="dim" style={{ margin: "10px 0 0" }}>Submission / economics (on-chain sponsor &amp; self-submit fee) don't apply to a database election and are hidden.</p>
+      ) : null}
     </div>
   );
 

@@ -41,9 +41,16 @@ services:
       ELIGIBILITY_DUMMY_WEIGHT: ${ELIGIBILITY_DUMMY_WEIGHT:-1}
       # Optional allowlist path (inside the container). Unset -> allow all.
       ELIGIBILITY_ALLOWLIST: ${ELIGIBILITY_ALLOWLIST:-}
+      # Durable per-(election, pseudonym) re-vote nonce counter (replay protection). Lives on
+      # the named volume below so re-vote nonces survive restarts — a reset would let a stale
+      # ballot outrank a genuine re-vote.
+      ELIGIBILITY_NONCE_DB: /eligibility-state/nonces.db
     volumes:
       # Mount the allowlist read-only when one is configured on the host. Harmless when
       # ELIGIBILITY_ALLOWLIST is unset (the file is present but never read).
       - ./eligibility-allowlist.json:/app/eligibility-allowlist.json:ro
+      # Durable state (the re-vote nonce DB) on a project-root bind mount — same convention
+      # as postgres-data / coordinator-state / keyper-state. Persists across recreate.
+      - ./eligibility-state:/eligibility-state
     ports:
       - "${ELIGIBILITY_PORT:-8600}:8600"

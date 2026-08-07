@@ -57,21 +57,21 @@ def gen_attestation():
     pseudonym = bytes.fromhex("22" * 32)
     k = 0x1111222233334444555566667777888899990000AAAABBBBCCCCDDDDEEEEFFFF
 
-    def att_obj(name, desc, *, weight, scheme, election_id, sig, verify, max_weight=10):
+    def att_obj(name, desc, *, weight, scheme, election_id, sig, verify, max_weight=10, nonce=1):
         return {
             "name": name, "description": desc, "version": 1,
             "inputs": {
                 "eligibilityKey": elig_key.hex(), "electionId": election_id.hex(),
-                "pseudonym": pseudonym.hex(), "vk": vk.hex(), "weight": weight,
+                "pseudonym": pseudonym.hex(), "vk": vk.hex(), "weight": weight, "nonce": nonce,
                 "scheme": scheme, "signature": sig.hex(), "maxWeight": max_weight,
             },
             "expected": {"verify": verify},
         }
 
-    # Valid V1 (weighted).
-    sig_v1 = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, 5, k=k)
+    # Valid V1 (weighted). nonce=1 = the voter's first vote.
+    sig_v1 = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, 5, 1, k=k)
     _write("attestation", "attestation_v1_valid",
-           att_obj("attestation_v1_valid", "Weighted ATTESTATION_V1 over (eid,pseudonym,vk,weight=5).",
+           att_obj("attestation_v1_valid", "Weighted ATTESTATION_V1 over (eid,pseudonym,vk,weight=5,nonce=1).",
                    weight=5, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_v1, verify=True))
 
     # Negative: tampered weight (signature over 5, envelope claims 9).
@@ -79,20 +79,26 @@ def gen_attestation():
            att_obj("attestation_v1_tampered_weight", "Signature over weight=5 but envelope claims weight=9.",
                    weight=9, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_v1, verify=False))
 
+    # Negative: tampered nonce (signature over nonce=1, envelope claims nonce=2). This is the
+    # replay-protection binding — a lower-nonce credential can't masquerade as a re-vote.
+    _write("attestation", "attestation_v1_tampered_nonce",
+           att_obj("attestation_v1_tampered_nonce", "Signature over nonce=1 but envelope claims nonce=2.",
+                   weight=5, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_v1, verify=False, nonce=2))
+
     # Negative: wrong-election binding (signature over a different election id).
     other = bytes.fromhex("99" * 32)
-    sig_other = att.sign_attestation(elig_sk, elig_vk, other, pseudonym, vk, 5, k=k)
+    sig_other = att.sign_attestation(elig_sk, elig_vk, other, pseudonym, vk, 5, 1, k=k)
     _write("attestation", "attestation_v1_wrong_election",
            att_obj("attestation_v1_wrong_election", "Signature bound to a different electionId.",
                    weight=5, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_other, verify=False))
 
     # Negative: weight exceeds maxWeight.
-    sig_big = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, 50, k=k)
+    sig_big = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, 50, 1, k=k)
     _write("attestation", "attestation_v1_over_max_weight",
            att_obj("attestation_v1_over_max_weight", "weight=50 exceeds maxWeight=10.",
                    weight=50, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_big, verify=False, max_weight=10))
 
-    # Valid legacy (weightless, weight 1).
+    # Valid legacy (weightless, weight 1, nonceless).
     sig_legacy = att.sign_attestation_legacy(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, k=k)
     _write("attestation", "attestation_legacy_valid",
            att_obj("attestation_legacy_valid", "Legacy weightless attestation, valid at weight 1.",
@@ -133,7 +139,7 @@ def gen_flow():
         admin_key=b"\xad" * 20, protocol_version="SHUTTER-VOTE-v1",
     )
 
-    def make_ballot(votes, pseudonym, weight, *, tamper_sig=False):
+    def make_ballot(votes, pseudonym, weight, *, nonce=1, tamper_sig=False):
         sk, vk = schnorr.keygen()
         vk_b = g1_to_compressed(vk)
         built = ballot_crypto.build_ballot(mpk=mpk, election_id=ELECTION_ID, pseudonym=pseudonym,
@@ -141,20 +147,20 @@ def gen_flow():
         sig = built.voter_signature
         if tamper_sig:
             b = bytearray(sig); b[-1] ^= 0x01; sig = bytes(b)
-        a = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk_b, weight)
+        a = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk_b, weight, nonce)
         att_obj = Attestation(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk_b, weight=weight,
-                              signature=a, scheme=AttestationScheme.V1)
+                              signature=a, scheme=AttestationScheme.V1, nonce=nonce)
         return BallotEnvelope(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk_b,
                               ciphertexts=tuple(Ciphertext(c1=c[0], c2=c[1]) for c in built.ciphertexts),
                               zk_proof=built.zk_proof, voter_signature=sig, attestation=att_obj)
 
     P1, P2, P3, P4 = (bytes([x]) * 32 for x in (0xA1, 0xA2, 0xA3, 0xA4))
     stored = [
-        StoredBallot(0, make_ballot([3, 0, 0], P1, 2)),                 # valid, weight 2
-        StoredBallot(1, make_ballot([0, 3, 0], P2, 3)),                 # valid, weight 3
-        StoredBallot(2, make_ballot([1, 1, 1], P3, 1, tamper_sig=True)),  # invalid signature
-        StoredBallot(3, make_ballot([0, 0, 3], P1, 2)),                 # duplicate of P1 (last-wins)
-        StoredBallot(4, make_ballot([1, 1, 1], P4, 1)),                 # valid, weight 1
+        StoredBallot(0, make_ballot([3, 0, 0], P1, 2, nonce=1)),                 # P1 first vote (nonce 1)
+        StoredBallot(1, make_ballot([0, 3, 0], P2, 3, nonce=1)),                 # valid, weight 3
+        StoredBallot(2, make_ballot([1, 1, 1], P3, 1, nonce=1, tamper_sig=True)),  # invalid signature
+        StoredBallot(3, make_ballot([0, 0, 3], P1, 2, nonce=2)),                 # P1 re-vote (nonce 2 wins)
+        StoredBallot(4, make_ballot([1, 1, 1], P4, 1, nonce=1)),                 # valid, weight 1
     ]
 
     admission = admit(stored, config, mpk_bytes)

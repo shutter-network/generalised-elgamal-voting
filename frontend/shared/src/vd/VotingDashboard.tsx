@@ -133,10 +133,12 @@ function computeOverviewDisplay(p: {
 const PAGE_SIZE = 10;
 
 /** Client-side re-vote dedup, mirroring the tally's `last-wins` admission (a wallet may
- * re-cast until close; only the latest same-pseudonym ballot is counted). Computed over the
- * FULL ordered ballot list — the data layer stores every submission on both backends, so a
- * duplicate can span pages. Returns the absolute indexes that are superseded (an earlier
- * ballot with a later same-pseudonym sibling), the pseudonyms that were re-voted at all, and
+ * re-cast until close; only the latest same-pseudonym ballot is counted). The winner per
+ * pseudonym is the highest attestation **nonce** (tie-break: later index), exactly as
+ * `admit()` orders by `(nonce, sequence)` — so a replayed old ballot (lower nonce) is shown
+ * superseded regardless of when it was submitted. Computed over the FULL ordered ballot list
+ * (the data layer stores every submission on both backends, so a duplicate can span pages).
+ * Returns the absolute indexes that are superseded, the pseudonyms re-voted at all, and
  * `counted` = distinct pseudonyms (what actually enters the aggregate). */
 export interface BallotDedup { superseded: Set<number>; revoted: Set<string>; counted: number }
 
@@ -153,14 +155,19 @@ async function fetchAllBallotsFor(electionId: number, total: number): Promise<Ba
 }
 
 function computeBallotDedup(all: Ballot[]): BallotDedup {
-  const latestIdx = new Map<string, number>(); // pseudonym -> highest (latest) index
-  const seen = new Map<string, number>();       // pseudonym -> occurrence count
-  all.forEach((b, i) => { latestIdx.set(b.pseudonym, i); seen.set(b.pseudonym, (seen.get(b.pseudonym) ?? 0) + 1); });
+  const winnerIdx = new Map<string, number>(); // pseudonym -> winning (highest-nonce) index
+  const seen = new Map<string, number>();        // pseudonym -> occurrence count
+  all.forEach((b, i) => {
+    seen.set(b.pseudonym, (seen.get(b.pseudonym) ?? 0) + 1);
+    const cur = winnerIdx.get(b.pseudonym);
+    // last-wins by (nonce, index): higher nonce wins; equal nonce → later index.
+    if (cur === undefined || b.nonce >= all[cur].nonce) winnerIdx.set(b.pseudonym, i);
+  });
   const superseded = new Set<number>();
-  all.forEach((b, i) => { if (latestIdx.get(b.pseudonym) !== i) superseded.add(i); });
+  all.forEach((_b, i) => { if (winnerIdx.get(all[i].pseudonym) !== i) superseded.add(i); });
   const revoted = new Set<string>();
   seen.forEach((n, p) => { if (n > 1) revoted.add(p); });
-  return { superseded, revoted, counted: latestIdx.size };
+  return { superseded, revoted, counted: winnerIdx.size };
 }
 
 export function VotingDashboard({ electionId, elections, onSelectElection, headerAction }: {

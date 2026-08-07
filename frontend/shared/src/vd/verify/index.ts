@@ -6,8 +6,8 @@
  *
  * geg-specific adaptations over the stock Munich verification:
  *   - WR attestation is scheme-directed: ATTESTATION_V1 (domain-separated transcript over
- *     electionId,pseudonym,vk,weight) or LEGACY (weightless keccak, weight 1). The adapter
- *     packs `scheme(1)‖weight(32 BE)‖R(48)‖s(32)` into each ballot's `wrAttestation`.
+ *     electionId,pseudonym,vk,weight,nonce) or LEGACY (weightless keccak, weight 1). The
+ *     adapter packs `scheme(1)‖weight(32 BE)‖nonce(32 BE)‖R(48)‖s(32)` into `wrAttestation`.
  *   - Aggregate is the weighted sum `Σ weightᵢ·ctᵢ` (scalarMulCt then sumCts).
  *   - Result BSGS bound is the published `bsgsBound` (= budget · Σ admitted weights). */
 import { keccak256 } from "viem";
@@ -36,18 +36,20 @@ function tlv(parts: Buffer[], tag: string, val: Uint8Array) {
   const tb = Buffer.from(tag, "utf8");
   parts.push(u32be(tb.length), tb, u32be(val.length), Buffer.from(val));
 }
-function v1Digest(eid: Uint8Array, ps: Uint8Array, vk: Uint8Array, weight: bigint): Uint8Array {
+function v1Digest(eid: Uint8Array, ps: Uint8Array, vk: Uint8Array, weight: bigint, nonce: bigint): Uint8Array {
   const p: Buffer[] = [Buffer.from("SHUTTER-VOTE-ATTEST-v1", "utf8")];
   tlv(p, "attest:electionId", eid);
   tlv(p, "attest:pseudonym", ps);
   tlv(p, "attest:vk", vk);
   tlv(p, "attest:weight", scalar32(weight));
+  tlv(p, "attest:nonce", scalar32(nonce));
   return fromHex(keccak256(Buffer.concat(p) as any));
 }
 const legacyDigest = (eid: Uint8Array, ps: Uint8Array, vk: Uint8Array) =>
   fromHex(keccak256(Buffer.concat([Buffer.from(eid), Buffer.from(ps), Buffer.from(vk)]) as any));
 
-/** Returns a WR-verifier callback for verifyBallot, reading the packed att blob. */
+/** Returns a WR-verifier callback for verifyBallot, reading the packed att blob
+ * `scheme(1)‖weight(32 BE)‖nonce(32 BE)‖sig(80)`. */
 function makeWrVerifier(S: any, pkWr: Uint8Array) {
   const wrVk = S.G1Point.fromBytes(pkWr);
   return (eid: Uint8Array, ps: Uint8Array, vk: Uint8Array, att: Uint8Array): boolean => {
@@ -55,10 +57,12 @@ function makeWrVerifier(S: any, pkWr: Uint8Array) {
     try {
       const scheme = att[0];
       let w = 0n; for (let i = 1; i < 33; i++) w = (w << 8n) + BigInt(att[i]);
+      let n = 0n; for (let i = 33; i < 65; i++) n = (n << 8n) + BigInt(att[i]);
       if (w < 1n || (scheme !== 1 && w !== 1n)) return false;
-      const sig = att.subarray(33);
+      if (scheme === 1 && n < 1n) return false;
+      const sig = att.subarray(65);
       let s = 0n; for (let i = 48; i < 80; i++) s = (s << 8n) + BigInt(sig[i]);
-      const msg = scheme === 1 ? v1Digest(eid, ps, vk, w) : legacyDigest(eid, ps, vk);
+      const msg = scheme === 1 ? v1Digest(eid, ps, vk, w, n) : legacyDigest(eid, ps, vk);
       return S.schnorrVerify(wrVk, msg, { R: S.G1Point.fromBytes(sig.subarray(0, 48)), s });
     } catch { return false; }
   };

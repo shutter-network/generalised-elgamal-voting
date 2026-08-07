@@ -67,22 +67,24 @@ export async function fetchBallotsPage(
     ciphertexts: (b.ciphertexts ?? []).map((ct: any) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })),
     zkProof: b.zkProof as Hex,
     voterSignature: b.voterSignature as Hex,
-    // geg's attestation is structured (scheme, weight, 80-byte R‖s sig); the SDK's WR
+    // geg's attestation is structured (scheme, weight, nonce, 80-byte R‖s sig); the SDK's WR
     // verifier callback only receives one opaque blob, so pack everything the scheme-
-    // directed verifier needs into it: scheme(1) ‖ weight(32 BE) ‖ signature(80).
-    wrAttestation: packWrAttestation(b.attestation?.scheme, b.attestation?.weight, b.attestation?.signature),
+    // directed verifier needs into it: scheme(1) ‖ weight(32 BE) ‖ nonce(32 BE) ‖ signature(80).
+    wrAttestation: packWrAttestation(b.attestation?.scheme, b.attestation?.weight, b.attestation?.nonce, b.attestation?.signature),
+    nonce: Number(b.attestation?.nonce ?? 1),
   }));
   return { total: BigInt(resp.total), ballots };
 }
 
 /** Pack geg's structured attestation into the single `att` blob the WR verifier reads:
- * `scheme(1) ‖ weight(32-byte BE) ‖ signature(80 = R‖s)`. scheme byte: 0x01 = ATTESTATION_V1,
- * 0x00 = LEGACY (weightless). Mirrors geg core `verify_attestation`'s scheme dispatch. */
-function packWrAttestation(scheme: string | undefined, weight: number | undefined, sig: string | undefined): Hex {
+ * `scheme(1) ‖ weight(32-byte BE) ‖ nonce(32-byte BE) ‖ signature(80 = R‖s)`. scheme byte:
+ * 0x01 = ATTESTATION_V1, 0x00 = LEGACY (weightless). Mirrors geg core `verify_attestation`. */
+function packWrAttestation(scheme: string | undefined, weight: number | undefined, nonce: number | undefined, sig: string | undefined): Hex {
   const schemeByte = scheme === "LEGACY" ? "00" : "01";
   const weightHex = BigInt(weight ?? 1).toString(16).padStart(64, "0");
+  const nonceHex = BigInt(nonce ?? 1).toString(16).padStart(64, "0");
   const sigHex = (sig ?? "0x").replace(/^0x/, "");
-  return ("0x" + schemeByte + weightHex + sigHex) as Hex;
+  return ("0x" + schemeByte + weightHex + nonceHex + sigHex) as Hex;
 }
 
 export async function fetchAggregate(electionId: number): Promise<EncryptedTally | null> {

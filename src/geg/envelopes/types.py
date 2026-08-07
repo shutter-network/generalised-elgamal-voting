@@ -67,10 +67,14 @@ class Attestation:
     """``ATTESTATION_V1`` eligibility credential.
 
     A Schnorr-on-G1 signature by ``eligibility_key`` over a domain-separated
-    transcript of ``(election_id, pseudonym, vk, weight)``. Extends the prior
-    Wahlregister attestation (which covered the tuple without ``weight``) and is a
-    distinct codec, not a silent modification. ``weight`` travels inside the
-    credential so the whole tally is re-derivable from public artifacts.
+    transcript of ``(election_id, pseudonym, vk, weight, nonce)``. Extends the prior
+    Wahlregister attestation (which covered the tuple without ``weight``/``nonce``)
+    and is a distinct codec, not a silent modification. ``weight`` travels inside the
+    credential so the whole tally is re-derivable from public artifacts; ``nonce`` is
+    a monotonic per-(election, pseudonym) re-vote counter (issued 1, 2, 3, … by the
+    eligibility service) that the tally uses to pick the voter's latest ballot — see
+    REPLAY_PROTECTION_PLAN.md. The ``LEGACY`` scheme is weightless/nonceless and
+    carries ``weight = 1``, ``nonce = 1``.
     """
 
     election_id: bytes  # bytes32
@@ -79,6 +83,7 @@ class Attestation:
     weight: int  # 1 <= weight <= max_weight (must be 1 for the LEGACY scheme)
     signature: bytes  # Schnorr, 80 bytes, by eligibility_key over the tuple
     scheme: AttestationScheme = AttestationScheme.V1
+    nonce: int = 1  # monotonic re-vote counter per (election, pseudonym); V1 only, >= 1
 
 
 @dataclass(frozen=True)

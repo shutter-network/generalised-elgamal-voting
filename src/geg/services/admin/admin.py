@@ -83,8 +83,8 @@ def register_election(
             code="InsufficientDkgLeadTime",
         )
     eid = dl.register_election(config, admin_sig)
-    _LOG.info("op=register status=ok election=%s keypers=%d voting_start=%d",
-              eid.hex(), len(config.keypers), config.voting_start)
+    _LOG.info("op=register status=ok election=%s keypers=%d voting_start=%d self_submit_fee_wei=%d",
+              eid.hex(), len(config.keypers), config.voting_start, config.self_submit_fee_wei)
     return eid
 
 
@@ -169,6 +169,8 @@ def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
                 "DKG lead time is required — set how many seconds the key setup needs before voting opens.",
                 code="MissingDkgLeadTime")
         lead = int(body["dkgLeadTime"])
+        # selfSubmitFee now travels inside the signed config (config.selfSubmitFee) — it is a
+        # chain-contract parameter, so unlike dkgLeadTime it is covered by the admin signature.
         eid = register_election(dl, config, admin_sig, admin_identity=admin_identity,
                                 clock=clock, dkg_lead_time=lead)
         return jsonify(electionId=codecs.enc_bytes(eid)), 200

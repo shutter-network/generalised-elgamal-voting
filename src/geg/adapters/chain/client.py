@@ -354,10 +354,19 @@ class BlockchainDataLayer(ElectionDataLayer):
     # -- config <-> params -------------------------------------------------- #
 
     def _config_to_params(self, config: ElectionConfig):
+        # The chain contract requires a non-zero vote-proxy (ElectionBase reverts on
+        # address(0)); unlike the database backend it has no "open writes" mode. Fail early
+        # with a clear message instead of an IndexError → 500.
+        if not config.gateway_keys:
+            raise ValueError(
+                "On the blockchain backend you must set exactly one authorized ballot-writer "
+                "(vote-proxy) address — the account that submits ballots (the gateway/api "
+                "sender). The registration left it blank."
+            )
         return (
             config.voting_start,
             config.voting_end,
-            0,  # selfSubmitFee
+            int(config.self_submit_fee_wei),  # selfSubmitFee (wei); 0 = free self-submission
             config.num_candidates,
             config.budget,
             codec.MODE_TO_U8[config.mode],
@@ -398,6 +407,7 @@ class BlockchainDataLayer(ElectionDataLayer):
             gateway_keys=(_addr_bytes(v[19]),),
             admin_key=_addr_bytes(v[17]),
             protocol_version=str(v[11]),
+            self_submit_fee_wei=int(v[3]),  # ElectionConfigView.selfSubmitFee
         )
 
     # -- deploy helper ------------------------------------------------------ #

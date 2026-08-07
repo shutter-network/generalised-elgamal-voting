@@ -135,11 +135,15 @@ class WalletEligibilityService(EligibilityService):
 
         weight = min(vp, self._max_weight)  # clamp — the maxWeight BSGS guard
         pseudonym = self.pseudonym_for(address, election_id)
-        sig = att_crypto.sign_attestation(self._sk, self._vk, election_id, pseudonym, vk, weight)
+        # This adapter issues at most once per (election, address) (see _prevent_reissue), so
+        # it has no re-vote sequence: nonce is fixed at 1. A re-vote-capable issuer allocates
+        # a monotonic per-(election, pseudonym) nonce instead (see the eligibility service).
+        nonce = 1
+        sig = att_crypto.sign_attestation(self._sk, self._vk, election_id, pseudonym, vk, weight, nonce)
         self._issued.add((election_id, address))
         return Attestation(
             election_id=election_id, pseudonym=pseudonym, vk=vk,
-            weight=weight, signature=sig, scheme=AttestationScheme.V1,
+            weight=weight, signature=sig, scheme=AttestationScheme.V1, nonce=nonce,
         )
 
     def issue_attestation(self, request: WalletAttestationRequest) -> Attestation:

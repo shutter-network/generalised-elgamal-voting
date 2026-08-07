@@ -43,6 +43,7 @@ _REJECTION_HELP = {
     "INVALID_SIGNATURE": "The ballot's voter signature did not verify.",
     "INVALID_ATTESTATION": "Your eligibility credential could not be verified for this election.",
     "DUPLICATE_PSEUDONYM": "A ballot from this voter has already been recorded.",
+    "STALE_OR_REPLAYED": "This ballot is stale — a newer vote from you is already recorded. Re-vote to change it.",
     "MALFORMED": "The ballot was malformed.",
 }
 
@@ -111,13 +112,17 @@ def build_api_app(
     write_dl: ElectionDataLayer | None = None,
     clock=None,
     filter_on: bool = True,
+    data_store: str = "database",
 ) -> Flask:
     """Build the public API app over any ``ElectionDataLayer``.
 
     ``dl`` serves every read route. ``write_dl`` (defaults to ``dl``) receives the
     ballot ingest write — in deployment it is the actor-bound data layer (keyless on
     db, the funded chain sender on blockchain), while ``dl`` stays the backend-blind
-    read proxy. ``clock`` (defaults to wall time) and ``filter_on`` gate the ballot."""
+    read proxy. ``clock`` (defaults to wall time) and ``filter_on`` gate the ballot.
+    ``data_store`` (``"database"`` | ``"blockchain"``) is reported on ``/capability`` as
+    ``dataStore`` so the frontend can show/hide chain-only options (vote-proxy, self-submit
+    fee)."""
     app = Flask(__name__)
     write = write_dl if write_dl is not None else dl
     _clock = clock if clock is not None else (lambda: int(time.time()))
@@ -262,7 +267,9 @@ def build_api_app(
 
     @app.get("/capability")
     def capability():
-        return jsonify(verifiabilityTier=dl.verifiability_tier())
+        # `dataStore` lets the frontend tailor the UI (e.g. hide the on-chain-only vote-proxy
+        # and self-submit-fee fields on the database backend).
+        return jsonify(verifiabilityTier=dl.verifiability_tier(), dataStore=data_store)
 
     return app
 
@@ -284,16 +291,18 @@ def main() -> None:
     import os
 
     from geg.adapters.db.client import HttpDataLayerClient
-    from geg.services.common.backend import data_layer_for_service
+    from geg.services.common.backend import _CHAIN_BACKENDS, data_layer_for_service
 
     logging.basicConfig(level=logging.INFO)
     port = int(os.environ.get("API_PORT", "8500"))
     filter_on = os.environ.get("GATEWAY_FILTER", "1") != "0"
+    # Normalize the data-store selector to the two values the frontend keys off of.
+    data_store = "blockchain" if os.environ.get("GEG_DATA_LAYER", "database").lower() in _CHAIN_BACKENDS else "database"
     read_dl = HttpDataLayerClient(os.environ["GEG_DATA_LAYER_URL"])
     write_dl = data_layer_for_service(os.environ.get("GATEWAY_SIGNING_KEY"))
-    logging.getLogger("geg.api").info("op=start service=api port=%d data_layer=%s filter=%s",
-                                      port, os.environ["GEG_DATA_LAYER_URL"], "on" if filter_on else "off")
-    app = build_api_app(read_dl, write_dl=write_dl, clock=lambda: int(time.time()), filter_on=filter_on)
+    logging.getLogger("geg.api").info("op=start service=api port=%d data_layer=%s data_store=%s filter=%s",
+                                      port, os.environ["GEG_DATA_LAYER_URL"], data_store, "on" if filter_on else "off")
+    app = build_api_app(read_dl, write_dl=write_dl, clock=lambda: int(time.time()), filter_on=filter_on, data_store=data_store)
     app.run(host=os.environ.get("API_HOST", "0.0.0.0"), port=port)
 
 

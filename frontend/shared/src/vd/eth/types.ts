@@ -32,6 +32,7 @@ export type Ballot = {
   zkProof: Hex;
   voterSignature: Hex;
   wrAttestation: Hex;
+  nonce: number; // attestation re-vote nonce (last-wins ordering; 1 for a first vote)
 };
 
 export type EncryptedTally = {

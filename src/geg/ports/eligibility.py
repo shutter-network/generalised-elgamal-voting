@@ -49,6 +49,10 @@ class AttestationRequest:
     pseudonym: bytes
     vk: bytes  # voter's ephemeral Schnorr verification key (G1, 48 bytes)
     weight: int
+    # Monotonic per-(election, pseudonym) re-vote counter (1 for a first vote, then
+    # 2, 3, …). The issuing service allocates it; the tally picks the highest-nonce
+    # ballot per pseudonym so a replayed old ballot cannot override a genuine re-vote.
+    nonce: int = 1
 
 
 class EligibilityService(ABC):
@@ -76,7 +80,7 @@ def verify_attestation(
     Dispatches on ``attestation.scheme``:
 
     * ``V1`` — verifies the Schnorr-on-G1 signature over the domain-separated
-      transcript of ``(election_id, pseudonym, vk, weight)``.
+      transcript of ``(election_id, pseudonym, vk, weight, nonce)``.
     * ``LEGACY`` — verifies the weightless ``keccak(electionId‖pseudonym‖vk)``
       signature; valid only at ``weight == 1`` (it authorizes no other weight).
 
@@ -100,6 +104,7 @@ def verify_attestation(
             attestation.pseudonym,
             attestation.vk,
             attestation.weight,
+            attestation.nonce,
             attestation.signature,
         )
     if attestation.scheme is AttestationScheme.LEGACY:

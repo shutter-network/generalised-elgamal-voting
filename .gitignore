@@ -19,6 +19,9 @@ coordinator-state/
 # keyper secrets — never commit.
 keyper-state*/
 
+# Eligibility service durable state (re-vote nonce DB) bind dir.
+eligibility-state/
+
 # Per-operator keyper env (holds the keyper's private key) — but keep the template.
 .env.keyper*
 !.env.keyper.example

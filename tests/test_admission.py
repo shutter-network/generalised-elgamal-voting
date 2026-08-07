@@ -136,6 +136,39 @@ def test_last_wins_duplicate_policy(env):
     assert [x.sequence_number for x in dup] == [0]
 
 
+def test_last_wins_orders_by_nonce_not_sequence(env):
+    """The winner is the highest attestation nonce, regardless of submission order."""
+    cfg = env.config(duplicate_policy=DuplicatePolicy.LAST_WINS)
+    ballots = [
+        _stored(env, 0, [0, 3, 0], P1, nonce=2),  # genuine re-vote (higher nonce)
+        _stored(env, 1, [1, 0, 2], P1, nonce=1),  # earlier vote, submitted LATER
+    ]
+    res = admit(ballots, cfg, env.mpk_bytes)
+    admitted_seqs = {a.sequence_number for a in res.admitted}
+    assert admitted_seqs == {0}  # the nonce-2 ballot wins even though nonce-1 came later
+    dup = [x for x in res.exclusions if x.reason is ExclusionReason.DUPLICATE_PSEUDONYM]
+    assert [x.sequence_number for x in dup] == [1]
+
+
+def test_replayed_old_ballot_never_overrides_revote(env):
+    """Replay/reordering defense: re-submitting a voter's OLD ballot at a later sequence
+    cannot revert their re-vote — the higher-nonce ballot always wins (see
+    REPLAY_PROTECTION_PLAN.md). Mirrors: vote A (nonce 1), re-vote B (nonce 2), attacker
+    replays A verbatim at a later sequence."""
+    cfg = env.config(duplicate_policy=DuplicatePolicy.LAST_WINS)
+    a = env.ballot([1, 0, 2], P1, nonce=1)   # first vote
+    b = env.ballot([0, 3, 0], P1, nonce=2)   # genuine re-vote
+    ballots = [
+        StoredBallot(0, a),
+        StoredBallot(1, b),
+        StoredBallot(2, a),  # attacker replays the OLD ballot verbatim, later
+    ]
+    res = admit(ballots, cfg, env.mpk_bytes)
+    admitted = res.admitted
+    assert len(admitted) == 1
+    assert admitted[0].sequence_number == 1  # the nonce-2 re-vote, not the replayed nonce-1
+
+
 def test_invalid_ballot_not_counted_as_duplicate(env):
     """A crypto-invalid ballot gets its crypto reason, never DUPLICATE."""
     cfg = env.config(duplicate_policy=DuplicatePolicy.FIRST_WINS)

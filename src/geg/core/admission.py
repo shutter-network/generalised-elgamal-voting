@@ -100,20 +100,31 @@ def validate_ballot(sb: StoredBallot, config: ElectionConfig, mpk) -> ExclusionR
 
 
 def _duplicate_losers(valid: list[StoredBallot], policy: DuplicatePolicy) -> set[int]:
-    """Sequence numbers excluded as duplicates, per policy, over the ordered list."""
-    keeper: dict[bytes, int] = {}  # pseudonym -> kept sequence number
-    losers: set[int] = set()
+    """Sequence numbers excluded as duplicates, per policy.
+
+    The winner per pseudonym is chosen by the attestation's monotonic **nonce**, not by
+    raw submission order: ``LAST_WINS`` keeps the highest nonce (the voter's latest genuine
+    re-vote), ``FIRST_WINS`` the lowest — with the stored ``sequence_number`` as the
+    tie-break (later for last-wins, earlier for first-wins). Ordering by the issuer-signed
+    nonce is what defeats replay/reordering: a replayed old ballot carries a lower nonce and
+    always loses, no matter when it was submitted. (LEGACY credentials are nonceless and all
+    carry nonce 1, so they tie and fall back to sequence order — the original behaviour.)
+    """
+    def rank(sb: StoredBallot) -> tuple[int, int]:
+        return (sb.envelope.attestation.nonce, sb.sequence_number)
+
+    winner_seq: dict[bytes, int] = {}   # pseudonym -> winning sequence number
+    winner_rank: dict[bytes, tuple[int, int]] = {}
     for sb in valid:  # already in stable total order
         pseud = sb.envelope.pseudonym
-        if pseud not in keeper:
-            keeper[pseud] = sb.sequence_number
-            continue
-        if policy is DuplicatePolicy.FIRST_WINS:
-            losers.add(sb.sequence_number)  # the earlier one keeps its place
-        else:  # LAST_WINS: the previous keeper loses, this one takes over
-            losers.add(keeper[pseud])
-            keeper[pseud] = sb.sequence_number
-    return losers
+        r = rank(sb)
+        cur = winner_rank.get(pseud)
+        if cur is None or (r > cur if policy is DuplicatePolicy.LAST_WINS else r < cur):
+            winner_rank[pseud] = r
+            winner_seq[pseud] = sb.sequence_number
+
+    winners = set(winner_seq.values())
+    return {sb.sequence_number for sb in valid if sb.sequence_number not in winners}
 
 
 def admit(ballots: list[StoredBallot], config: ElectionConfig, mpk_bytes: bytes) -> AdmissionResult:

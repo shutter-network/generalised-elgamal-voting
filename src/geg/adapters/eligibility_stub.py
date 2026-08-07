@@ -39,9 +39,9 @@ class StubEligibilityService(EligibilityService):
             )
         weight = self._fixed_weight if self._fixed_weight is not None else request.weight
         sig = att_crypto.sign_attestation(
-            self._sk, self._vk, request.election_id, request.pseudonym, request.vk, weight
+            self._sk, self._vk, request.election_id, request.pseudonym, request.vk, weight, request.nonce
         )
         return Attestation(
             election_id=request.election_id, pseudonym=request.pseudonym, vk=request.vk,
-            weight=weight, signature=sig, scheme=AttestationScheme.V1,
+            weight=weight, signature=sig, scheme=AttestationScheme.V1, nonce=request.nonce,
         )

@@ -85,7 +85,7 @@ class Env:
         return ElectionConfig(**base)
 
     def ballot(self, votes, pseudonym: bytes, *, weight: int = 1,
-               scheme: AttestationScheme = AttestationScheme.V1,
+               scheme: AttestationScheme = AttestationScheme.V1, nonce: int = 1,
                election_id: bytes = ELECTION_ID, budget: int = 3) -> BallotEnvelope:
         sk, vk = schnorr.keygen()
         vk_bytes = g1_to_compressed(vk)
@@ -96,7 +96,7 @@ class Env:
         _, elig_vk_pt = schnorr.keygen(self.elig_sk)
         if scheme is AttestationScheme.V1:
             sig = att_crypto.sign_attestation(
-                self.elig_sk, elig_vk_pt, election_id, pseudonym, vk_bytes, weight
+                self.elig_sk, elig_vk_pt, election_id, pseudonym, vk_bytes, weight, nonce
             )
         else:
             weight = 1
@@ -105,7 +105,7 @@ class Env:
             )
         att = Attestation(
             election_id=election_id, pseudonym=pseudonym, vk=vk_bytes,
-            weight=weight, signature=sig, scheme=scheme,
+            weight=weight, signature=sig, scheme=scheme, nonce=nonce,
         )
         return BallotEnvelope(
             election_id=election_id, pseudonym=pseudonym, vk=vk_bytes,
@@ -178,7 +178,7 @@ class FullEnv:
     n: int
     t: int
 
-    def voter_ballot(self, votes, pseudonym: bytes, *, weight: int = 1) -> BallotEnvelope:
+    def voter_ballot(self, votes, pseudonym: bytes, *, weight: int = 1, nonce: int = 1) -> BallotEnvelope:
         from geg.crypto import ballot as ballot_crypto
         from geg.ports.eligibility import AttestationRequest
 
@@ -191,7 +191,7 @@ class FullEnv:
             sk=sk, vk=vk, votes=votes, num_candidates=self.config.num_candidates, budget=self.config.budget,
         )
         att = self.elig.issue_attestation(
-            AttestationRequest(self.config.election_id, pseudonym, vk_bytes, weight)
+            AttestationRequest(self.config.election_id, pseudonym, vk_bytes, weight, nonce)
         )
         return BallotEnvelope(
             election_id=self.config.election_id, pseudonym=pseudonym, vk=vk_bytes,

@@ -144,6 +144,52 @@ def test_allowlist_malformed_file_is_server_error(tmp_path):
     assert r.status_code == 500, r.get_json()
 
 
+def test_nonce_increments_per_wallet_and_election():
+    """Each /attest for the same (election, wallet) gets a strictly higher nonce (re-vote
+    counter); a different wallet or election starts its own sequence at 1."""
+    c = _client()
+    a1, a2 = Account.create(), Account.create()
+
+    def nonce(acct, eid):
+        r = _post(c, acct, eid, _vk())
+        assert r.status_code == 200, r.get_json()
+        return codecs.dec_attestation(r.get_json()["attestation"]).nonce
+
+    assert nonce(a1, EID) == 1          # first vote
+    assert nonce(a1, EID) == 2          # re-vote → higher
+    assert nonce(a1, EID) == 3          # again
+    assert nonce(a2, EID) == 1          # a different wallet starts fresh
+    other_eid = (2).to_bytes(32, "big")
+    assert nonce(a1, other_eid) == 1    # same wallet, different election starts fresh
+
+
+def test_revote_attestation_verifies_with_its_nonce():
+    """A re-vote's attestation (nonce 2) verifies under the normative verifier — proving the
+    issuer signs the bound nonce, so the tally can trust the ordering."""
+    from geg.ports.eligibility import verify_attestation
+    c = _client(weight=1)
+    acct = Account.create()
+    _post(c, acct, EID, _vk())               # nonce 1
+    r = _post(c, acct, EID, _vk())           # nonce 2
+    att = codecs.dec_attestation(r.get_json()["attestation"])
+    assert att.nonce == 2
+    elig_key = StubEligibilityService(ELIG_SK).eligibility_key
+    assert verify_attestation(elig_key, att, election_id=EID, max_weight=10)
+
+
+def test_sqlite_nonce_store_is_monotonic_and_durable(tmp_path):
+    """The durable store hands out 1,2,3… per (election, pseudonym) and survives reopen
+    (so a restart cannot regress a voter's nonce and let a stale ballot win)."""
+    from geg.services.eligibility.eligibility import SqliteNonceStore
+    path = str(tmp_path / "nonces.db")
+    store = SqliteNonceStore(path)
+    assert store.next(EID, b"\x01" * 32) == 1
+    assert store.next(EID, b"\x01" * 32) == 2
+    assert store.next(EID, b"\x02" * 32) == 1  # different pseudonym, own sequence
+    reopened = SqliteNonceStore(path)          # simulate a restart
+    assert reopened.next(EID, b"\x01" * 32) == 3
+
+
 def test_challenge_message_fixture():
     """Cross-impl lock: a fixed key's signature over the canonical challenge recovers a
     known address. The JS voter (viem ``recoverMessageAddress``) recovers the same address

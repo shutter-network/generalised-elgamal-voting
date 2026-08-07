@@ -118,6 +118,7 @@ def enc_attestation(a: Attestation) -> dict:
         "pseudonym": enc_bytes(a.pseudonym),
         "vk": enc_bytes(a.vk),
         "weight": a.weight,
+        "nonce": a.nonce,
         "signature": enc_bytes(a.signature),
     }
 
@@ -129,6 +130,9 @@ def dec_attestation(d: Any, *, name: str = "attestation") -> Attestation:
         scheme = AttestationScheme(scheme_raw)
     except ValueError as exc:
         raise CodecError(f"{name}.scheme: unknown scheme {scheme_raw!r}") from exc
+    # 'nonce' is optional on the wire (absent → 1); V1 signatures bind it, so a wrong or
+    # missing nonce simply fails signature verification (→ INVALID_ATTESTATION).
+    nonce = _int(d["nonce"], name=f"{name}.nonce", minimum=1) if isinstance(d, dict) and "nonce" in d else 1
     return Attestation(
         election_id=dec_bytes(_req(d, "electionId"), name=f"{name}.electionId", size=BYTES32),
         pseudonym=dec_bytes(_req(d, "pseudonym"), name=f"{name}.pseudonym", size=BYTES32),
@@ -136,6 +140,7 @@ def dec_attestation(d: Any, *, name: str = "attestation") -> Attestation:
         weight=_int(_req(d, "weight"), name=f"{name}.weight", minimum=1),
         signature=dec_bytes(_req(d, "signature"), name=f"{name}.signature", size=SCHNORR_BYTES),
         scheme=scheme,
+        nonce=nonce,
     )
 
 
@@ -327,6 +332,9 @@ def enc_config(c: ElectionConfig) -> dict:
         "gatewayKeys": [enc_bytes(g) for g in c.gateway_keys],
         "adminKey": enc_bytes(c.admin_key),
         "protocolVersion": c.protocol_version,
+        # Decimal wei string (not a JSON number): fees can exceed JS's 2^53 safe-integer
+        # range, and the register digest must byte-match between Python and the browser.
+        "selfSubmitFee": str(c.self_submit_fee_wei),
     }
 
 
@@ -368,6 +376,9 @@ def dec_config(d: Any) -> ElectionConfig:
             ),
             admin_key=dec_bytes(_req(d, "adminKey"), name="adminKey"),
             protocol_version=str(_req(d, "protocolVersion")),
+            # Optional on the wire (absent → 0) for back-compat with configs written before
+            # the field existed; accepts a decimal string or number.
+            self_submit_fee_wei=int(d.get("selfSubmitFee", 0) or 0),
         )
     except ValueError as exc:
         # ElectionConfig.__post_init__ raises ValueError on invalid combinations.

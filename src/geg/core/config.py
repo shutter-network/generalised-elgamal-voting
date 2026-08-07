@@ -99,10 +99,17 @@ class ElectionConfig:
     gateway_keys: tuple[bytes, ...]  # authorized ballot writers (empty = open writes)
     admin_key: bytes  # identity authorized to register/cancel
     protocol_version: str  # crypto suite + wire format version
+    # Per-ballot fee (wei) a non-proxy self-submitter pays on the blockchain backend; part
+    # of the signed config (it is on-chain contract state, unlike the ephemeral DKG lead
+    # time). 0 = free. The database backend has no fees and ignores it. Defaulted so
+    # existing constructors/fixtures need no change.
+    self_submit_fee_wei: int = 0
 
     def __post_init__(self) -> None:
         if self.num_candidates < 1:
             raise ValueError("There must be at least one candidate.")
+        if self.self_submit_fee_wei < 0:
+            raise ValueError("Self-submit fee cannot be negative.")
         if self.budget < 1:
             raise ValueError("The budget must be at least 1.")
         if self.max_weight < 1:

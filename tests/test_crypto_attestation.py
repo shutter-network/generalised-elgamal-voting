@@ -21,9 +21,10 @@ def _voter_vk():
     return g1_to_compressed(vk)
 
 
-def _attest(sk, vk, vk_bytes, weight, election=ELECTION, pseudo=PSEUDO):
-    sig = attestation.sign_attestation(sk, vk, election, pseudo, vk_bytes, weight)
-    return Attestation(election_id=election, pseudonym=pseudo, vk=vk_bytes, weight=weight, signature=sig)
+def _attest(sk, vk, vk_bytes, weight, election=ELECTION, pseudo=PSEUDO, nonce=1):
+    sig = attestation.sign_attestation(sk, vk, election, pseudo, vk_bytes, weight, nonce)
+    return Attestation(election_id=election, pseudonym=pseudo, vk=vk_bytes, weight=weight,
+                       signature=sig, nonce=nonce)
 
 
 def test_sign_then_verify_ok():
@@ -62,6 +63,26 @@ def test_rejects_tampered_weight():
     assert not verify_attestation(vk_b, tampered, election_id=ELECTION, max_weight=10)
 
 
+def test_rejects_tampered_nonce():
+    """Signature covers the re-vote nonce; changing the envelope nonce must fail (this is
+    what stops a replayed old ballot from masquerading as a newer one)."""
+    sk, vk, vk_b = _elig_key()
+    att = _attest(sk, vk, _voter_vk(), weight=3, nonce=1)
+    tampered = Attestation(
+        election_id=att.election_id, pseudonym=att.pseudonym, vk=att.vk,
+        weight=att.weight, signature=att.signature, nonce=2,
+    )
+    assert not verify_attestation(vk_b, tampered, election_id=ELECTION, max_weight=10)
+
+
+def test_nonce_changes_message():
+    """Distinct nonces yield distinct signed messages (so a higher-nonce credential is a
+    genuinely different signature, not derivable from a lower one)."""
+    voter = _voter_vk()
+    assert (attestation.attestation_message(ELECTION, PSEUDO, voter, weight=1, nonce=1)
+            != attestation.attestation_message(ELECTION, PSEUDO, voter, weight=1, nonce=2))
+
+
 def test_rejects_wrong_eligibility_key():
     sk, vk, _ = _elig_key()
     _, _, other_vk_b = _elig_key()
@@ -87,7 +108,7 @@ def test_distinct_from_legacy_scheme():
     from eth_utils import keccak
     voter = _voter_vk()
     legacy = keccak(ELECTION + PSEUDO + voter)
-    v1 = attestation.attestation_message(ELECTION, PSEUDO, voter, weight=1)
+    v1 = attestation.attestation_message(ELECTION, PSEUDO, voter, weight=1, nonce=1)
     assert legacy != v1
 
 

@@ -105,7 +105,7 @@ export const submitBallot = (eidBareHex: string, ballot: BallotJson) =>
 
 // -- admin ------------------------------------------------------------------ //
 
-// Model B: the admin authorizes with a wallet signature (no bearer token). `signature`
+// The admin authorizes with a wallet signature (no bearer token). `signature`
 // is the admin EOA's EIP-191 sig over the register/cancel digest; the service relays it.
 // selfSubmitFee is part of `config` (signed), so it is not a separate param here.
 export const registerElection = (config: unknown, signature: Hex, dkgLeadTime?: number) =>

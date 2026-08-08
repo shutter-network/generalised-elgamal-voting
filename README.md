@@ -57,8 +57,11 @@ Register ──▶ DKG ──▶ Vote ──▶ Tally ──▶ Decrypt ──�
    the data layer. A finalized key exists iff `≥ t+1` keypers submit a
    byte-identical result.
 3. **Vote.** Voters build ballots in-browser (plaintext and proof randomness never
-   leave the client) and submit them through the ballot gateway during the
-   half-open window `[votingStart, votingEnd)`.
+   leave the client) and submit them through the public API's ballot ingest during
+   the half-open window `[votingStart, votingEnd)`. A voter may re-cast until the
+   window closes; the eligibility service stamps each credential with a monotonic
+   per-(election, voter) **nonce**, and the tally keeps only the highest-nonce ballot,
+   so a replayed old ballot can never override a genuine re-vote.
 4. **Tally.** After `votingEnd`, the tally aggregator runs deterministic **ballot
    admission** (producing an admitted set + typed exclusion reasons), computes the
    weighted homomorphic aggregate, and publishes it.
@@ -86,8 +89,10 @@ port — never a chain or DB directly:
 
 - **Admin plane** — Election Admin (sole config writer), DKG Coordinator daemon,
   Tally Aggregator daemon.
-- **User plane** — Eligibility Service (issues the `ATTESTATION_V1` credential),
-  Ballot Gateway (ingest + on-by-default filter), the browser crypto SDK.
+- **User plane** — Eligibility Service (issues the `ATTESTATION_V1` credential and is
+  the sole authority on voter weight + eligibility), the Public API's ballot ingest
+  (with an on-by-default filter; the former standalone gateway is now a library on the
+  API), the browser crypto SDK.
 - **Committee plane** — `n` Keyper services: fresh DKG per election, precondition-
   guarded partial decryption, private state encrypted at rest.
 
@@ -100,8 +105,11 @@ port — never a chain or DB directly:
    can censor or hide, but can never forge an accepted artifact or an undetected
    wrong result.
 2. **`EligibilityService` port** — issues/verifies `ATTESTATION_V1` over
-   `(electionId, pseudonym, vk, weight)`. Issuance is adapter-specific (stub,
-   wallet/EIP-712, OIDC, Wahlregister); **verification is normative and pure**.
+   `(electionId, pseudonym, vk, weight, nonce)`. Issuance is adapter-specific (stub,
+   wallet/EIP-712, OIDC, Wahlregister) and decides *who* may vote, *at what weight*,
+   and allocates the per-(election, voter) re-vote **nonce**; **verification is
+   normative and pure**. The bundled dev stub supports an optional allowlist (deny path)
+   and a durable nonce store — see [`RUNNING.md`](./RUNNING.md).
 
 **Integrator responsibility.** Voter *eligibility* and *who pays ballot gas* on the
 blockchain backend belong to the external service integrating `geg`, not to `geg`
@@ -154,7 +162,8 @@ Every actor is a deployable service (`python -m geg.services.<name>`):
 | **Coordinator** | `coordinator` | Auto-DKG watcher: drives the DKG ceremony; **relays** keyper DKG/decryption writes to the data layer |
 | **Tally aggregator** | `tally_aggregator` | Polls for closed elections; admit → aggregate → trigger keypers → recover → publish result |
 | **Ballot admission** | `gateway` | Library (single-ballot filter) used by the API's ballot ingest; no standalone service |
-| **Admin** | `admin` | `register`/`cancel` as CLI and admin-only HTTP service (bearer-gated) |
+| **Admin** | `admin` | `register`/`cancel` as CLI and admin-only HTTP service, authorized by the admin **wallet's EIP-191 signature** over the request (no bearer token) |
+| **Eligibility** | `eligibility` | Standalone credential issuer (run separately): wallet-authenticated `/attest`, optional allowlist deny path, durable re-vote nonce store |
 | **Auditor** | `auditor` | Independent re-verification of a finalized election from public reads |
 
 ---
@@ -162,8 +171,8 @@ Every actor is a deployable service (`python -m geg.services.<name>`):
 ## Security & authorization model
 
 - **Write authorization is unified to secp256k1 / Ethereum `ecrecover`** across
-  every actor (admin, aggregator, gateway, coordinator, keyper). On the in-memory
-  and database backends this is an EIP-191 request signature verified by
+  every actor (admin, aggregator, API ballot ingest, coordinator, keyper). On the
+  in-memory and database backends this is an EIP-191 request signature verified by
   `geg.core.authz`; on chain it is the transaction sender.
 - **Voter keys stay separate.** Ballot and attestation keys are Schnorr over G1
   (client-side), unrelated to the write-authz identities.
@@ -172,8 +181,8 @@ Every actor is a deployable service (`python -m geg.services.<name>`):
   **coordinator**, which relays them:
   - on the DB backend, the coordinator forwards the signed write to the data-layer
     service;
-  - on chain (**Option A**), admin/aggregator/gateway submit their own transactions
-    (`msg.sender`), and **only keyper writes are relayed** as meta-transactions —
+  - on chain, admin/aggregator and the API's ballot ingest submit their
+    own transactions (`msg.sender`), and **only keyper writes are relayed** as meta-transactions —
     the coordinator's relayer pays gas and the contract `ecrecover`s the keyper as
     the true author. The relayer holds no on-chain role.
 - **Keyper bootstrap trust set.** A keyper's HTTP API is fail-closed behind bearer
@@ -266,7 +275,7 @@ pip install -e '.[dev,db,chain]'
 pytest
 ```
 
-The Python test suite (**290 passing, 3 skipped**) is the integration test across
+The Python test suite (**308 passing, 27 skipped**) is the integration test across
 all three backends — in-memory, Postgres-over-HTTP, and blockchain-over-Anvil —
 including the multi-operator HTTP keyper path. The Postgres tests use a dockerized
 database (`docker compose up -d`) and the chain tests use Anvil (Foundry); both
@@ -298,6 +307,7 @@ data layer differs.
 same services run a full election on each, validated by the automated suite and by
 hand-driven multi-election runs on both the Postgres and chain stacks.
 
-Deferred beyond v1: keyper-set rotation/discovery, phase-2 consolidation of keyper
-orchestration, trust-minimizing the aggregate (keypers threshold-publish it), an
-optional ballot meta-transaction, and admin auth model B.
+Admin register/cancel is authorized by the admin wallet's EIP-191 signature (no shared
+bearer token). Deferred beyond v1: keyper-set rotation/discovery, phase-2 consolidation of
+keyper orchestration, trust-minimizing the aggregate (keypers threshold-publish it), and an
+optional ballot meta-transaction.

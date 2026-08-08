@@ -10,7 +10,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir -e '.[db,keyper,chain]'
 
-# Deployment helper scripts (fund devnet accounts, deploy the registry).
+# Deployment helper scripts (generate identities, deploy the registry).
 COPY scripts ./scripts
 
 # Default entrypoint is the uniform data-layer service; overridden per service.

@@ -56,7 +56,7 @@ def register_election(
     clock,
     dkg_lead_time: int,
 ) -> bytes:
-    """Register an election, authorized by a relayed admin **signature** (model B).
+    """Register an election, authorized by a relayed admin **signature**.
 
     ``admin_sig`` is the admin EOA's EIP-191 signature over the config (from the wallet,
     or the CLI signing locally). We enforce ``config.admin_key == admin_identity`` (so
@@ -106,12 +106,12 @@ def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes,
 
 
 # --------------------------------------------------------------------------- #
-#  Admin HTTP service (auth model A: bearer token, admin-only, fail-closed)
+#  Admin HTTP service (wallet-signature authorized, admin-only, fail-closed)
 # --------------------------------------------------------------------------- #
 
 def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
     """Flask app exposing register/cancel, authorized by a relayed admin **signature**
-    (model B — no bearer token). ``admin_identity`` is the admin EOA's 20-byte address
+    (no bearer token). ``admin_identity`` is the admin EOA's 20-byte address
     (the shared identity every request must sign as). The DKG lead-time gate is set
     per-election by the admin frontend (required ``dkgLeadTime`` body field on register);
     the service holds no default. ``/health`` is open."""
@@ -202,8 +202,8 @@ def main() -> None:
     Env: ``ADMIN_SIGNING_KEY`` (hex secp256k1 — the adminKey identity; the CLI signs with
     it, and on the blockchain backend it is the tx sender / on-chain ``adminAddr``),
     ``GEG_DATA_LAYER`` + ``GEG_DATA_LAYER_URL`` (http backends). For ``serve``
-    (model B): the admin **signature** authorizes each write (no bearer token); the
-    frontend wallet signs and the service relays. ``ADMIN_HOST``/``ADMIN_PORT`` (default 8300).
+    the admin **signature** authorizes each write (no bearer token); the frontend wallet
+    signs and the service relays. ``ADMIN_HOST``/``ADMIN_PORT`` (default 8300).
     """
     import argparse
     import json

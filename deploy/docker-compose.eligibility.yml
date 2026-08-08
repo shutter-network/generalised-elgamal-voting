@@ -11,16 +11,28 @@
 # The stub authenticates nobody and grants a fixed ELIGIBILITY_DUMMY_WEIGHT to any wallet.
 # Do NOT use it in production.
 #
+# PRODUCTION NOTE (operator responsibility). The real eligibility service is run by the
+# operator and is a public, browser-facing endpoint (the voter's wallet calls /attest
+# directly), so it MUST be deployed behind proper edge infrastructure:
+#   * TLS certificate + a real DNS name (voters connect over HTTPS; the browser will not
+#     call a plaintext or bare-IP endpoint from an HTTPS app);
+#   * a reverse proxy (Caddy / nginx) terminating TLS and enforcing rate-limiting, request
+#     size limits, and abuse protection on /attest (it is unauthenticated until the wallet
+#     signature is checked, so it is a natural DoS target).
+# This compose runs the bare dev stub on plain HTTP for local use only — add the TLS/DNS +
+# reverse-proxy layer yourself for any real deployment.
+#
 # Optional deny-path testing: the file deploy/eligibility-allowlist.json (a JSON
 # address -> weight map, or a bare [address] array) is always mounted at
 # /app/eligibility-allowlist.json, but only ENFORCED when ELIGIBILITY_ALLOWLIST points at
-# it. Set ELIGIBILITY_ALLOWLIST=/app/eligibility-allowlist.json (in deploy/.env) and the
+# it. Set ELIGIBILITY_ALLOWLIST=/app/eligibility-allowlist.json (in deploy/.env.eligibility) and the
 # stub gates issuance — listed wallets get their weight, unlisted wallets get a 403 ("This
 # wallet isn't eligible…"). The file is re-read per request, so edit who's eligible with no
 # restart (only flipping ELIGIBILITY_ALLOWLIST on/off needs a recreate). Unset -> allow all.
 #
-# Run alongside any backend stack:
-#   docker compose -f deploy/docker-compose.eligibility.yml --env-file deploy/.env up -d --build
+# Run alongside any backend stack (its own env file — the eligibility issuer is a separate
+# operator concern, not part of the admin/operator stack's deploy/.env):
+#   docker compose -f deploy/docker-compose.eligibility.yml --env-file deploy/.env.eligibility up -d --build
 #
 # Required: ELIGIBILITY_PRIVATE_KEY (its vk must equal each election's `eligibilityKey`).
 
@@ -51,6 +63,6 @@ services:
       - ./eligibility-allowlist.json:/app/eligibility-allowlist.json:ro
       # Durable state (the re-vote nonce DB) on a project-root bind mount — same convention
       # as postgres-data / coordinator-state / keyper-state. Persists across recreate.
-      - ./eligibility-state:/eligibility-state
+      - ../eligibility-state:/eligibility-state
     ports:
       - "${ELIGIBILITY_PORT:-8600}:8600"

@@ -82,12 +82,12 @@ def submit_ballot(
         if reason is not None:
             raise GatewayRejection(reason.value)
 
-        # Replay filter (funds/DoS defense, NOT the integrity boundary — see
-        # REPLAY_PROTECTION_PLAN.md): reject a ballot whose signed re-vote nonce is not
-        # strictly greater than the highest already stored for this pseudonym, so a replayed
-        # old ballot never becomes a (sponsored, gas-paying) on-chain submitVote. Only for
-        # ATTESTATION_V1 (LEGACY is nonceless — leave its behaviour unchanged). The tally's
-        # nonce ordering remains authoritative regardless of what got stored.
+        # Replay filter (funds/DoS defense, NOT the integrity boundary): reject a ballot
+        # whose signed re-vote nonce is not strictly greater than the highest already stored
+        # for this pseudonym, so a replayed old ballot never becomes a (sponsored,
+        # gas-paying) on-chain submitVote. Only for ATTESTATION_V1 (LEGACY is nonceless —
+        # leave its behaviour unchanged). The tally's nonce ordering remains authoritative
+        # regardless of what got stored.
         att = ballot.attestation
         if att.scheme is AttestationScheme.V1:
             if att.nonce <= _max_stored_nonce(dl, election_id, ballot.pseudonym):

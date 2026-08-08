@@ -9,7 +9,7 @@ over Anvil:
   meta-tx writes (pays gas; the contract ``ecrecover``s the keyper);
 * three **keyper HTTP servers** hold no chain key — they content-sign their DKG
   result / decryption shares and write them through ``HttpDataLayerClient`` to the
-  relayer service (Option A);
+  relayer service;
 * the **coordinator** bootstraps the committee and sequences the DKG over HTTP;
 * admin / result_publisher / gateway submit their **own** chain txs (``msg.sender``
   authz) via chain-direct adapters.
@@ -137,7 +137,7 @@ class ChainDaemonWorld:
         self.data_layer_url = _serve(build_app(BlockchainDataLayer(w3, self.registry, None)))
 
         # Coordinator relay: holds the RELAYER account and does the keyper meta-tx
-        # writes (the coordinator is the keyper-write relayer, Option A).
+        # writes (the coordinator is the keyper-write relayer).
         relayer_dl = BlockchainDataLayer(w3, self.registry, relayer)
         self.coordinator_url = _serve(build_coordinator_app(relayer_dl, api_token=TOKEN))
 

@@ -72,9 +72,9 @@ class Attestation:
     and is a distinct codec, not a silent modification. ``weight`` travels inside the
     credential so the whole tally is re-derivable from public artifacts; ``nonce`` is
     a monotonic per-(election, pseudonym) re-vote counter (issued 1, 2, 3, … by the
-    eligibility service) that the tally uses to pick the voter's latest ballot — see
-    REPLAY_PROTECTION_PLAN.md. The ``LEGACY`` scheme is weightless/nonceless and
-    carries ``weight = 1``, ``nonce = 1``.
+    eligibility service) that the tally uses to pick the voter's latest ballot, so a
+    replayed old ballot (lower nonce) can never override a genuine re-vote. The
+    ``LEGACY`` scheme is weightless/nonceless and carries ``weight = 1``, ``nonce = 1``.
     """
 
     election_id: bytes  # bytes32

@@ -1,4 +1,4 @@
-/** Admin auth model B: sign register/cancel requests with the admin wallet (MetaMask).
+/** Admin authorization: sign register/cancel requests with the admin wallet (MetaMask).
  *
  * The digests below are byte-exact mirrors of `geg.core.authz`:
  *   register → keccak256(canonical JSON of the config with electionId zeroed) == register_digest

@@ -16,11 +16,9 @@
 # Ordered bring-up (RUNNING.md has the copy-paste version):
 #   forge build                                          # in contracts/ (artifacts)
 #   VOTING_START_OFFSET=110 VOTING_DURATION=120 python scripts/gen_deploy_env.py
-#   docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env up -d anvil
-#   docker compose ... run --rm fund                     # fund the generated accounts
-#   docker compose ... run --rm deploy-registry          # prints GEG_REGISTRY_ADDRESS → put in .env
-#   docker compose ... up -d                             # start the stack
-#   docker compose ... run --rm admin register --config /config/sample-election.json
+#   docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env up -d
+#       # ↑ brings up anvil, auto-deploys the registry (deterministic address), then services
+#   # then register an election via the admin frontend (frontend/README.md)
 name: geg-chain-devnet
 
 x-image: &image
@@ -31,42 +29,42 @@ x-image: &image
 x-chain-env: &chain-env
   GEG_DATA_LAYER: blockchain
   GEG_CHAIN_RPC: http://anvil:8545
-  GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:-}
+  GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}
 
 services:
   anvil:
     image: ghcr.io/foundry-rs/foundry:latest
+    # In-memory chain: a restart comes back EMPTY (registry gone, and deploy-registry only
+    # runs on `up`), so don't auto-restart — let it stay down (obvious failure) and re-`up`
+    # the stack fresh instead.
+    restart: "no"
     # --block-time: mine a block every second so block.timestamp tracks wall-clock.
     # Without interval mining Anvil only stamps a block per tx, so the chain's "now"
     # freezes between txs and time-gated calls (voting window, tally) misbehave.
     entrypoint: ["anvil", "--host", "0.0.0.0", "--port", "8545", "--block-time", "1"]
     ports:
       - "8545:8545"
+    healthcheck:  # gate deploy-registry until the RPC answers
+      test: ["CMD", "cast", "block-number", "--rpc-url", "http://localhost:8545"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
-  # --- one-shot tools (profile: tools; not started by `up`) ---------------- #
-
-  fund:
-    <<: *image
-    profiles: ["tools"]
-    command: ["python", "scripts/fund_anvil.py"]
-    # Each account that sends its own txs on chain: admin (register), gateway
-    # (submitVote), coordinator (relays keyper meta-tx + sends publishResult).
-    environment:
-      GEG_CHAIN_RPC: http://anvil:8545
-      ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
-      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
-      COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
 
   deploy-registry:
     <<: *image
-    profiles: ["tools"]
     command: ["python", "scripts/deploy_registry.py"]
+    restart: "no"   # one-shot: runs to completion (exit 0); MUST NOT restart (would loop)
     environment:
       GEG_CHAIN_RPC: http://anvil:8545
       ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
+      GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}
       GEG_CONTRACTS_OUT: /contracts-out
     volumes:
       - ../contracts/out:/contracts-out:ro
+    depends_on:
+      anvil:
+        condition: service_healthy
 
   # --- long-running services ----------------------------------------------- #
 
@@ -76,14 +74,15 @@ services:
   data-layer:
     <<: *image
     command: ["python", "-m", "geg.services.data_layer"]
+    restart: unless-stopped
     environment:
-      GEG_DATA_LAYER: blockchain
-      GEG_CHAIN_RPC: http://anvil:8545
-      GEG_REGISTRY_ADDRESS: ${GEG_REGISTRY_ADDRESS:-}
+      <<: *chain-env
       DATA_LAYER_PORT: "8000"
     ports:
       - "8000:8000"
-    depends_on: [anvil]
+    depends_on:
+      deploy-registry:
+        condition: service_completed_successfully
 
   # The single keyper-facing orchestrator: drives DKG, then the tally (trigger
   # aggregate → quorum → decrypt → recover + publishResult), and relays keyper
@@ -92,6 +91,7 @@ services:
   coordinator:
     <<: *image
     command: ["python", "-m", "geg.services.coordinator"]
+    restart: unless-stopped
     environment:
       <<: *chain-env
       COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
@@ -112,11 +112,14 @@ services:
     depends_on: [data-layer]
 
   # Public API (frontend / external integrators): reads + ballot ingest on :8500.
-  # Reads are backend-blind (through the data-layer service). The ballot POST (formerly
-  # the standalone gateway) sends `submitVote` as this service's own funded tx sender.
+  # Reads are backend-blind (through the data-layer service — GEG_DATA_LAYER_URL).
+  # The ballot POST submits `submitVote` as this service's own funded tx sender
+  # (GATEWAY_SIGNING_KEY, msg.sender authz) — the one  chain credential the public
+  # service holds (see RUNNING.md, "key on the public API").
   api:
     <<: *image
     command: ["python", "-m", "geg.services.api"]
+    restart: unless-stopped
     environment:
       <<: *chain-env
       GEG_DATA_LAYER_URL: http://data-layer:8000   # reads proxy through the data-layer service
@@ -127,19 +130,16 @@ services:
       - "8500:8500"
     depends_on: [data-layer]
 
-  # Eligibility is not bundled (operator-supplied; see chain.yml note). For a
-  # self-contained devnet run also bring up deploy/docker-compose.eligibility.yml.
-
-  # Admin service — HTTP register/cancel on :8300. Auth model B: the admin wallet
-  # signs each write (relayed by the service; no token). On chain the service fires the
-  # tx with ADMIN_SIGNING_KEY (msg.sender = adminAddr = the same EOA). `up` runs `serve`;
-  # register still works as a one-shot CLI (signs locally):
-  #   docker compose ... run --rm admin register --config /config/sample-election.json
-  # Registering deploys the KeyperSet + Election, so it needs the Foundry artifacts.
+  # Admin service — HTTP register/cancel on :8300 (`serve`). The admin wallet signs each
+  # write (relayed by the service; no token); on chain the service fires the tx with
+  # ADMIN_SIGNING_KEY (msg.sender = adminAddr = the same EOA). Registration is driven by the
+  # admin frontend, which builds + signs the config in the browser. Registering deploys the
+  # KeyperSet + Election, so the service needs the Foundry artifacts (contracts/out).
   admin:
     <<: *image
     entrypoint: ["python", "-m", "geg.services.admin"]
     command: ["serve"]
+    restart: unless-stopped
     environment:
       <<: *chain-env
       ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
@@ -148,6 +148,5 @@ services:
     ports:
       - "8300:8300"
     volumes:
-      - ./sample-election.json:/config/sample-election.json:ro
       - ../contracts/out:/contracts-out:ro
     depends_on: [data-layer]

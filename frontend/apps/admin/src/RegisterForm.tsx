@@ -85,7 +85,7 @@ function RegisterPanel({ wallet, onViewElection }: { wallet: Wallet | null; onVi
 }
 
 async function doRegister(wallet: Wallet, config: Record<string, unknown>, dkgLeadTime: number) {
-  // Model B: the admin is ALWAYS the connected wallet. The signature must recover to
+  // The admin is ALWAYS the connected wallet. The signature must recover to
   // config.adminKey, and the service only accepts its own admin EOA — so adminKey is never
   // a free-form field; we force it to the signing account here (also for pasted JSON).
   // dkgLeadTime is a separate (unsigned) gate param; selfSubmitFee is inside `config` (signed).
@@ -256,8 +256,8 @@ export async function resolveKeypers(rawUrls: string[]): Promise<ResolvedKeyper[
         throw new Error(`Cannot reach keyper at ${probe} (/status). Is it running and CORS-enabled?`);
       }
       if (!res.ok) throw new Error(`Keyper ${probe} /status returned HTTP ${res.status}.`);
-      const body = (await res.json()) as { identity?: string };
-      const id = String(body.identity ?? "").toLowerCase().replace(/^0x/, "");
+      const body = (await res.json()) as { address?: string };
+      const id = String(body.address ?? "").toLowerCase().replace(/^0x/, "");
       if (!/^[0-9a-f]{40}$/.test(id)) throw new Error(`Keyper ${url} /status did not return a valid address.`);
       return { signingKey: `0x${id}`, url };
     }),
@@ -485,9 +485,9 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
         <F label="Result-publisher address" hint={HINT.resultPublisher}><input className="input-mono" value={f.resultPublisherKey} onChange={(e) => set("resultPublisherKey", e.target.value)} placeholder="0x… public address" /></F>
       </div>
 
-      {/* Submission / economics — blockchain-only settings, hidden on the database data
-          store (which has no on-chain submission or fees). */}
-      {showChainOnly ? (
+      {/* Submission / economics — blockchain-only settings. Shown only on the blockchain
+          data store; entirely absent (no reference) on the database backend. */}
+      {showChainOnly && (
         <div className="reg-subsec">
           <p className="reg-subsec__title">Submission / Economics</p>
           <div className="reg-sec__grid">
@@ -495,9 +495,7 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
             <F label="Self-submit fee (ETH)" hint={HINT.selfSubmitFee}><input type="number" min={0} step="0.0001" value={f.selfSubmitFee} onChange={(e) => set("selfSubmitFee", e.target.value)} placeholder="0" /></F>
           </div>
         </div>
-      ) : dataStore === "database" ? (
-        <p className="dim" style={{ margin: "10px 0 0" }}>Submission / economics (on-chain sponsor &amp; self-submit fee) don't apply to a database election and are hidden.</p>
-      ) : null}
+      )}
     </div>
   );
 

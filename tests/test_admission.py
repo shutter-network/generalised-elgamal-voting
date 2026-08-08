@@ -152,9 +152,8 @@ def test_last_wins_orders_by_nonce_not_sequence(env):
 
 def test_replayed_old_ballot_never_overrides_revote(env):
     """Replay/reordering defense: re-submitting a voter's OLD ballot at a later sequence
-    cannot revert their re-vote — the higher-nonce ballot always wins (see
-    REPLAY_PROTECTION_PLAN.md). Mirrors: vote A (nonce 1), re-vote B (nonce 2), attacker
-    replays A verbatim at a later sequence."""
+    cannot revert their re-vote — the higher-nonce ballot always wins. Mirrors: vote A
+    (nonce 1), re-vote B (nonce 2), attacker replays A verbatim at a later sequence."""
     cfg = env.config(duplicate_policy=DuplicatePolicy.LAST_WINS)
     a = env.ballot([1, 0, 2], P1, nonce=1)   # first vote
     b = env.ballot([0, 3, 0], P1, nonce=2)   # genuine re-vote

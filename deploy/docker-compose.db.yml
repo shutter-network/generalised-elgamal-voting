@@ -15,6 +15,7 @@ x-image: &image
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: geg
       POSTGRES_PASSWORD: geg
@@ -32,6 +33,7 @@ services:
   data-layer:
     <<: *image
     command: ["python", "-m", "geg.services.data_layer"]
+    restart: unless-stopped
     environment:
       GEG_DATA_LAYER: database
       GEG_DATA_LAYER_DSN: postgresql://geg:geg@postgres:5432/geg
@@ -50,6 +52,7 @@ services:
   coordinator:
     <<: *image
     command: ["python", "-m", "geg.services.coordinator"]
+    restart: unless-stopped
     environment:
       GEG_DATA_LAYER: database
       GEG_DATA_LAYER_URL: http://data-layer:8000
@@ -77,6 +80,7 @@ services:
   api:
     <<: *image
     command: ["python", "-m", "geg.services.api"]
+    restart: unless-stopped
     environment:
       GEG_DATA_LAYER: database
       GEG_DATA_LAYER_URL: http://data-layer:8000
@@ -87,15 +91,14 @@ services:
     depends_on: [data-layer]
 
 
-  # Admin service — HTTP register/cancel on :8300. Auth model B: each write is
-  # authorized by the admin wallet's signature (relayed by the service; no token). The
-  # admin frontend signs; the CLI still works as a one-shot (signs locally), e.g.
-  #   docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env \
-  #     run --rm admin register --config /config/sample-election.json
+  # Admin service — HTTP register/cancel on :8300. Each write is authorized by the admin
+  # wallet's signature (relayed by the service; no token). Registration is driven by the
+  # admin frontend, which builds and signs the config in the browser.
   admin:
     <<: *image
     entrypoint: ["python", "-m", "geg.services.admin"]
     command: ["serve"]
+    restart: unless-stopped
     environment:
       GEG_DATA_LAYER: database
       GEG_DATA_LAYER_URL: http://data-layer:8000
@@ -103,6 +106,4 @@ services:
       ADMIN_PORT: "8300"
     ports:
       - "8300:8300"
-    volumes:
-      - ./sample-election.json:/config/sample-election.json:ro
     depends_on: [data-layer]

@@ -98,7 +98,7 @@ class ChainWorld:
         self.admin_signer = signers["admin"]
         self.result_publisher_signer = signers["result_publisher"]
 
-        # Option A: keypers hold NO chain account and pay no gas. They content-sign
+        # Keypers hold NO chain account and pay no gas. They content-sign
         # their DKG result and decryption shares; the result_publisher/coordinator acts as
         # the relayer that sends the ...Signed tx (pays gas), and the contract
         # ecrecovers the keyper as the on-chain author. Here the result_publisher account

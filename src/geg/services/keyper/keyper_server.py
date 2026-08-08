@@ -165,7 +165,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     @app.get("/status")
     def status():
         return jsonify(
-            identity=signer.identity.hex(),
+            address="0x" + signer.identity.hex(),
             bootstrapped=installed["api_token"] is not None,
             encryptionPubkey=x25519.public_key().public_bytes_raw().hex(),
             elections=sorted(completed.keys()),

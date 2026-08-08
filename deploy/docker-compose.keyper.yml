@@ -21,8 +21,8 @@
 # Optional:
 #   KEYPER_PORT            listen + publish port; MUST match this keyper's endpoint
 #                          in the election config. Default 8100.
-#   KEYPER_STATE_DIR_HOST  host path for encrypted state (default ./keyper-state).
-#                          Give each local instance its own path.
+#   KEYPER_STATE_DIR_HOST  host path for encrypted state (default ../keyper-state, i.e.
+#                          repo root). Give each local instance its own path.
 #   KEYPER_SECRET_TTL_S    seconds past voting_end to retain per-election secret
 #                          shares before pruning. Default 90 days (7776000).
 #
@@ -57,7 +57,7 @@ services:
     ports:
       - "${KEYPER_PORT:-8100}:${KEYPER_PORT:-8100}"
     volumes:
-      - ${KEYPER_STATE_DIR_HOST:-./keyper-state}:/keyper-state
+      - ${KEYPER_STATE_DIR_HOST:-../keyper-state}:/keyper-state
     extra_hosts:
       # Reach the admin's services + the other keypers via host-published ports
       # in local multi-operator testing. Harmless with real public URLs.

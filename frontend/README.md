@@ -52,8 +52,12 @@ npm --prefix frontend run dev:voter     # http://localhost:5174
 ```
 
 - **Admin**: connect the admin wallet (MetaMask, top-right) — its account is the admin
-  EOA (`config.admin_key`). Then register (form or paste a `deploy/sample-election.json`
-  config) / cancel; each action is authorized by a wallet signature (no token).
+  EOA (`config.admin_key`). Then register (guided form, or paste a config JSON) / cancel;
+  each action is authorized by a wallet signature (no token). The form is **data-store
+  aware** (via the API's `/capability`): blockchain-only fields (on-chain vote-proxy
+  sponsor + self-submit fee) appear only when the API is on the blockchain backend and are
+  absent on a database election. Register also verifies the entered eligibility public key
+  matches the running issuer (`/health`) before signing.
 - **Voter**: pick an election; when it's `Voting` with a finalized key, enter the vote
   vector and cast — the ballot is built entirely in the browser.
 
@@ -71,6 +75,8 @@ npm --prefix frontend run build   # production build of both apps
   EOA (== `config.admin_key`; on chain the service fires the tx as that same EOA). The
   digest the wallet signs is a byte-exact mirror of `geg.core.authz` (locked by
   `apps/admin/src/adminSign.test.ts`).
-- The eligibility service here is a **dummy** issuer (attests any request). Swap in a
-  real `EligibilityService` (wallet / OIDC / Wahlregister) without changing the apps —
-  the attestation wire shape is unchanged.
+- The eligibility service here is a **dummy** issuer: it authenticates the voter's wallet
+  and, by default, attests any authenticated request. An optional allowlist (`deny path`)
+  can gate issuance so only listed wallets get a credential. Swap in a real
+  `EligibilityService` (wallet / OIDC / Wahlregister) without changing the apps — the
+  attestation wire shape is unchanged.

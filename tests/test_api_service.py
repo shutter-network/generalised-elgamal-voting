@@ -67,7 +67,7 @@ def test_get_election_and_empty_reads(api):
     body = client.get(f"/elections/{n}").get_json()  # decimal id in the URL
     assert body["electionId"] == n
     assert body["cancelled"] is False and body["finalizedKey"] is None
-    # Option A: election ids are decimal *everywhere*, including inside the config
+    # Election ids are decimal *everywhere*, including inside the config
     # envelope; crypto byte-strings stay 0x-hex.
     assert body["config"]["electionId"] == n
     assert body["config"]["numCandidates"] == env.config.num_candidates

@@ -1,5 +1,5 @@
 """Admin HTTP service: register/cancel over HTTP, authorized by a relayed admin
-**signature** (auth model B — no bearer token).
+**signature** (no bearer token).
 
 The admin EOA signs the request (here we sign locally, standing in for the frontend
 wallet); the service verifies the signature recovers to the admin identity and relays it.

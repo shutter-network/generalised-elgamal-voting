@@ -1,4 +1,4 @@
-"""Cross-implementation lock for the admin (model B) request digests.
+"""Cross-implementation lock for the admin wallet-signature request digests.
 
 These exact values are also asserted by the admin app's Vitest
 (`frontend/apps/admin/src/adminSign.test.ts`), so the browser wallet signs the *same*

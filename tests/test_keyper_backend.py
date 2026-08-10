@@ -97,7 +97,9 @@ def world(tmp_path):
 
 
 def _bootstrap_and_dkg(w):
-    api_tokens, _peer = coord.bootstrap_keypers(w.coordinator, w.keyper_urls)
+    api_tokens, _peer = coord.bootstrap_keypers(
+        w.coordinator, w.keyper_urls,
+        member_addrs={i: w.keyper_signers[i - 1].identity for i in w.keyper_urls})
     assert coord.run_dkg_http(ELECTION_ID, w.keyper_urls, api_tokens, w.dl)
     return api_tokens
 

@@ -11,8 +11,19 @@ Auth (fail-closed until bootstrapped): coordinator→keyper endpoints require th
 ``/status``, ``/health``, ``/auth/bootstrap`` are open. Tokens are installed via a
 one-time X25519-sealed + coordinator-signed :func:`/auth/bootstrap` and persisted.
 
+DKG peer-to-peer traffic is authenticated **and** confidential: dealers EIP-191-sign
+their commitments and shares (verified against the dealer's config member address), and
+each secret share travels **sealed** to the recipient's X25519 key — published and
+self-bound on ``/status`` as ``encryptionPubkey`` / ``encryptionPubkeySig`` so a relayed
+key is verified against the member address before anyone seals to it. A Feldman-VSS
+complaint at ``/dkg/round2`` returns recipient-signed ``DKG-ACCUSE-v1`` accusations; the
+accused dealer's ``/dkg/reveal_share`` discloses a share **only** on such an accusation
+from that share's own recipient (so a caller can never harvest others' shares), and the
+coordinator halts the ceremony before publishing if any keyper complains.
+
 The server never trusts a decryption trigger — `/decrypt` re-checks the
-preconditions against the data layer (via :class:`KeyperService`).
+preconditions against the data layer (via :class:`KeyperService`). There is deliberately
+no oracle that partial-decrypts a caller-supplied ciphertext.
 """
 
 from __future__ import annotations
@@ -95,6 +106,12 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
 
     fernet = persist.derive_fernet(signer.private_key)
     x25519 = persist.load_or_create_x25519(fernet, state_dir, log)
+    # Self-sign this keyper's X25519 encryption pubkey, binding it to the keyper's
+    # secp256k1 identity. Published on /status so the coordinator (before sealing a
+    # bootstrap bundle) and dealers (before sealing a share) can verify a relayed key
+    # against this keyper's config member address instead of trusting it blindly.
+    enc_pubkey_bytes = x25519.public_key().public_bytes_raw()
+    enc_pubkey_sig_hex = boot.sign_encryption_pubkey(signer, enc_pubkey_bytes).hex()
     completed: dict[str, persist.DkgEntry] = {}
     persist.load_dkg_secrets(fernet, completed, state_dir, log)
     dkg_states: dict[str, KeyperDKGState] = {}
@@ -132,6 +149,14 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
                 return i
         abort(403, "this keyper is not in the election's keyper set")
 
+    def _members_addr(config, index: int) -> bytes | None:
+        """The config member (signing) address for a 1-based keyper index — the trust
+        anchor for verifying peer enc pubkeys and dealer/accuser signatures. Sourced
+        from the data-layer config, so it is identical on the db and chain backends."""
+        if 1 <= index <= len(config.keypers):
+            return bytes(config.keypers[index - 1].signing_key)
+        return None
+
     def _inbox(eid_hex: str) -> dict:
         return inbox.setdefault(eid_hex, {"commitments": {}, "shares": {}})
 
@@ -167,7 +192,8 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         return jsonify(
             address="0x" + signer.identity.hex(),
             bootstrapped=installed["api_token"] is not None,
-            encryptionPubkey=x25519.public_key().public_bytes_raw().hex(),
+            encryptionPubkey=enc_pubkey_bytes.hex(),
+            encryptionPubkeySig=enc_pubkey_sig_hex,  # binds the enc pubkey to this keyper's address
             elections=sorted(completed.keys()),
         )
 
@@ -218,20 +244,37 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         eid = _eid(body); eid_hex = eid.hex()
         config = _config(eid)
         idx = _my_index(config)
-        commitments_hex = [g2_to_compressed(c).hex() for c in dkg_states[eid_hex].commitments]
+        commitments_c = [g2_to_compressed(c) for c in dkg_states[eid_hex].commitments]
+        commitments_hex = [c.hex() for c in commitments_c]
+        # Sign the commitments so a recipient can bind them to this dealer's member
+        # address (defeats a peer injecting forged commitments for another dealer).
+        sig = write_auth.sign_digest(signer.private_key, write_auth.dkg_commitments_digest(eid, idx, commitments_c))
         for peer_index in range(1, config.threshold.n + 1):
             if peer_index == idx:
                 continue
             _post_peer(peer_index, "/dkg/receive_commitments",
-                       {"electionId": eid_hex, "dealerIndex": idx, "commitments": commitments_hex})
+                       {"electionId": eid_hex, "dealerIndex": idx, "commitments": commitments_hex,
+                        "signature": "0x" + sig.hex()})
         return jsonify(ok=True)
 
     @app.post("/dkg/receive_commitments")
     def dkg_receive_commitments():
         body = request.get_json(force=True)
         eid_hex = body["electionId"]
+        eid = bytes.fromhex(eid_hex)
         dealer = int(body["dealerIndex"])
         incoming = [bytes.fromhex(h) for h in body["commitments"]]
+        # Verify the dealer's signature against its config member address before storing.
+        config = _config(eid)
+        dealer_addr = _members_addr(config, dealer)
+        try:
+            sig = bytes.fromhex(str(body["signature"]).removeprefix("0x"))
+            ok = dealer_addr is not None and \
+                write_auth.recover_digest(write_auth.dkg_commitments_digest(eid, dealer, incoming), sig) == dealer_addr
+        except (KeyError, ValueError, TypeError):
+            ok = False
+        if not ok:
+            abort(401, "bad dealer commitments signature")
         with lock:
             box = _inbox(eid_hex)["commitments"]
             if dealer in box:
@@ -251,22 +294,71 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         for recipient in range(1, config.threshold.n + 1):
             if recipient == idx:
                 continue
+            # Seal each share to the recipient's X25519 key — but only after verifying that
+            # key against the recipient's config member address, so a substituted key (via a
+            # lying coordinator) can't redirect the plaintext; at worst it's a DoS. The
+            # share is also signed (authenticity), verified over the unsealed scalar.
+            peer = _peer(recipient)
+            member = _members_addr(config, recipient)
+            enc_hex, enc_sig = peer.get("enc_pubkey"), peer.get("enc_pubkey_sig")
+            if member is None or not enc_hex or not enc_sig:
+                abort(500, f"no verified encryption key for keyper {recipient}; re-bootstrap")
+            try:
+                enc_pub = boot.verify_encryption_pubkey(member, enc_hex, enc_sig)
+            except Exception as e:  # noqa: BLE001
+                abort(500, f"peer {recipient} encryption key failed verification: {e}")
+            share_val = st.shares_for_others[recipient]
+            sealed = boot.seal_share(share_val, enc_pub)
+            sig = write_auth.sign_digest(
+                signer.private_key, write_auth.dkg_share_digest(eid, idx, recipient, share_val))
             _post_peer(recipient, "/dkg/receive_share",
                        {"electionId": eid_hex, "dealerIndex": idx, "recipientIndex": recipient,
-                        "share": hex(st.shares_for_others[recipient])})
+                        "sealedShare": sealed, "signature": "0x" + sig.hex()})
         return jsonify(ok=True)
 
     @app.post("/dkg/receive_share")
     def dkg_receive_share():
+        """Receive a sealed+signed secret share from a dealer.
+
+        The value travels sealed to this keyper's X25519 key (``sealedShare``) so a
+        passive observer sees only ciphertext. Plaintext is not accepted on this path
+        (multi-operator HTTP is always bootstrapped). Confidentiality (sealing) and
+        authenticity (the dealer's signature over the *recovered* scalar) are independent.
+        The dealer's signature is retained as evidence for a later complaint/reveal.
+        """
         body = request.get_json(force=True)
         eid_hex = body["electionId"]
-        dealer = int(body["dealerIndex"])
-        share = int(body["share"], 16)
+        eid = bytes.fromhex(eid_hex)
+        config = _config(eid)
+        try:
+            dealer = int(body["dealerIndex"])
+            recipient = int(body["recipientIndex"])
+            sig_hex = str(body["signature"])
+            if "sealedShare" not in body:
+                abort(400, "sealedShare required")  # no plaintext downgrade on the HTTP path
+            share = boot.unseal_share(body["sealedShare"], x25519)
+        except (KeyError, ValueError, TypeError) as e:
+            abort(400, f"bad share: {e}")
+        if recipient != _my_index(config):
+            abort(400, "share recipient mismatch")
+        # Verify the dealer's signature over the recovered scalar against its member address.
+        dealer_addr = _members_addr(config, dealer)
+        try:
+            sig = bytes.fromhex(sig_hex.removeprefix("0x"))
+            ok = dealer_addr is not None and \
+                write_auth.recover_digest(write_auth.dkg_share_digest(eid, dealer, recipient, share), sig) == dealer_addr
+        except (ValueError, TypeError):
+            ok = False
+        if not ok:
+            abort(401, "bad dealer share signature")
         with lock:
-            shares = _inbox(eid_hex)["shares"]
+            box = _inbox(eid_hex)
+            shares = box["shares"]
             if dealer in shares and shares[dealer] != share:
                 abort(409, "different share already received from this dealer")
             shares[dealer] = share
+            # Retain the dealer's signed share as evidence for a complaint/reveal.
+            box.setdefault("share_sigs", {})[dealer] = sig_hex
         return jsonify(ok=True)
 
     @app.post("/dkg/round2")
@@ -276,6 +368,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         config = _config(eid)
         st = dkg_states[eid_hex]
         box = _inbox(eid_hex)
+        my_idx = _my_index(config)
         try:
             st.round2(box["commitments"], box["shares"])
         except ValueError as err:
@@ -283,7 +376,23 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             # Security-relevant: this keyper's VSS verification rejected a dealer's shares.
             log.warning("op=dkg phase=round2 status=verify_failed election=%s complaints=%s err=%s",
                         eid_hex, bad, err)
-            return jsonify(verified=False, complaints=bad), 200
+            # Sign one accusation per bad dealer. This recipient-signed DKG-ACCUSE-v1 is the
+            # evidence the accused dealer's gated /dkg/reveal_share requires before disclosing
+            # a share, and that the coordinator surfaces on halt. We are the complaining
+            # recipient (my_idx); the accusation names the accused dealer, bound to this election.
+            accusations = [
+                {
+                    "electionId": eid_hex,
+                    "accusedDealerIndex": int(bad_dealer),
+                    "recipientIndex": my_idx,
+                    "signature": "0x" + write_auth.sign_digest(
+                        signer.private_key,
+                        write_auth.dkg_accusation_digest(eid, int(bad_dealer), my_idx),
+                    ).hex(),
+                }
+                for bad_dealer in bad
+            ]
+            return jsonify(verified=False, complaints=bad, accusations=accusations), 200
         with lock:
             completed[eid_hex] = persist.DkgEntry(
                 combined_share=st.combined_share,
@@ -292,6 +401,63 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             )
             persist.save_dkg_secrets(fernet, completed, state_dir)
         return jsonify(verified=True)
+
+    @app.post("/dkg/reveal_share")
+    def dkg_reveal_share():
+        """Accusation-gated Feldman-VSS rebuttal: reveal the share THIS dealer dealt to a
+        recipient, *only* on a valid recipient-signed ``DKG-ACCUSE-v1`` naming this dealer
+        for the pinned election. Since only recipient ``j`` can sign as ``j``, ``j`` can
+        unlock only its own share ``f_i(j)`` — which it already holds — so the endpoint
+        discloses nothing new. The gate lives here in the handler (not ``before_request``).
+
+        Returns the dealer's own ``DKG-REVEAL-v1`` signature; with the accusation it is
+        two-sided signed evidence for a resolver (adjudication is out of scope — see
+        DKG_SECURITY_HARDENING_PLAN.md). All gate failures return a uniform 401 so a prober
+        cannot learn which check failed (e.g. whether a share exists for that recipient).
+        """
+        body = request.get_json(silent=True) or {}
+        acc = body.get("accusation")
+        if not isinstance(acc, dict):
+            return jsonify(error="missing accusation"), 400
+        try:
+            acc_eid_hex = str(acc["electionId"])
+            accused_dealer = int(acc["accusedDealerIndex"])
+            recipient = int(acc["recipientIndex"])
+            acc_sig = bytes.fromhex(str(acc["signature"]).removeprefix("0x"))
+        except (KeyError, ValueError, TypeError):
+            return jsonify(error="bad accusation"), 400
+
+        st = dkg_states.get(acc_eid_hex)
+        if st is None:  # not mid-ceremony for this election
+            return jsonify(error="unauthorized"), 401
+        try:
+            eid = bytes.fromhex(acc_eid_hex)
+            config = _config(eid)
+            my_idx = _my_index(config)  # aborts if we're not in the committee
+        except Exception:  # noqa: BLE001 — uniform 401, never leak which check failed
+            return jsonify(error="unauthorized"), 401
+        # Must name THIS dealer (so one accusation unlocks exactly one (dealer, recipient)
+        # share), and we must actually have dealt a share to that recipient.
+        if accused_dealer != my_idx or recipient not in st.shares_for_others:
+            return jsonify(error="unauthorized"), 401
+        # The accusation must be signed by the recipient itself → it can only ever unlock
+        # its own share, which it is already entitled to.
+        expected = _members_addr(config, recipient)
+        try:
+            recovered = write_auth.recover_digest(
+                write_auth.dkg_accusation_digest(eid, accused_dealer, recipient), acc_sig)
+        except Exception:  # noqa: BLE001
+            recovered = None
+        if expected is None or recovered != expected:
+            return jsonify(error="unauthorized"), 401
+
+        share_val = st.shares_for_others[recipient]
+        reveal_sig = write_auth.sign_digest(
+            signer.private_key, write_auth.dkg_reveal_digest(eid, my_idx, recipient, share_val))
+        return jsonify(
+            electionId=acc_eid_hex, dealerIndex=my_idx, recipientIndex=recipient,
+            share=hex(share_val), signature="0x" + reveal_sig.hex(),
+        )
 
     @app.post("/dkg/publish")
     def dkg_publish():

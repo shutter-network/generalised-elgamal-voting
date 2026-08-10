@@ -227,7 +227,8 @@ curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env down -v # or chain-devnet.yml
 docker compose -f deploy/docker-compose.eligibility.yml --env-file deploy/.env.eligibility down -v
 for n in 1 2 3; do docker compose -p keyper$n -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper$n down; done
-rm -rf keyper-state* coordinator-state eligibility-state   # bind-mounted state (all at repo root)
+rm -rf postgres-data keyper-state* coordinator-state eligibility-state   # bind-mounted state at repo root
+# postgres-data is db-stack only and holds the elections DB.
 ```
 
 ---
@@ -276,6 +277,15 @@ is the anonymity-preserving choice.
 **Timing.** You choose the voting window **in the register form** (step 5) — for a quick demo
 pick a short one (e.g. a couple of minutes out and a couple of minutes long), leaving enough
 lead time for the DKG.
+
+**DKG integrity & complaints.** Keyper→keyper DKG traffic is signed (dealers sign their
+commitments and shares, verified against the config member address) and each secret share is
+**sealed** to the recipient's X25519 key, so nothing secret is on the wire. If a keyper's
+Feldman-VSS check rejects a dealer's share it returns a **signed accusation**, and the
+coordinator **halts the ceremony before publishing** rather than finalizing a divergent
+transcript — the election then derives to `DKGFailed`, with the signed accusations in the
+coordinator log for manual resolution (`op=dkg_complaint`). The accused dealer's
+`/dkg/reveal_share` will disclose a share only to its own recipient (accusation-gated).
 
 **Admin auth.** Each register/cancel is authorized by the admin wallet's signature (no token);
 the same EOA is the wallet, `config.admin_key`, and `ADMIN_SIGNING_KEY`. "Changing keypers" is

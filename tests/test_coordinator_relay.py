@@ -164,7 +164,9 @@ def test_keypers_write_dkg_through_coordinator_relay(tmp_path):
 
         # Coordinator pushes the relay bearer via /auth/bootstrap; the keyper applies
         # it to its write client, so the relayed writes authenticate.
-        api_tokens, _peer = coord.bootstrap_keypers(coordinator, keyper_urls, relay_token=TOKEN)
+        api_tokens, _peer = coord.bootstrap_keypers(
+            coordinator, keyper_urls, relay_token=TOKEN,
+            member_addrs={i: keypers[i - 1].identity for i in keyper_urls})
         assert submitter.token == TOKEN                              # received over bootstrap, not pre-shared
         assert coord.run_dkg_http(eid, keyper_urls, api_tokens, dl)   # writes flow keyper→relay→dl
         assert dl.get_finalized_key(eid) is not None
@@ -193,7 +195,7 @@ def test_relay_token_persists_across_restart(tmp_path):
         sub1 = CoordinatorClient("http://unused", "")
         url = serve(build_keyper_app(keyper, dl, coordinator.identity, clock=lambda: 0,
                                      state_dir=state, submitter=sub1))
-        coord.bootstrap_keypers(coordinator, {1: url}, relay_token=TOKEN)
+        coord.bootstrap_keypers(coordinator, {1: url}, relay_token=TOKEN, member_addrs={1: keyper.identity})
         assert sub1.token == TOKEN
     finally:
         for srv in servers:

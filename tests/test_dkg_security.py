@@ -1,0 +1,389 @@
+"""DKG security-hardening tests: enc-pubkey binding, share sealing, DKG P2P
+signature digests, signed+sealed share exchange, the accusation-gated reveal, and
+the coordinator halt-on-complaint.
+
+Ports the reference thresholdELGamal `fix/dkg-security-hardening` guarantees to geg.
+Phase 1 here covers the primitives; later phases extend this module.
+"""
+
+from __future__ import annotations
+
+import base64
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
+from geg.core import write_auth
+from geg.core.authz import Signer
+from geg.crypto.params import CURVE_ORDER
+from geg.services.keyper import keyper_bootstrap as boot
+
+
+# --- share sealing (C-1 Leg A primitive) ----------------------------------- #
+
+class TestSealShare:
+    def test_seal_unseal_round_trips_scalar(self):
+        priv = X25519PrivateKey.generate()
+        share = 123456789 % CURVE_ORDER
+        sealed = boot.seal_share(share, priv.public_key())
+        assert isinstance(sealed, str)  # base64 for JSON transport
+        assert boot.unseal_share(sealed, priv) == share
+
+    def test_seal_hides_the_scalar_on_the_wire(self):
+        priv = X25519PrivateKey.generate()
+        share = 0xDEADBEEF
+        sealed = boot.seal_share(share, priv.public_key())
+        assert share.to_bytes(32, "big") not in base64.b64decode(sealed)  # ciphertext, not plaintext
+
+    def test_unseal_rejects_wrong_recipient(self):
+        priv = X25519PrivateKey.generate()
+        other = X25519PrivateKey.generate()
+        sealed = boot.seal_share(42, priv.public_key())
+        with pytest.raises(Exception):
+            boot.unseal_share(sealed, other)
+
+    def test_unseal_rejects_tampered_ciphertext(self):
+        priv = X25519PrivateKey.generate()
+        raw = bytearray(base64.b64decode(boot.seal_share(42, priv.public_key())))
+        raw[-1] ^= 0x01  # flip a ciphertext byte → AES-GCM auth fails
+        with pytest.raises(Exception):
+            boot.unseal_share(base64.b64encode(bytes(raw)).decode(), priv)
+
+    def test_unseal_rejects_blob_without_share_domain_tag(self):
+        """A box sealed to the same key but lacking the DKG-SHARE-SEAL-v1 tag (e.g. a
+        bootstrap-shaped payload) must not unseal as a share."""
+        priv = X25519PrivateKey.generate()
+        wrong = boot.x25519_seal(b"not-a-share-payload", priv.public_key())
+        with pytest.raises(ValueError, match="domain-tag"):
+            boot.unseal_share(base64.b64encode(wrong).decode(), priv)
+
+
+# --- encryption-pubkey binding (verify-before-seal) ------------------------- #
+
+class TestVerifyEncryptionPubkey:
+    def _bound(self):
+        signer = Signer.generate()
+        x = X25519PrivateKey.generate()
+        pub = x.public_key().public_bytes_raw()
+        sig = boot.sign_encryption_pubkey(signer, pub)
+        return signer, pub, sig
+
+    def test_valid_binding_returns_key(self):
+        signer, pub, sig = self._bound()
+        parsed = boot.verify_encryption_pubkey(signer.identity, pub.hex(), sig.hex())
+        assert parsed.public_bytes_raw() == pub
+
+    def test_accepts_0x_prefixed_hex_and_address(self):
+        signer, pub, sig = self._bound()
+        parsed = boot.verify_encryption_pubkey("0x" + signer.identity.hex(), "0x" + pub.hex(), "0x" + sig.hex())
+        assert parsed.public_bytes_raw() == pub
+
+    def test_wrong_member_address_rejected(self):
+        _signer, pub, sig = self._bound()
+        with pytest.raises(ValueError, match="signature mismatch"):
+            boot.verify_encryption_pubkey(Signer.generate().identity, pub.hex(), sig.hex())
+
+    def test_substituted_pubkey_rejected(self):
+        """A dealer can't be fed a substituted X25519 key: the sig won't recover to
+        the member address for a different pubkey."""
+        signer, _pub, sig = self._bound()
+        other_pub = X25519PrivateKey.generate().public_key().public_bytes_raw()
+        with pytest.raises(ValueError, match="signature mismatch"):
+            boot.verify_encryption_pubkey(signer.identity, other_pub.hex(), sig.hex())
+
+
+# --- DKG P2P signature digests --------------------------------------------- #
+
+class TestDkgDigests:
+    EID = b"\x11" * 32
+
+    def test_digests_are_deterministic(self):
+        c = [b"\x02" * 96, b"\x03" * 96]
+        assert write_auth.dkg_commitments_digest(self.EID, 1, c) == write_auth.dkg_commitments_digest(self.EID, 1, c)
+        assert write_auth.dkg_share_digest(self.EID, 1, 2, 7) == write_auth.dkg_share_digest(self.EID, 1, 2, 7)
+
+    def test_share_and_reveal_digests_differ_by_dst(self):
+        """Same (eid, dealer, recipient, share) but distinct DSTs → a reveal signature
+        can never be replayed as a share signature or vice versa."""
+        assert write_auth.dkg_share_digest(self.EID, 1, 2, 9) != write_auth.dkg_reveal_digest(self.EID, 1, 2, 9)
+
+    def test_accusation_digest_binds_dealer_and_recipient(self):
+        base = write_auth.dkg_accusation_digest(self.EID, 3, 2)
+        assert base != write_auth.dkg_accusation_digest(self.EID, 4, 2)  # different accused dealer
+        assert base != write_auth.dkg_accusation_digest(self.EID, 3, 5)  # different recipient
+        assert base != write_auth.dkg_accusation_digest(b"\x22" * 32, 3, 2)  # different election
+
+    def test_share_digest_sign_recover_roundtrip(self):
+        dealer = Signer.generate()
+        digest = write_auth.dkg_share_digest(self.EID, 1, 2, 12345)
+        sig = write_auth.sign_digest(dealer.private_key, digest)
+        assert write_auth.recover_digest(digest, sig) == dealer.identity
+
+    def test_accusation_sign_recover_roundtrip(self):
+        recipient = Signer.generate()
+        digest = write_auth.dkg_accusation_digest(self.EID, 3, 2)
+        sig = write_auth.sign_digest(recipient.private_key, digest)
+        assert write_auth.recover_digest(digest, sig) == recipient.identity
+
+
+# --- live keyper cluster (accusation gate + halt) --------------------------- #
+
+import threading  # noqa: E402
+
+import requests  # noqa: E402
+from werkzeug.serving import make_server  # noqa: E402
+
+from geg.adapters.memory import InMemoryDataLayer  # noqa: E402
+from geg.core.config import (  # noqa: E402
+    DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant,
+)
+from geg.crypto.dkg import KeyperDKGState  # noqa: E402
+from geg.crypto.points import g2_to_compressed  # noqa: E402
+from geg.services.coordinator import dkg_coordinator as coord  # noqa: E402
+from geg.services.keyper import build_keyper_app  # noqa: E402
+
+from conftest import ManualClock  # noqa: E402
+
+_EID = (1).to_bytes(32, "big")  # in-memory adapter assigns the first election id = 1
+_N, _T = 3, 1
+
+
+class _Cluster:
+    """A live 3-keyper HTTP cluster on one data layer, bootstrapped (peers + enc keys)."""
+
+    def __init__(self, tmp_path):
+        self.eid = _EID
+        self.eid_hex = _EID.hex()
+        self.clock = ManualClock(0)
+        self.dl = InMemoryDataLayer(clock=self.clock)
+        self.coordinator = Signer.generate()
+        self.admin = Signer.generate()
+        self.signers = [Signer.generate() for _ in range(_N)]
+        config = ElectionConfig(
+            election_id=_EID, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
+            weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
+            voting_start=1000, voting_end=2000, threshold=Threshold(t=_T, n=_N),
+            keypers=tuple(KeyperIdentity(signing_key=self.signers[i].identity, url="") for i in range(_N)),
+            eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
+            gateway_keys=(Signer.generate().identity,), admin_key=self.admin.identity, protocol_version="v1",
+        )
+        self.dl.register_election(config, self.admin.sign_register(config))
+        self._servers = []
+        self.urls = {}
+        for i in range(1, _N + 1):
+            app = build_keyper_app(self.signers[i - 1], self.dl, self.coordinator.identity,
+                                   clock=self.clock, state_dir=tmp_path / f"k{i}")
+            srv = make_server("127.0.0.1", 0, app, threaded=True)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            self._servers.append(srv)
+            self.urls[i] = f"http://127.0.0.1:{srv.server_port}"
+        self.api_tokens, self.peer_tokens = coord.bootstrap_keypers(
+            self.coordinator, self.urls,
+            member_addrs={i: self.signers[i - 1].identity for i in self.urls})
+
+    def shutdown(self):
+        for srv in self._servers:
+            srv.shutdown()
+
+    def call(self, i, phase):
+        return requests.post(self.urls[i] + "/dkg/" + phase, json={"electionId": self.eid_hex},
+                             headers={"Authorization": f"Bearer {self.api_tokens[i]}"})
+
+    def enc_pub(self, i):
+        st = requests.get(self.urls[i] + "/status").json()
+        return X25519PublicKey.from_public_bytes(bytes.fromhex(st["encryptionPubkey"]))
+
+    def accusation(self, accused_dealer, recipient, *, signer=None, eid=None):
+        eid = eid if eid is not None else self.eid
+        signer = signer or self.signers[recipient - 1]
+        sig = write_auth.sign_digest(signer.private_key, write_auth.dkg_accusation_digest(eid, accused_dealer, recipient))
+        return {"electionId": eid.hex(), "accusedDealerIndex": accused_dealer,
+                "recipientIndex": recipient, "signature": "0x" + sig.hex()}
+
+    def reveal(self, dealer_i, accusation):
+        return requests.post(self.urls[dealer_i] + "/dkg/reveal_share", json={"accusation": accusation},
+                             headers={"Authorization": f"Bearer {self.api_tokens[dealer_i]}"})
+
+
+@pytest.fixture
+def cluster(tmp_path):
+    c = _Cluster(tmp_path)
+    try:
+        yield c
+    finally:
+        c.shutdown()
+
+
+class TestRevealShareGate:
+    """H-1: /dkg/reveal_share discloses a dealt share ONLY on a valid recipient-signed
+    accusation naming that dealer; every other case is a uniform 401."""
+
+    def _pending(self, cluster):
+        assert cluster.call(1, "round1").status_code == 200  # keyper 1 now holds shares_for_others
+
+    def test_valid_accusation_unlocks_own_share(self, cluster):
+        self._pending(cluster)
+        r = cluster.reveal(1, cluster.accusation(accused_dealer=1, recipient=2))  # recipient 2 accuses dealer 1
+        assert r.status_code == 200
+        body = r.json()
+        share = int(body["share"], 16)
+        # The reveal is the dealer's own signature over what it dealt to recipient 2.
+        sig = bytes.fromhex(body["signature"].removeprefix("0x"))
+        assert write_auth.recover_digest(
+            write_auth.dkg_reveal_digest(cluster.eid, 1, 2, share), sig) == cluster.signers[0].identity
+
+    def test_missing_accusation_is_400(self, cluster):
+        self._pending(cluster)
+        r = requests.post(cluster.urls[1] + "/dkg/reveal_share", json={},
+                          headers={"Authorization": f"Bearer {cluster.api_tokens[1]}"})
+        assert r.status_code == 400
+
+    def test_wrong_signer_rejected(self, cluster):
+        self._pending(cluster)
+        # Accusation claims recipient 2 but is signed by keyper 3 → recovered != member(2).
+        acc = cluster.accusation(accused_dealer=1, recipient=2, signer=cluster.signers[2])
+        assert cluster.reveal(1, acc).status_code == 401
+
+    def test_wrong_accused_dealer_rejected(self, cluster):
+        self._pending(cluster)
+        # A valid accusation against dealer 2, presented to dealer 1 → not this dealer → 401.
+        assert cluster.reveal(1, cluster.accusation(accused_dealer=2, recipient=3)).status_code == 401
+
+    def test_election_mismatch_rejected(self, cluster):
+        self._pending(cluster)
+        other = (999).to_bytes(32, "big")
+        assert cluster.reveal(1, cluster.accusation(accused_dealer=1, recipient=2, eid=other)).status_code == 401
+
+    def test_reveal_requires_bearer(self, cluster):
+        self._pending(cluster)
+        r = requests.post(cluster.urls[1] + "/dkg/reveal_share",
+                          json={"accusation": cluster.accusation(1, 2)})  # no token
+        assert r.status_code in (401, 503)
+
+
+class TestReceiveShareSealed:
+    """C-1: /dkg/receive_share accepts only sealed+signed shares; plaintext is refused."""
+
+    def _sealed(self, cluster, dealer, recipient, value):
+        sealed = boot.seal_share(value, cluster.enc_pub(recipient))
+        sig = write_auth.sign_digest(
+            cluster.signers[dealer - 1].private_key, write_auth.dkg_share_digest(cluster.eid, dealer, recipient, value))
+        return {"electionId": cluster.eid_hex, "dealerIndex": dealer, "recipientIndex": recipient,
+                "sealedShare": sealed, "signature": "0x" + sig.hex()}
+
+    def _post(self, cluster, recipient, body):
+        return requests.post(cluster.urls[recipient] + "/dkg/receive_share", json=body,
+                             headers={"Authorization": f"Bearer {cluster.peer_tokens[recipient]}"})
+
+    def test_sealed_signed_share_accepted_and_append_only(self, cluster):
+        assert self._post(cluster, 1, self._sealed(cluster, 2, 1, 42)).status_code == 200
+        # A different share from the same dealer is rejected → the first was stored (evidence).
+        assert self._post(cluster, 1, self._sealed(cluster, 2, 1, 43)).status_code == 409
+
+    def test_plaintext_share_rejected(self, cluster):
+        body = {"electionId": cluster.eid_hex, "dealerIndex": 2, "recipientIndex": 1, "share": "0x2a",
+                "signature": "0x00"}
+        assert self._post(cluster, 1, body).status_code == 400
+
+    def test_forged_dealer_signature_rejected(self, cluster):
+        body = self._sealed(cluster, 2, 1, 42)
+        # Re-sign with the wrong key (keyper 3, not dealer 2) → recovered != member(2).
+        bad = write_auth.sign_digest(cluster.signers[2].private_key,
+                                     write_auth.dkg_share_digest(cluster.eid, 2, 1, 42))
+        body["signature"] = "0x" + bad.hex()
+        assert self._post(cluster, 1, body).status_code == 401
+
+
+class TestReceiveCommitmentsSigned:
+    def _commitments(self):
+        st = KeyperDKGState(); st.round1(2, _N, _T)
+        return [g2_to_compressed(c) for c in st.commitments]
+
+    def _post(self, cluster, dealer, commitments, sig_hex):
+        return requests.post(cluster.urls[1] + "/dkg/receive_commitments",
+                             json={"electionId": cluster.eid_hex, "dealerIndex": dealer,
+                                   "commitments": [c.hex() for c in commitments], "signature": sig_hex},
+                             headers={"Authorization": f"Bearer {cluster.peer_tokens[1]}"})
+
+    def test_valid_signature_accepted(self, cluster):
+        c = self._commitments()
+        sig = write_auth.sign_digest(cluster.signers[1].private_key, write_auth.dkg_commitments_digest(cluster.eid, 2, c))
+        assert self._post(cluster, 2, c, "0x" + sig.hex()).status_code == 200
+
+    def test_forged_signature_rejected(self, cluster):
+        c = self._commitments()
+        bad = write_auth.sign_digest(cluster.signers[2].private_key, write_auth.dkg_commitments_digest(cluster.eid, 2, c))
+        assert self._post(cluster, 2, c, "0x" + bad.hex()).status_code == 401
+
+
+def test_round2_emits_accusation_that_unlocks_reveal(cluster):
+    """A recipient handed a share inconsistent with the dealer's commitments returns a
+    signed DKG-ACCUSE-v1, and that accusation unlocks the accused dealer's reveal."""
+    c = cluster
+    for i in (1, 2, 3):
+        assert c.call(i, "round1").status_code == 200
+        assert c.call(i, "distribute_commitments").status_code == 200
+    assert c.call(3, "distribute_shares").status_code == 200  # honest share dealer3 → keyper1
+    # Malicious dealer 2 → keyper1: a validly-signed but VSS-inconsistent share.
+    bad_val = 123456789
+    sealed = boot.seal_share(bad_val, c.enc_pub(1))
+    sig = write_auth.sign_digest(c.signers[1].private_key, write_auth.dkg_share_digest(c.eid, 2, 1, bad_val))
+    r = requests.post(c.urls[1] + "/dkg/receive_share",
+                      json={"electionId": c.eid_hex, "dealerIndex": 2, "recipientIndex": 1,
+                            "sealedShare": sealed, "signature": "0x" + sig.hex()},
+                      headers={"Authorization": f"Bearer {c.peer_tokens[1]}"})
+    assert r.status_code == 200
+
+    resp = c.call(1, "round2").json()
+    assert resp["verified"] is False
+    accs = resp["accusations"]
+    assert [a["accusedDealerIndex"] for a in accs] == [2]
+    acc = accs[0]
+    assert acc["recipientIndex"] == 1
+    # It verifies against keyper 1's (the accuser's) member address …
+    assert write_auth.recover_digest(
+        write_auth.dkg_accusation_digest(c.eid, 2, 1),
+        bytes.fromhex(acc["signature"].removeprefix("0x"))) == c.signers[0].identity
+    # … and unlocks dealer 2's reveal of the share it dealt to keyper 1.
+    rev = c.reveal(2, acc)
+    assert rev.status_code == 200
+    assert rev.json()["recipientIndex"] == 1
+
+
+def test_run_dkg_http_halts_before_publish_on_complaint(monkeypatch):
+    """If any keyper's round2 reports verified:false, the coordinator raises DKGComplaint
+    and never calls the publish phase."""
+    urls = {1: "http://k1", 2: "http://k2", 3: "http://k3"}
+    api = {1: "t1", 2: "t2", 3: "t3"}
+    seen = []
+
+    class _Resp:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self._payload
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        phase = url.rsplit("/", 1)[-1]
+        seen.append(phase)
+        if phase == "round2" and url.startswith("http://k2"):
+            return _Resp({"verified": False, "complaints": [1],
+                          "accusations": [{"electionId": _EID.hex(), "accusedDealerIndex": 1,
+                                           "recipientIndex": 2, "signature": "0xabcd"}]})
+        if phase == "round2":
+            return _Resp({"verified": True})
+        return _Resp({"ok": True})
+
+    monkeypatch.setattr(coord.requests, "post", fake_post)
+
+    class _DL:
+        def get_finalized_key(self, _eid):
+            return None
+
+    with pytest.raises(coord.DKGComplaint) as ei:
+        coord.run_dkg_http(_EID, urls, api, _DL())
+    assert 1 in ei.value.accusations[0].values() or ei.value.accusations  # carries the evidence
+    assert "publish" not in seen  # halted before publishing

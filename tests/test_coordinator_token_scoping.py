@@ -41,17 +41,25 @@ class Keypers:
         self.coordinator = Signer.generate()
         self._servers = []
         self.urls = {}
+        self.addr_by_url = {}
         for i in range(1, n + 1):
-            app = build_keyper_app(Signer.generate(), self.dl, self.coordinator.identity,
+            signer = Signer.generate()
+            app = build_keyper_app(signer, self.dl, self.coordinator.identity,
                                    clock=self.clock, state_dir=tmp_path / f"k{i}")
             srv = make_server("127.0.0.1", 0, app, threaded=True)
             threading.Thread(target=srv.serve_forever, daemon=True).start()
             self._servers.append(srv)
-            self.urls[i] = f"http://127.0.0.1:{srv.server_port}"
+            url = f"http://127.0.0.1:{srv.server_port}"
+            self.urls[i] = url
+            self.addr_by_url[url] = signer.identity
 
     def shutdown(self):
         for srv in self._servers:
             srv.shutdown()
+
+    def member_addrs(self, committee):
+        """Committee index → member address, for bootstrap_keypers' enc-pubkey verify."""
+        return {ci: self.addr_by_url[url] for ci, url in committee.items()}
 
     def accepts(self, url, token):
         """True iff the keyper accepts this bearer (auth passes → not 401)."""
@@ -74,12 +82,12 @@ def test_overlapping_committee_does_not_churn_shared_keyper(pool, tmp_path):
     store = TokenStore(tmp_path / "coord-state")
 
     c1 = {1: pool.urls[1], 2: pool.urls[2], 3: pool.urls[3]}
-    api1, _ = coord.bootstrap_keypers(pool.coordinator, c1, token_store=store)
+    api1, _ = coord.bootstrap_keypers(pool.coordinator, c1, member_addrs=pool.member_addrs(c1), token_store=store)
     k2_token = api1[2]
     assert pool.accepts(pool.urls[2], k2_token)  # k2 holds its committee1 token
 
     c2 = {1: pool.urls[2], 2: pool.urls[3], 3: pool.urls[4]}  # overlaps on k2, k3
-    api2, _ = coord.bootstrap_keypers(pool.coordinator, c2, token_store=store)
+    api2, _ = coord.bootstrap_keypers(pool.coordinator, c2, member_addrs=pool.member_addrs(c2), token_store=store)
 
     # k2's token is stable and still accepted — no churn.
     assert api2[1] == k2_token
@@ -95,7 +103,7 @@ def test_401_triggers_rebootstrap_and_retry(pool, tmp_path):
     urls = {1: url}
 
     # Bootstrap normally: the keyper now holds token A (also in the store).
-    api_a, _ = coord.bootstrap_keypers(pool.coordinator, urls, token_store=store)
+    api_a, _ = coord.bootstrap_keypers(pool.coordinator, urls, member_addrs=pool.member_addrs(urls), token_store=store)
     token_a = api_a[1]
     assert pool.accepts(url, token_a)
 
@@ -109,7 +117,7 @@ def test_401_triggers_rebootstrap_and_retry(pool, tmp_path):
 
     def rebootstrap(i):
         calls["n"] += 1
-        toks, _ = coord.bootstrap_keypers(pool.coordinator, urls, token_store=store, install={i})
+        toks, _ = coord.bootstrap_keypers(pool.coordinator, urls, member_addrs=pool.member_addrs(urls), token_store=store, install={i})
         return toks[i]
 
     coord.trigger_aggregate_http(ANY_EID, urls, api_tokens, rebootstrap=rebootstrap)

@@ -17,7 +17,6 @@ import secrets
 import time
 
 import requests
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
 from geg.crypto.dkg import derive_joint_mpk
 from geg.crypto.points import g2_to_compressed
@@ -33,6 +32,17 @@ _LOG = logging.getLogger("geg.coordinator")
 
 class DKGError(RuntimeError):
     pass
+
+
+class DKGComplaint(DKGError):
+    """A committee member reported a Feldman-VSS complaint against a dealer during
+    round2. Terminal for this ceremony: a divergent transcript can never finalize, so
+    the coordinator halts *before* publishing and surfaces the signed accusations for
+    manual resolution (see DKG_SECURITY_HARDENING_PLAN.md). Carries the accusations."""
+
+    def __init__(self, message: str, accusations: list[dict]):
+        super().__init__(message)
+        self.accusations = accusations
 
 
 def keyper_urls_from(config, overrides: dict[str, str] | None = None) -> dict[int, str]:
@@ -127,8 +137,9 @@ def ensure_dkg(
 #  HTTP driver — drive a multi-operator keyper deployment over the wire
 # --------------------------------------------------------------------------- #
 
-def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, relay_token: str | None = None,
-                      token_store=None, install: set[int] | None = None, timeout: float = 10.0):
+def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, member_addrs: dict[int, bytes],
+                      relay_token: str | None = None, token_store=None, install: set[int] | None = None,
+                      timeout: float = 10.0):
     """Install per-keyper channel credentials via each keyper's /auth/bootstrap.
 
     Each keyper's ``{api_token, peer_token}`` is a **stable per-(coordinator, keyper)
@@ -139,9 +150,12 @@ def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, relay_token: 
     (the peer map needs them), but /auth/bootstrap is POSTed only to the members in
     ``install`` (default: all) — pass a subset to re-install a single keyper on a 401.
 
-    Fetches each targeted keyper's X25519 encryption pubkey (/status), seals a
-    per-keyper token bundle to it, signs it with the coordinator identity, and posts
-    it. ``relay_token`` (the coordinator's write-relay bearer) is pushed inside the same
+    Fetches each keyper's X25519 encryption pubkey (/status) and VERIFIES it against
+    that keyper's ``member_addrs`` entry (its config signing address) before use, then
+    seals a per-keyper token bundle to the verified key, signs it with the coordinator
+    identity, and posts it. Every *other* keyper's verified ``{enc_pubkey,
+    enc_pubkey_sig}`` is embedded in the peer map so dealers can seal shares to it.
+    ``relay_token`` (the coordinator's write-relay bearer) rides inside the same
     sealed+signed payload so keypers need not pre-share it. Returns
     ``(api_tokens, peer_tokens)`` keyed by keyper index (all members).
     """
@@ -158,25 +172,41 @@ def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, relay_token: 
         api_tokens[i] = cred["api_token"]
         peer_tokens[i] = cred["peer_token"]
 
+    # Fetch every keyper's X25519 encryption pubkey (+ self-binding signature) and VERIFY
+    # it against that keyper's config member address before use. The verified key object
+    # seals the keyper's own bootstrap bundle (closing a blind-trust MITM on /status); the
+    # raw {enc_pubkey, enc_pubkey_sig} rides in every *other* keyper's peer map so dealers
+    # can seal shares to it (re-verifying against the peer's member address at send time).
+    enc_raw: dict[int, dict[str, str]] = {}
+    enc_pub: dict[int, object] = {}
+    for i, url in keyper_urls.items():
+        try:
+            st = requests.get(url.rstrip("/") + "/status", timeout=timeout).json()
+            enc_hex, enc_sig = st["encryptionPubkey"], st["encryptionPubkeySig"]
+            enc_pub[i] = boot.verify_encryption_pubkey(member_addrs[i], enc_hex, enc_sig)
+            enc_raw[i] = {"enc_pubkey": enc_hex, "enc_pubkey_sig": enc_sig}
+        except Exception as err:  # noqa: BLE001 — re-raised; caller backs off and retries
+            _LOG.error("op=bootstrap keyper=%d url=%s status=enc_pubkey_error err=%s", i, url, err)
+            raise
+
     targets = keyper_urls if install is None else {i: keyper_urls[i] for i in install}
     for i, url in targets.items():
-        # Fetch this keyper's X25519 pubkey, seal+sign its bundle, and install it —
-        # attributing any failure to the specific keyper (unreachable /status, bad
-        # bootstrap) so a stuck committee names the culprit rather than a generic error.
+        # Seal+sign this keyper's bundle and install it — attributing any failure to the
+        # specific keyper so a stuck committee names the culprit, not a generic error.
         try:
-            enc_hex = requests.get(url.rstrip("/") + "/status", timeout=timeout).json()["encryptionPubkey"]
             payload = {
                 "api_token": api_tokens[i],
                 "peer_token": peer_tokens[i],
                 "relay_token": relay_token,
-                "peers": {str(j): {"url": keyper_urls[j], "token": peer_tokens[j]} for j in keyper_urls if j != i},
+                # Each peer entry: where to reach it, what to authenticate with, and the
+                # X25519 key to seal shares to (the dealer re-verifies it before sealing).
+                "peers": {str(j): {"url": keyper_urls[j], "token": peer_tokens[j], **enc_raw[j]}
+                          for j in keyper_urls if j != i},
                 "nonce": secrets.token_hex(16),
                 "timestamp": int(time.time()),
             }
             sig = boot.sign_payload(coordinator, payload)
-            sealed = boot.x25519_seal(
-                boot.canonical_payload_bytes(payload), X25519PublicKey.from_public_bytes(bytes.fromhex(enc_hex))
-            )
+            sealed = boot.x25519_seal(boot.canonical_payload_bytes(payload), enc_pub[i])
             requests.post(url.rstrip("/") + "/auth/bootstrap",
                           json={"sealed": sealed.hex(), "signature": sig.hex()}, timeout=timeout).raise_for_status()
         except Exception as err:  # noqa: BLE001 — re-raised; caller backs off and retries
@@ -251,10 +281,33 @@ def run_dkg_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: di
             raise
 
     idxs = sorted(keyper_urls)
-    for phase in ("round1", "distribute_commitments", "distribute_shares", "round2", "publish"):
+    for phase in ("round1", "distribute_commitments", "distribute_shares"):
         for i in idxs:
             call(i, phase)
         _LOG.info("op=dkg phase=%s status=ok election=%s keypers=%d", phase, eid_hex, len(idxs))
+
+    # round2 — collect complaints. A verified:false response carries recipient-signed
+    # accusations (DKG-ACCUSE-v1). If ANY keyper complains we HALT before publishing (a
+    # divergent transcript would never finalize) and surface the signed evidence for
+    # manual resolution. Automated adjudicate → exclude → re-round2 is future work.
+    complaints = [(i, resp) for i in idxs
+                  if isinstance(resp := call(i, "round2"), dict) and resp.get("verified") is False]
+    _LOG.info("op=dkg phase=round2 status=ok election=%s keypers=%d", eid_hex, len(idxs))
+    if complaints:
+        accusations = [acc for _i, resp in complaints for acc in resp.get("accusations", [])]
+        for acc in accusations:
+            _LOG.error("op=dkg_complaint accuser_kid=%s accused_dealer=%s election=%s signature=%s",
+                       acc.get("recipientIndex"), acc.get("accusedDealerIndex"),
+                       acc.get("electionId"), acc.get("signature"))
+        accused = sorted({acc.get("accusedDealerIndex") for acc in accusations})
+        raise DKGComplaint(
+            f"DKG halted: complaint(s) against dealer(s) {accused}; not publishing on chain. "
+            f"Signed accusations logged above; resolve manually (see DKG_SECURITY_HARDENING_PLAN.md).",
+            accusations)
+
+    for i in idxs:
+        call(i, "publish")
+    _LOG.info("op=dkg phase=publish status=ok election=%s keypers=%d", eid_hex, len(idxs))
     return data_layer.get_finalized_key(election_id) is not None
 
 

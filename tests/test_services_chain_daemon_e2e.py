@@ -188,7 +188,9 @@ def test_full_election_over_chain_daemons(world):
 
     # DKG over HTTP: coordinator bootstraps the committee, sequences the ceremony;
     # keypers POST their signed result to the coordinator relay, which meta-tx's it to chain.
-    api_tokens, _peer = coord.bootstrap_keypers(w.coordinator, w.keyper_urls, relay_token=TOKEN)
+    api_tokens, _peer = coord.bootstrap_keypers(
+        w.coordinator, w.keyper_urls, relay_token=TOKEN,
+        member_addrs={i: w.keyper_signers[i - 1].identity for i in w.keyper_urls})
     assert coord.run_dkg_http(ELECTION_ID, w.keyper_urls, api_tokens, HttpDataLayerClient(w.data_layer_url))
     assert w.admin_dl.get_finalized_key(ELECTION_ID) is not None
 

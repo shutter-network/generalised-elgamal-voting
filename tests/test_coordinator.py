@@ -136,3 +136,23 @@ def test_watcher_ignores_elections_not_needing_dkg(kw):
     outcomes = kw.watcher().scan_once()
     assert outcomes[done.hex()] == "not_ready"  # KeyReady: DKG done, not yet Tallying
     assert outcomes[fresh.hex()] == "finalized"
+
+
+def test_watcher_halts_and_fails_on_dkg_complaint(kw, monkeypatch):
+    """A Feldman-VSS complaint during round2 is terminal: the coordinator halts before
+    publishing, marks the election failed, and does not retry it. (run_dkg_http raising
+    DKGComplaint is covered in test_dkg_security; here we pin AutoDKG's reaction.)"""
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register()
+    watcher = kw.watcher()
+
+    def _complain(*_a, **_k):
+        raise coord.DKGComplaint(
+            "complaint against dealer(s) [2]",
+            [{"electionId": eid.hex(), "accusedDealerIndex": 2, "recipientIndex": 1, "signature": "0xabcd"}])
+    monkeypatch.setattr(coord, "run_dkg_http", _complain)  # real bootstrap, then a complaint
+
+    assert watcher.scan_once()[eid.hex()] == "dkg_complaint"
+    assert kw.dl.get_finalized_key(eid) is None            # halted before publish
+    assert watcher.scan_once()[eid.hex()] == "already_failed"  # terminal, not retried

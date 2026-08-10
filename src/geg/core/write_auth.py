@@ -69,6 +69,64 @@ def recover_digest(digest: bytes, signature: bytes) -> bytes:
     return bytes.fromhex(addr[2:])
 
 
+# --- DKG peer-to-peer authenticity (keyper↔keyper transport, never on chain) -- #
+#
+# Commitments and shares are exchanged directly between keypers during the ceremony;
+# accusations/reveals resolve Feldman-VSS complaints. None of these go on chain (the
+# contract sees only the final dkg-result / decrypt-share / aggregate), so — unlike
+# the Solidity-mirrored digests above — they use a simple length-framed keccak, EIP-191
+# signed and recovered against the accuser/dealer's config member address.
+
+DKG_COMMITMENTS_DST = b"GEG-DKG-COMMITMENTS-v1"
+DKG_SHARE_DST = b"GEG-DKG-SHARE-v1"
+DKG_ACCUSE_DST = b"GEG-DKG-ACCUSE-v1"
+DKG_REVEAL_DST = b"GEG-DKG-REVEAL-v1"
+
+from geg.crypto.params import CURVE_ORDER  # noqa: E402
+
+
+def dkg_commitments_digest(election_id: bytes, dealer_index: int, commitments: list[bytes]) -> bytes:
+    """Digest a dealer signs over the Feldman commitments it broadcasts."""
+    parts = [
+        DKG_COMMITMENTS_DST, bytes(election_id), int(dealer_index).to_bytes(8, "big"),
+        len(commitments).to_bytes(4, "big"), *(bytes(c) for c in commitments),
+    ]
+    return keccak(b"".join(parts))
+
+
+def dkg_share_digest(election_id: bytes, dealer_index: int, recipient_index: int, share: int) -> bytes:
+    """Digest a dealer signs over the secret share it deals to one recipient. The
+    signature is verified against the *unsealed* scalar, independent of transport sealing."""
+    parts = [
+        DKG_SHARE_DST, bytes(election_id), int(dealer_index).to_bytes(8, "big"),
+        int(recipient_index).to_bytes(8, "big"), (int(share) % CURVE_ORDER).to_bytes(32, "big"),
+    ]
+    return keccak(b"".join(parts))
+
+
+def dkg_accusation_digest(election_id: bytes, accused_dealer_index: int, recipient_index: int) -> bytes:
+    """Digest a complaining recipient signs to accuse a dealer of dealing a bad share.
+    Bound to (election, accused dealer, recipient) so it can neither be replayed across
+    elections nor redirected to unlock a different dealer's share. Carries **no** share
+    value — it only *authorizes* a reveal, it does not disclose one."""
+    parts = [
+        DKG_ACCUSE_DST, bytes(election_id), int(accused_dealer_index).to_bytes(8, "big"),
+        int(recipient_index).to_bytes(8, "big"),
+    ]
+    return keccak(b"".join(parts))
+
+
+def dkg_reveal_digest(election_id: bytes, dealer_index: int, recipient_index: int, share: int) -> bytes:
+    """Digest a dealer signs when it reveals (in rebuttal) the share it dealt to a
+    recipient. Distinct DST from the share digest so a reveal signature can never be
+    replayed as a share signature or vice versa."""
+    parts = [
+        DKG_REVEAL_DST, bytes(election_id), int(dealer_index).to_bytes(8, "big"),
+        int(recipient_index).to_bytes(8, "big"), (int(share) % CURVE_ORDER).to_bytes(32, "big"),
+    ]
+    return keccak(b"".join(parts))
+
+
 def sign_dkg_result(private_key: int, election_id: bytes, pk_election: bytes, committee_pks: list[bytes]) -> bytes:
     return sign_digest(private_key, dkg_result_digest(election_id, pk_election, committee_pks))
 

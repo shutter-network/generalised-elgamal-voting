@@ -37,7 +37,7 @@ from geg.envelopes.types import (
     DecryptionShareEnvelope,
     ResultArtifact,
 )
-from geg.ports.data_layer import ImmutabilityError, WriteAuthorizationError
+from geg.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
 
 # Election ids are registry-assigned sequential values; a fresh backend per test
 # means the first (and usually only) registration is id 1.
@@ -309,8 +309,18 @@ class DataLayerConformance:
 
     # -- decryption shares: authz + idempotency ---------------------------- #
 
+    def _finalize_aggregate(self, backend):
+        """Advance past voting_end and reach the t+1 quorum on a canonical aggregate
+        (keyper1 + keyper2 submit an identical artifact) — the precondition for shares."""
+        backend.set_time(2_001)
+        agg = backend.aggregate()
+        backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))
+        backend.dl("keyper2").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper2", agg))
+        assert backend.reader().get_aggregate(ELECTION_ID) == agg
+
     def test_share_submit_and_idempotent_resend(self, backend):
         backend.register()
+        self._finalize_aggregate(backend)  # decryption shares require a canonical aggregate
         share = backend.share(1)
         backend.dl("keyper1").submit_decryption_share(ELECTION_ID, share, backend.share_sig("keyper1", share))
         backend.dl("keyper1").submit_decryption_share(ELECTION_ID, share, backend.share_sig("keyper1", share))
@@ -318,12 +328,14 @@ class DataLayerConformance:
 
     def test_share_non_keyper_rejected(self, backend):
         backend.register()
+        self._finalize_aggregate(backend)  # pass the ordering gates so the authz check is reached
         share = backend.share(1)
         with pytest.raises(WriteAuthorizationError):
             backend.dl("result_publisher").submit_decryption_share(ELECTION_ID, share, backend.share_sig("result_publisher", share))
 
     def test_share_keyper_index_must_match_signer(self, backend):
         backend.register()
+        self._finalize_aggregate(backend)  # pass the ordering gates so the authz check is reached
         share = backend.share(1)  # claims keyper_index 1
         with pytest.raises(WriteAuthorizationError):
             # signed by keyper 2 but the envelope claims keyper_index 1
@@ -335,8 +347,30 @@ class DataLayerConformance:
         backend.register()
         assert backend.reader().get_aggregate(ELECTION_ID) is None
 
+    # -- ordering guards: no tally artifact before voting_end (parity with chain) -- #
+
+    def test_aggregate_before_voting_end_rejected(self, backend):
+        backend.register()  # clock defaults to 0 < voting_end (2000)
+        agg = backend.aggregate()
+        with pytest.raises(VotingWindowError):
+            backend.dl("keyper1").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper1", agg))
+
+    def test_decryption_share_before_voting_end_rejected(self, backend):
+        backend.register()
+        share = backend.share(1)
+        with pytest.raises(VotingWindowError):
+            backend.dl("keyper1").submit_decryption_share(ELECTION_ID, share, backend.share_sig("keyper1", share))
+
+    def test_decryption_share_before_aggregate_rejected(self, backend):
+        backend.register()
+        backend.set_time(2_001)  # past voting_end, but no canonical aggregate published yet
+        share = backend.share(1)
+        with pytest.raises(VotingWindowError):
+            backend.dl("keyper1").submit_decryption_share(ELECTION_ID, share, backend.share_sig("keyper1", share))
+
     def test_aggregate_quorum_authz_and_idempotent(self, backend):
         backend.register()
+        backend.set_time(2_001)  # tally artifacts require voting_end (2000) passed
         agg = backend.aggregate()
 
         # Non-keyper (result_publisher) cannot submit the aggregate — it is a keyper write now.
@@ -356,6 +390,7 @@ class DataLayerConformance:
 
     def test_aggregate_keyper_can_override_until_finalized(self, backend):
         backend.register()
+        backend.set_time(2_001)  # tally artifacts require voting_end (2000) passed
         agg = backend.aggregate()
         other = backend.aggregate(fill=0x50)
         assert agg != other
@@ -373,6 +408,7 @@ class DataLayerConformance:
 
     def test_aggregate_divergent_submissions_do_not_finalize(self, backend):
         backend.register()
+        backend.set_time(2_001)  # tally artifacts require voting_end (2000) passed
         agg = backend.aggregate()
         other = backend.aggregate(fill=0x50)
         # Two keypers disagree → neither artifact has a t+1 quorum.

@@ -342,6 +342,10 @@ def test_share_submit_idempotent_and_authz(env):
     env.register()
     env.finalize_dkg()
     env.warp(2500)  # voting ended
+    # Publish a canonical aggregate (t+1 quorum) — precondition for decryption shares.
+    agg = env.aggregate()
+    env.dl("keyper1").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("keyper1", agg))
+    env.dl("keyper2").submit_aggregate(ELECTION_ID, agg, env.aggregate_sig("keyper2", agg))
     share1 = env.share(1)
     env.dl("keyper1").submit_decryption_share(ELECTION_ID, share1, env.share_sig("keyper1", share1))
     env.dl("keyper1").submit_decryption_share(ELECTION_ID, share1, env.share_sig("keyper1", share1))  # idempotent

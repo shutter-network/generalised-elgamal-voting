@@ -47,7 +47,8 @@ class AutoDKG:
 
     def __init__(self, data_layer: ElectionDataLayer, coordinator, *, clock,
                  poll_interval_s: float = 2.0, backoff_base_s: float = 10.0,
-                 backoff_cap_s: float = 300.0, url_overrides: dict[str, str] | None = None,
+                 backoff_cap_s: float = 300.0, max_tally_attempts: int = 5,
+                 url_overrides: dict[str, str] | None = None,
                  token_store=None, relay_token: str | None = None,
                  logger: logging.Logger | None = None):
         self.dl = data_layer
@@ -56,6 +57,7 @@ class AutoDKG:
         self.poll_interval_s = poll_interval_s
         self.backoff_base_s = backoff_base_s
         self.backoff_cap_s = backoff_cap_s
+        self.max_tally_attempts = max_tally_attempts
         # Address-keyed URL override for backends that don't store keyper URLs
         # — see geg.services.dkg_coordinator.keyper_urls_from. Normally empty.
         self.url_overrides = url_overrides or {}
@@ -68,8 +70,10 @@ class AutoDKG:
         self.relay_token = relay_token
         self.log = logger or logging.getLogger("geg.coordinator")
         self._done: set[str] = set()      # result published / Complete → terminal
-        self._failed: set[str] = set()    # DKGFailed → terminal
+        self._failed: set[str] = set()    # DKGFailed / DKG complaint → terminal
+        self._tally_abandoned: set[str] = set()  # tally stalled past max_tally_attempts → terminal
         self._attempts: dict[str, dict] = {}
+        self._tally_attempts: dict[str, dict] = {}  # eid_hex → {"agg": n, "dec": n}
         self._tokens_by_committee: dict[tuple, dict] = {}
         self._tally_phase: dict[str, str] = {}  # eid_hex → last-logged tally phase (dedupes per-poll spam)
 
@@ -200,10 +204,16 @@ class AutoDKG:
         return "registered_retry"
 
     def _drive_tally(self, election_id: bytes, rec) -> str:
-        """Tallying: trigger keypers to aggregate → gate on the canonical (quorum)
-        aggregate → trigger decrypt → recover + publish result. Idempotent per poll;
-        keypers self-guard on ``votingEnd`` and may override their aggregate until the
-        quorum finalizes, so transient divergence self-heals over successive polls."""
+        """Tallying, in strict order: (past ``votingEnd``, guaranteed by the TALLYING
+        state) trigger aggregate → gate on the canonical (quorum) aggregate → only then
+        trigger decrypt → recover + publish. Idempotent per poll; keypers self-guard on
+        ``votingEnd`` / canonical-aggregate and may override their aggregate until the
+        quorum finalizes, so transient divergence self-heals.
+
+        Each phase is bounded by ``max_tally_attempts`` polls: a tally that never reaches
+        a quorum aggregate, or never collects ``t+1`` decryption shares, is **abandoned**
+        (terminal + alert) rather than retriggered forever. A coordinator restart clears
+        the counters and grants a fresh budget."""
         eid_hex = election_id.hex()
         urls = self._keyper_urls(rec.config)
         if any(not u for u in urls.values()):
@@ -216,23 +226,37 @@ class AutoDKG:
             self.log.error("op=tally status=bootstrap_error election=%s err=%s", eid_hex, err)
             return "error"
         rebootstrap = lambda i: self._rebootstrap_one(urls, member_addrs, i)  # noqa: E731 — 401 safety net
+        att = self._tally_attempts.setdefault(eid_hex, {"agg": 0, "dec": 0})
 
-        # 1. Trigger keypers to aggregate (best-effort; the quorum is the real gate).
-        self._tally_transition(eid_hex, "aggregating")
-        coord.trigger_aggregate_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
-        # 2. Gate on the canonical aggregate — no quorum yet → retry next poll.
+        def _abandon(phase: str, n: int) -> str:
+            self._tally_abandoned.add(eid_hex)
+            self.log.error("op=tally status=abandoned phase=%s election=%s attempts=%d — "
+                           "no progress; manual intervention needed",
+                           phase, eid_hex, n)
+            return "tally_abandoned"
+
+        # 1. Aggregate phase — trigger + gate on the canonical (t+1) quorum aggregate.
+        #    Only ever reached in TALLYING (votingEnd already passed), so aggregation is
+        #    never triggered before voting closes.
         if self.dl.get_aggregate(election_id) is None:
-            return "collecting_aggregate"
-        # 3. Trigger keypers to decrypt (best-effort; keypers self-guard on their preconditions).
-        self._tally_transition(eid_hex, "decrypting")  # quorum aggregate reached
+            self._tally_transition(eid_hex, "aggregating")
+            coord.trigger_aggregate_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
+            if self.dl.get_aggregate(election_id) is None:  # still no quorum this poll
+                att["agg"] += 1
+                return _abandon("aggregate", att["agg"]) if att["agg"] >= self.max_tally_attempts \
+                    else "collecting_aggregate"
+
+        # 2. Decrypt phase — a canonical aggregate exists; trigger decrypt, then finalize.
+        self._tally_transition(eid_hex, "decrypting")
         coord.trigger_decrypt_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
-        # 4. Recover + publish the result (signed by the coordinator = result publisher).
         result = tally.finalize(self.dl, election_id, self.coordinator, clock=self.clock)
         if result is not None:
             self._done.add(eid_hex)
             self.log.info("op=tally status=finalized election=%s", eid_hex)
             return "tallied"
-        return "collecting_shares"
+        att["dec"] += 1
+        return _abandon("decrypt", att["dec"]) if att["dec"] >= self.max_tally_attempts \
+            else "collecting_shares"
 
     def scan_once(self) -> dict[str, str]:
         """One pass over the data layer; returns {election_id_hex: outcome}.
@@ -252,6 +276,9 @@ class AutoDKG:
                 continue
             if eid_hex in self._failed:
                 outcomes[eid_hex] = "already_failed"
+                continue
+            if eid_hex in self._tally_abandoned:
+                outcomes[eid_hex] = "tally_abandoned"
                 continue
             try:
                 pending.append((election_id, self.dl.get_election(election_id)))
@@ -293,25 +320,42 @@ def build_coordinator_app(dl: ElectionDataLayer, *, api_token: str | None):
     from flask import Flask, jsonify, request
 
     from geg.envelopes import codecs
-    from geg.ports.data_layer import ImmutabilityError, WriteAuthorizationError
+    from geg.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
 
+    log = logging.getLogger("geg.coordinator")
     app = Flask(__name__)
+
+    def _reject(status: int, kind: str, e, *, level: int = logging.WARNING):
+        # Log every data-layer rejection of a relayed keyper write at the service
+        # boundary — the data-layer adapter itself is a library and stays quiet, so this
+        # is where a refused aggregate/share/DKG-result write becomes visible.
+        log.log(level, "op=relay status=rejected path=%s http=%d error=%s msg=%s",
+                request.path, status, kind, e)
+        return jsonify(error=kind, message=str(e)), status
 
     @app.errorhandler(KeyError)
     def _not_found(e):
-        return jsonify(error="KeyError", message=str(e)), 404
+        return _reject(404, "KeyError", e)
 
     @app.errorhandler(WriteAuthorizationError)
     def _forbidden(e):
-        return jsonify(error="WriteAuthorizationError", message=str(e)), 403
+        return _reject(403, "WriteAuthorizationError", e)  # non-keyper / bad signature
 
     @app.errorhandler(ImmutabilityError)
     def _conflict(e):
-        return jsonify(error="ImmutabilityError", message=str(e)), 409
+        # Often a benign quorum race (the t+1 aggregate/DKG result finalized just before
+        # this byte-identical write landed) — info, not warning.
+        return _reject(409, "ImmutabilityError", e, level=logging.INFO)
+
+    @app.errorhandler(VotingWindowError)
+    def _unprocessable(e):
+        # Out-of-order tally write (before voting_end, or a share before a canonical
+        # aggregate) — mirrors the data-layer service's 422 mapping.
+        return _reject(422, "VotingWindowError", e)
 
     @app.errorhandler(ValueError)
     def _bad_request(e):
-        return jsonify(error="ValueError", message=str(e)), 400
+        return _reject(400, "ValueError", e)
 
     @app.before_request
     def _auth():

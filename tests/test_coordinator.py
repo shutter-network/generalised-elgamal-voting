@@ -156,3 +156,38 @@ def test_watcher_halts_and_fails_on_dkg_complaint(kw, monkeypatch):
     assert watcher.scan_once()[eid.hex()] == "dkg_complaint"
     assert kw.dl.get_finalized_key(eid) is None            # halted before publish
     assert watcher.scan_once()[eid.hex()] == "already_failed"  # terminal, not retried
+
+
+def test_watcher_abandons_tally_when_aggregate_never_reaches_quorum(kw, monkeypatch):
+    """Tally has no natural deadline, so an under-quorum aggregate is bounded by
+    max_tally_attempts polls, then abandoned (terminal + alert), not retriggered forever."""
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register(voting_start=1000, voting_end=2000)
+    watcher = kw.watcher()
+    assert watcher.scan_once()[eid.hex()] == "finalized"   # DKG done (clock=0)
+    kw.clock.set(2500)                                     # → Tallying
+    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: None)  # aggregate never lands
+
+    outs = [watcher.scan_once()[eid.hex()] for _ in range(watcher.max_tally_attempts)]
+    assert outs[:-1] == ["collecting_aggregate"] * (watcher.max_tally_attempts - 1)
+    assert outs[-1] == "tally_abandoned"                   # 5th attempt → abandoned
+    assert watcher.scan_once()[eid.hex()] == "tally_abandoned"  # terminal, not retried
+    assert kw.dl.get_result(eid) is None
+
+
+def test_watcher_abandons_tally_when_decryption_never_finalizes(kw, monkeypatch):
+    """A canonical aggregate forms but decryption shares never reach t+1 → the decrypt
+    phase is also bounded by max_tally_attempts, then abandoned."""
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register(voting_start=1000, voting_end=2000)
+    watcher = kw.watcher()
+    assert watcher.scan_once()[eid.hex()] == "finalized"
+    kw.clock.set(2500)
+    monkeypatch.setattr(coord, "trigger_decrypt_http", lambda *a, **k: None)  # shares never land
+
+    outs = [watcher.scan_once()[eid.hex()] for _ in range(watcher.max_tally_attempts)]
+    assert outs[-1] == "tally_abandoned"                   # aggregate finalized, decrypt stalled → abandoned
+    assert kw.dl.get_aggregate(eid) is not None            # the aggregate DID reach quorum
+    assert kw.dl.get_result(eid) is None                   # but no result

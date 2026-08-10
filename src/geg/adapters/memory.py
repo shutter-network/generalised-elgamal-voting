@@ -34,6 +34,7 @@ from geg.ports.data_layer import (
     ElectionRecord,
     FinalizedKey,
     ImmutabilityError,
+    VotingWindowError,
     WriteAuthorizationError,
 )
 
@@ -170,6 +171,11 @@ class InMemoryDataLayer(ElectionDataLayer):
 
     def submit_aggregate(self, election_id, aggregate: AggregateArtifact, keyper_sig) -> None:
         st = self._get(election_id)
+        # Ordering guard (matches the chain contract's VotingStillOpen revert): the
+        # aggregate is only defined once voting has closed. Reject premature submits at
+        # the integrity boundary, not just via the keyper's self-guard.
+        if self._clock() < st.config.voting_end:
+            raise VotingWindowError("aggregate submitted before voting_end")
         digest = write_auth.aggregate_digest_of(election_id, aggregate)
         idx = self._keyper_index_by_recovery(st.config, digest, keyper_sig)
         existing = st.aggregate_by_keyper.get(idx)
@@ -206,6 +212,14 @@ class InMemoryDataLayer(ElectionDataLayer):
 
     def submit_decryption_share(self, election_id, share: DecryptionShareEnvelope, keyper_sig) -> None:
         st = self._get(election_id)
+        # Ordering guards (mirroring the chain contract's ElectionDecryption reverts):
+        # a decryption share is accepted strictly after voting_end AND only once a
+        # canonical (t+1) quorum aggregate exists — the share decrypts that aggregate's
+        # ciphertext, so it is meaningless before the aggregate is published.
+        if self._clock() < st.config.voting_end:
+            raise VotingWindowError("decryption share submitted before voting_end")
+        if not self._aggregate_finalized(st):
+            raise VotingWindowError("decryption share submitted before a canonical aggregate exists")
         shares = [e.sigma for e in share.entries]
         proofs = [(int.from_bytes(e.proof[:32], "big"), int.from_bytes(e.proof[32:], "big")) for e in share.entries]
         digest = write_auth.decryption_share_digest(election_id, shares, proofs)

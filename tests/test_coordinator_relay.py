@@ -16,7 +16,7 @@ from geg.adapters.memory import InMemoryDataLayer
 from geg.core.authz import Signer
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 from geg.envelopes import codecs
-from geg.envelopes.types import DecryptionShareEntry, DecryptionShareEnvelope
+from geg.envelopes.types import AggregateArtifact, Ciphertext, DecryptionShareEntry, DecryptionShareEnvelope
 from geg.services.coordinator import dkg_coordinator as coord
 from geg.services.coordinator import CoordinatorClient, build_coordinator_app
 from geg.services.keyper import build_keyper_app
@@ -28,7 +28,8 @@ N, T, NC = 3, 1, 3
 
 
 def _world():
-    dl = InMemoryDataLayer(clock=ManualClock(0))
+    clock = ManualClock(0)
+    dl = InMemoryDataLayer(clock=clock)
     admin = Signer.generate()
     keypers = [Signer.generate() for _ in range(N)]
     cfg = ElectionConfig(
@@ -40,7 +41,7 @@ def _world():
         gateway_keys=(Signer.generate().identity,), admin_key=admin.identity, protocol_version="v1",
     )
     eid = dl.register_election(cfg, admin.sign_register(cfg))
-    return dl, eid, keypers
+    return dl, eid, keypers, clock
 
 
 def _dkg_body(eid, keyper, pk, committee):
@@ -71,7 +72,7 @@ def _client(dl, token=TOKEN):
 
 
 def test_relay_dkg_result_reaches_quorum():
-    dl, eid, keypers = _world()
+    dl, eid, keypers, _clock = _world()
     c = _client(dl)
     hdr = {"Authorization": f"Bearer {TOKEN}"}
     pk = bytes([0xA0]) * 96
@@ -83,8 +84,22 @@ def test_relay_dkg_result_reaches_quorum():
     assert fk is not None and fk.pk_election == pk                              # quorum → canonical
 
 
+def _publish_aggregate(dl, eid, keypers):
+    """Publish a canonical (t+1) aggregate so decryption shares are accepted."""
+    agg = AggregateArtifact(
+        election_id=eid,
+        aggregates=tuple(Ciphertext(c1=bytes([7]) * 96, c2=bytes([8]) * 96) for _ in range(NC)),
+        admitted=(), exclusions=(), total_admitted_weight=0,
+    )
+    for k in keypers[:T + 1]:  # t+1 keypers → canonical
+        dl.submit_aggregate(eid, agg, write_auth.sign_aggregate(k.private_key, eid, agg))
+    assert dl.get_aggregate(eid) is not None
+
+
 def test_relay_decryption_share():
-    dl, eid, keypers = _world()
+    dl, eid, keypers, clock = _world()
+    clock.set(2_001)  # decryption shares require voting_end (2000) passed
+    _publish_aggregate(dl, eid, keypers)  # …and a canonical aggregate to exist
     c = _client(dl)
     hdr = {"Authorization": f"Bearer {TOKEN}"}
     assert c.post("/decryption-share", json=_share_body(eid, keypers[0], _share(eid, 1)), headers=hdr).status_code == 204
@@ -92,7 +107,7 @@ def test_relay_decryption_share():
 
 
 def test_relay_requires_token():
-    dl, eid, keypers = _world()
+    dl, eid, keypers, _clock = _world()
     c = _client(dl)
     pk = bytes([0xA0]) * 96
     committee = [bytes([0xA1 + i]) * 96 for i in range(N)]
@@ -102,7 +117,7 @@ def test_relay_requires_token():
 
 
 def test_relay_failclosed_without_configured_token():
-    dl, eid, keypers = _world()
+    dl, eid, keypers, _clock = _world()
     c = _client(dl, token=None)
     pk = bytes([0xA0]) * 96
     committee = [bytes([0xA1 + i]) * 96 for i in range(N)]
@@ -112,7 +127,7 @@ def test_relay_failclosed_without_configured_token():
 
 
 def test_relay_non_keyper_rejected():
-    dl, eid, _keypers = _world()
+    dl, eid, _keypers, _clock = _world()
     c = _client(dl)
     stranger = Signer.generate()  # not a committee member
     pk = bytes([0xA0]) * 96
@@ -123,7 +138,7 @@ def test_relay_non_keyper_rejected():
 
 
 def test_health_open():
-    dl, _eid, _keypers = _world()
+    dl, _eid, _keypers, _clock = _world()
     assert _client(dl).get("/health").status_code == 200
 
 
@@ -206,3 +221,16 @@ def test_relay_token_persists_across_restart(tmp_path):
     sub2 = CoordinatorClient("http://unused", "")
     build_keyper_app(keyper, dl, coordinator.identity, clock=lambda: 0, state_dir=state, submitter=sub2)
     assert sub2.token == TOKEN
+
+
+def test_relay_rejects_premature_decryption_share_with_log(caplog):
+    """A decryption share relayed before voting_end is rejected 422 (VotingWindowError)
+    and logged at the relay boundary."""
+    dl, eid, keypers, _clock = _world()  # clock=0 < voting_end=2000
+    c = _client(dl)
+    hdr = {"Authorization": f"Bearer {TOKEN}"}
+    with caplog.at_level("WARNING", logger="geg.coordinator"):
+        r = c.post("/decryption-share", json=_share_body(eid, keypers[0], _share(eid, 1)), headers=hdr)
+    assert r.status_code == 422
+    assert any("op=relay status=rejected" in m.getMessage() and "VotingWindowError" in m.getMessage()
+               for m in caplog.records)

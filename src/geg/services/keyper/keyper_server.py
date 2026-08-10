@@ -21,7 +21,7 @@ accused dealer's ``/dkg/reveal_share`` discloses a share **only** on such an acc
 from that share's own recipient (so a caller can never harvest others' shares), and the
 coordinator halts the ceremony before publishing if any keyper complains.
 
-The server never trusts a decryption trigger — `/decrypt` re-checks the
+The server never trusts a decryption trigger — `/publish_decr_share` re-checks the
 preconditions against the data layer (via :class:`KeyperService`). There is deliberately
 no oracle that partial-decrypts a caller-supplied ciphertext.
 """
@@ -274,6 +274,8 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         except (KeyError, ValueError, TypeError):
             ok = False
         if not ok:
+            log.warning("op=dkg phase=receive_commitments status=rejected election=%s dealer=%s reason=bad_signature",
+                        eid_hex, dealer)
             abort(401, "bad dealer commitments signature")
         with lock:
             box = _inbox(eid_hex)["commitments"]
@@ -302,10 +304,14 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             member = _members_addr(config, recipient)
             enc_hex, enc_sig = peer.get("enc_pubkey"), peer.get("enc_pubkey_sig")
             if member is None or not enc_hex or not enc_sig:
+                log.warning("op=dkg phase=distribute_shares status=error election=%s recipient=%s "
+                            "reason=no_verified_enc_key (re-bootstrap needed)", eid_hex, recipient)
                 abort(500, f"no verified encryption key for keyper {recipient}; re-bootstrap")
             try:
                 enc_pub = boot.verify_encryption_pubkey(member, enc_hex, enc_sig)
             except Exception as e:  # noqa: BLE001
+                log.warning("op=dkg phase=distribute_shares status=error election=%s recipient=%s "
+                            "reason=enc_key_verify_failed err=%s", eid_hex, recipient, e)
                 abort(500, f"peer {recipient} encryption key failed verification: {e}")
             share_val = st.shares_for_others[recipient]
             sealed = boot.seal_share(share_val, enc_pub)
@@ -335,11 +341,17 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             recipient = int(body["recipientIndex"])
             sig_hex = str(body["signature"])
             if "sealedShare" not in body:
+                log.warning("op=dkg phase=receive_share status=rejected election=%s reason=plaintext_share_refused",
+                            eid_hex)
                 abort(400, "sealedShare required")  # no plaintext downgrade on the HTTP path
             share = boot.unseal_share(body["sealedShare"], x25519)
         except (KeyError, ValueError, TypeError) as e:
+            log.warning("op=dkg phase=receive_share status=rejected election=%s reason=bad_or_unsealable err=%s",
+                        eid_hex, e)
             abort(400, f"bad share: {e}")
         if recipient != _my_index(config):
+            log.warning("op=dkg phase=receive_share status=rejected election=%s dealer=%s recipient=%s "
+                        "reason=recipient_mismatch", eid_hex, dealer, recipient)
             abort(400, "share recipient mismatch")
         # Verify the dealer's signature over the recovered scalar against its member address.
         dealer_addr = _members_addr(config, dealer)
@@ -350,6 +362,8 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         except (ValueError, TypeError):
             ok = False
         if not ok:
+            log.warning("op=dkg phase=receive_share status=rejected election=%s dealer=%s reason=bad_signature",
+                        eid_hex, dealer)
             abort(401, "bad dealer share signature")
         with lock:
             box = _inbox(eid_hex)
@@ -418,6 +432,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         body = request.get_json(silent=True) or {}
         acc = body.get("accusation")
         if not isinstance(acc, dict):
+            log.info("op=dkg phase=reveal_share status=rejected reason=missing_accusation")
             return jsonify(error="missing accusation"), 400
         try:
             acc_eid_hex = str(acc["electionId"])
@@ -425,21 +440,29 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             recipient = int(acc["recipientIndex"])
             acc_sig = bytes.fromhex(str(acc["signature"]).removeprefix("0x"))
         except (KeyError, ValueError, TypeError):
+            log.info("op=dkg phase=reveal_share status=rejected reason=bad_accusation")
             return jsonify(error="bad accusation"), 400
+
+        def _deny(reason: str):
+            # Uniform 401 to the caller (no oracle); the specific reason is server-side only,
+            # so an operator can see *why* a reveal was refused without leaking it to a prober.
+            log.warning("op=dkg phase=reveal_share status=denied election=%s accused_dealer=%s recipient=%s reason=%s",
+                        acc_eid_hex, accused_dealer, recipient, reason)
+            return jsonify(error="unauthorized"), 401
 
         st = dkg_states.get(acc_eid_hex)
         if st is None:  # not mid-ceremony for this election
-            return jsonify(error="unauthorized"), 401
+            return _deny("not_in_ceremony")
         try:
             eid = bytes.fromhex(acc_eid_hex)
             config = _config(eid)
             my_idx = _my_index(config)  # aborts if we're not in the committee
         except Exception:  # noqa: BLE001 — uniform 401, never leak which check failed
-            return jsonify(error="unauthorized"), 401
+            return _deny("not_committee_member")
         # Must name THIS dealer (so one accusation unlocks exactly one (dealer, recipient)
         # share), and we must actually have dealt a share to that recipient.
         if accused_dealer != my_idx or recipient not in st.shares_for_others:
-            return jsonify(error="unauthorized"), 401
+            return _deny("wrong_dealer_or_recipient")
         # The accusation must be signed by the recipient itself → it can only ever unlock
         # its own share, which it is already entitled to.
         expected = _members_addr(config, recipient)
@@ -449,11 +472,14 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         except Exception:  # noqa: BLE001
             recovered = None
         if expected is None or recovered != expected:
-            return jsonify(error="unauthorized"), 401
+            return _deny("bad_accusation_signer")
 
         share_val = st.shares_for_others[recipient]
         reveal_sig = write_auth.sign_digest(
             signer.private_key, write_auth.dkg_reveal_digest(eid, my_idx, recipient, share_val))
+        # A genuine disclosure — significant security event; record the who/what.
+        log.warning("op=dkg phase=reveal_share status=revealed election=%s dealer=%s recipient=%s "
+                    "(recipient-accusation-gated)", acc_eid_hex, my_idx, recipient)
         return jsonify(
             electionId=acc_eid_hex, dealerIndex=my_idx, recipientIndex=recipient,
             share=hex(share_val), signature="0x" + reveal_sig.hex(),
@@ -485,6 +511,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         try:
             produced = ks.produce_aggregate(eid)
         except Exception as err:  # noqa: BLE001 — refusal / precondition failure
+            log.debug("op=tally phase=aggregate status=refused election=%s reason=%s", eid.hex(), err)
             return jsonify(ok=False, reason=str(err)), 409
         if produced is not None:  # None = already submitted (idempotent)
             artifact, sig = produced
@@ -500,12 +527,13 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
 
     # -- partial decryption -- #
 
-    @app.post("/decrypt")
-    def decrypt():
+    @app.post("/publish_decr_share")
+    def publish_decr_share():
         body = request.get_json(force=True)
         eid = _eid(body); eid_hex = eid.hex()
         entry = completed.get(eid_hex)
         if entry is None:
+            log.warning("op=tally phase=decrypt status=refused election=%s reason=no_persisted_dkg_share", eid_hex)
             abort(409, "no persisted DKG share for this election")
         config = _config(eid)
         ks = KeyperService(_my_index(config), signer, data_layer, clock=clock)  # data_layer = reads
@@ -514,6 +542,7 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         try:
             produced = ks.produce_decryption_share(eid)
         except Exception as err:  # noqa: BLE001 — refusal / precondition failure
+            log.debug("op=tally phase=decrypt status=refused election=%s reason=%s", eid_hex, err)
             return jsonify(ok=False, reason=str(err)), 409
         if produced is not None:  # None = already submitted (idempotent)
             share, sig = produced

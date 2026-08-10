@@ -39,6 +39,7 @@ from geg.ports.data_layer import (
     ElectionRecord,
     FinalizedKey,
     ImmutabilityError,
+    VotingWindowError,
     WriteAuthorizationError,
 )
 
@@ -225,6 +226,9 @@ class PostgresStore(ElectionDataLayer):
     def submit_aggregate(self, election_id, aggregate: AggregateArtifact, keyper_sig) -> None:
         with self._conn() as conn:
             config = self._config(conn, election_id)
+            # reject an aggregate submitted before voting has closed
+            if self._clock() < config.voting_end:
+                raise VotingWindowError("aggregate submitted before voting_end")
             digest = write_auth.aggregate_digest_of(election_id, aggregate)
             idx = self._keyper_index_by_recovery(config, digest, keyper_sig)
             # Lock the election row to serialize concurrent submissions (the finalize
@@ -280,6 +284,10 @@ class PostgresStore(ElectionDataLayer):
     def submit_decryption_share(self, election_id, share: DecryptionShareEnvelope, keyper_sig) -> None:
         with self._conn() as conn:
             config = self._config(conn, election_id)
+            if self._clock() < config.voting_end:
+                raise VotingWindowError("decryption share submitted before voting_end")
+            if not self._aggregate_finalized(conn, config):  # in-tx (avoid a nested connection)
+                raise VotingWindowError("decryption share submitted before a canonical aggregate exists")
             shares = [e.sigma for e in share.entries]
             proofs = [(int.from_bytes(e.proof[:32], "big"), int.from_bytes(e.proof[32:], "big")) for e in share.entries]
             digest = write_auth.decryption_share_digest(election_id, shares, proofs)

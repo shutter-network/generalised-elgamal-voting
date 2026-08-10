@@ -287,6 +287,16 @@ transcript — the election then derives to `DKGFailed`, with the signed accusat
 coordinator log for manual resolution (`op=dkg_complaint`). The accused dealer's
 `/dkg/reveal_share` will disclose a share only to its own recipient (accusation-gated).
 
+**Tally ordering & bounds.** The tally runs in strict order and only after `voting_end`, enforced at
+every layer: the coordinator drives it only in the `Tallying` state, keypers self-guard, and the data
+layer **and** chain contract **reject** an aggregate submitted before `voting_end`, and a decryption
+share submitted before `voting_end` **or before a canonical aggregate exists**. The sequence is
+aggregate → gate on the `t+1` canonical (byte-identical) quorum → **then** decrypt → publish. Each
+phase is bounded by 5 coordinator polls; a tally that never reaches quorum (too many keypers down) is
+**abandoned** with an `op=tally status=abandoned` alert rather than retried forever (a coordinator
+restart grants a fresh budget). Integrity is independent of ordering — a bogus aggregate can't reach
+the quorum, and decryption shares are DLEQ-verified against the canonical aggregate.
+
 **Admin auth.** Each register/cancel is authorized by the admin wallet's signature (no token);
 the same EOA is the wallet, `config.admin_key`, and `ADMIN_SIGNING_KEY`. "Changing keypers" is
 per new election — each config names its own committee; URLs travel in the config (on chain the

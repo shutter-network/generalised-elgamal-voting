@@ -43,7 +43,7 @@ contract ElectionTallyTest is Test {
         bytes[] memory shares = _shares(40);
         VotingTypes.DLEQProof[] memory proofs = _proofs(11);
 
-        vm.warp(votingEnd);
+        _publishAggregate();  // decryption shares require a canonical aggregate
         vm.expectEmit(true, false, false, true, address(election));
         emit IElection.DecryptionSharePosted(0);
 
@@ -156,7 +156,7 @@ contract ElectionTallyTest is Test {
     }
 
     function test_getDecryptionSharesReturnsRanges() external {
-        vm.warp(votingEnd);
+        _publishAggregate();  // decryption shares require a canonical aggregate
 
         vm.prank(keyper1);
         election.submitDecryptionShare(_shares(40), _proofs(11));
@@ -182,14 +182,21 @@ contract ElectionTallyTest is Test {
         vm.expectRevert(abi.encodeWithSelector(ElectionBase.VotingStillOpen.selector, votingEnd - 1));
         election.submitDecryptionShare(_shares(40), _proofs(11));
 
-        vm.warp(votingEnd);
+        _publishAggregate();  // pass the aggregate-published gate so the authz check is reached
         vm.prank(outsider);
         vm.expectRevert(abi.encodeWithSelector(ElectionBase.UnauthorizedKeyper.selector, outsider));
         election.submitDecryptionShare(_shares(40), _proofs(11));
     }
 
+    function test_submitDecryptionShareRejectsBeforeAggregatePublished() external {
+        vm.warp(votingEnd);  // past votingEnd, but no canonical aggregate exists yet
+        vm.prank(keyper1);
+        vm.expectRevert(ElectionBase.AggregateNotPublished.selector);
+        election.submitDecryptionShare(_shares(40), _proofs(11));
+    }
+
     function test_submitDecryptionShareRejectsDuplicateAndBadPayload() external {
-        vm.warp(votingEnd);
+        _publishAggregate();  // decryption shares require a canonical aggregate
 
         vm.startPrank(keyper1);
         election.submitDecryptionShare(_shares(40), _proofs(11));
@@ -218,7 +225,7 @@ contract ElectionTallyTest is Test {
         uint256[] memory totals = _totals();
         uint8[] memory keyperIndices = _keyperIndices();
 
-        vm.warp(votingEnd);
+        _publishAggregate();  // so the later keyper1 decryption-share submit is accepted
         vm.expectEmit(false, false, false, true, address(election));
         emit IElection.ResultPublished(totals, keyperIndices);
 
@@ -312,6 +319,16 @@ contract ElectionTallyTest is Test {
         vm.warp(votingStart);
         vm.prank(voter);
         election.submitVote{value: selfSubmitFee}(_ballot(_pseudonym("pseudo-1"), 10));
+    }
+
+    /// Warp to votingEnd and reach the t+1 quorum on a canonical aggregate (keyper1 +
+    /// keyper2 submit a byte-identical artifact) — the precondition for decryption shares.
+    function _publishAggregate() private {
+        vm.warp(votingEnd);
+        vm.prank(keyper1);
+        election.submitAggregate(_aggregate(70));
+        vm.prank(keyper2);
+        election.submitAggregate(_aggregate(70));
     }
 
     function _totals() private pure returns (uint256[] memory totals) {

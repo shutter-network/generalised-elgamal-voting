@@ -7,7 +7,7 @@ provides the *downstream* step — :func:`finalize`: once the canonical aggregat
 ``t+1`` verified decryption shares exist, recover the totals (Lagrange + BSGS) and
 **publish the result** (the one artifact signed by the ``result_publisher_key``).
 The coordinator (:class:`geg.services.coordinator.AutoDKG`) drives the tally over
-HTTP — trigger ``/aggregate`` → gate on the quorum aggregate → trigger ``/decrypt`` →
+HTTP — trigger ``/aggregate`` → gate on the quorum aggregate → trigger ``/publish_decr_share`` →
 call :func:`finalize` — and is itself the result publisher.
 
 :func:`run_tally`, :func:`trigger_aggregate`, :func:`trigger_keypers` are the

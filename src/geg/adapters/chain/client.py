@@ -60,6 +60,7 @@ _VOTING_WINDOW_SELECTORS = {
     _selector("VotingNotStarted(uint256)"),  # ballot before voting_start
     _selector("VotingClosed(uint256)"),      # ballot after voting_end
     _selector("VotingStillOpen(uint256)"),   # tally write (aggregate/share/result) before voting_end
+    _selector("AggregateNotPublished()"),    # decryption share before a canonical aggregate exists
 }
 
 
@@ -107,7 +108,7 @@ class BlockchainDataLayer(ElectionDataLayer):
     def _map_revert(exc: Exception) -> Exception:
         msg = str(exc)
         # Decoded error names (when the ABI carried the error def).
-        if any(s in msg for s in ("VotingNotStarted", "VotingClosed", "VotingStillOpen")):
+        if any(s in msg for s in ("VotingNotStarted", "VotingClosed", "VotingStillOpen", "AggregateNotPublished")):
             return VotingWindowError(msg)
         if any(s in msg for s in ("AlreadyCancelled", "VotingAlreadyStarted", "AlreadyVoted", "AlreadyFinalized", "ElectionIdTaken")):
             return ImmutabilityError(msg)

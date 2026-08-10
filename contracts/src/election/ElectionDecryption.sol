@@ -34,6 +34,7 @@ abstract contract ElectionDecryption is ElectionBase {
     function _registerDecryptionShare(address voter, bytes[] calldata shares, VotingTypes.DLEQProof[] calldata proofs)
         private
     {
+        if (!aggregatePublished) revert AggregateNotPublished();
         if (!keyperSet.isMember(voter)) revert UnauthorizedKeyper(voter);
         if (hasSubmittedDecryptionShare[voter]) revert AlreadyVoted(voter);
         if (shares.length != numCandidates || proofs.length != shares.length) {

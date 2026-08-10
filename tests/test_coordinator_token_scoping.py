@@ -63,7 +63,7 @@ class Keypers:
 
     def accepts(self, url, token):
         """True iff the keyper accepts this bearer (auth passes → not 401)."""
-        r = requests.post(url.rstrip("/") + "/decrypt", json={"electionId": ANY_EID.hex()},
+        r = requests.post(url.rstrip("/") + "/publish_decr_share", json={"electionId": ANY_EID.hex()},
                           headers={"Authorization": f"Bearer {token}"})
         return r.status_code != 401
 

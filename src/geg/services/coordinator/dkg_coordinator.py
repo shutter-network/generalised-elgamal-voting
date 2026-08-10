@@ -313,11 +313,11 @@ def run_dkg_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: di
 
 def trigger_decrypt_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
                          *, rebootstrap=None, timeout: float = 30.0) -> None:
-    """Trigger each keyper's /decrypt (keypers self-guard on their preconditions). A ``401`` is
+    """Trigger each keyper's /publish_decr_share (keypers self-guard on their preconditions). A ``401`` is
     recovered via ``rebootstrap`` (Option D safety net); other failures are best-effort
     (the share-count quorum is the real gate and the next poll retries)."""
     for i, url in keyper_urls.items():
-        _post_keyper(url, "/decrypt", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout, op="decrypt")
+        _post_keyper(url, "/publish_decr_share", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout, op="decrypt")
 
 
 def trigger_aggregate_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],

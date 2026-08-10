@@ -72,6 +72,14 @@ contract ElectionMetaTxTest is Test {
         vm.stopPrank();
 
         vm.warp(votingEnd);
+        // Publish a canonical aggregate (signed, t+1 quorum) — the precondition for shares.
+        VotingTypes.EncryptedTally memory agg;
+        agg.aggregates = _ciphertexts(70);
+        vm.startPrank(relayer);
+        election.submitAggregateSigned(agg, _signAggregate(K1_PK, agg));
+        election.submitAggregateSigned(agg, _signAggregate(K2_PK, agg));
+        vm.stopPrank();
+
         bytes[] memory shares = _shares(40);
         VotingTypes.DLEQProof[] memory proofs = _proofs(11);
         bytes memory sig = _signShare(K1_PK, shares, proofs);

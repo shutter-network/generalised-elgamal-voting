@@ -387,3 +387,21 @@ def test_run_dkg_http_halts_before_publish_on_complaint(monkeypatch):
         coord.run_dkg_http(_EID, urls, api, _DL())
     assert 1 in ei.value.accusations[0].values() or ei.value.accusations  # carries the evidence
     assert "publish" not in seen  # halted before publishing
+
+
+def test_reveal_share_logs_disclosure(cluster, caplog):
+    """A genuine share reveal is a security-significant disclosure — it must be logged."""
+    assert cluster.call(1, "round1").status_code == 200
+    with caplog.at_level("WARNING", logger="geg.keyper"):
+        assert cluster.reveal(1, cluster.accusation(accused_dealer=1, recipient=2)).status_code == 200
+    assert any("phase=reveal_share status=revealed" in r.getMessage() for r in caplog.records)
+
+
+def test_reveal_share_logs_denial_reason(cluster, caplog):
+    """A denied reveal logs the specific reason server-side (client still gets a uniform 401)."""
+    assert cluster.call(1, "round1").status_code == 200
+    with caplog.at_level("WARNING", logger="geg.keyper"):
+        # Valid accusation against dealer 2, presented to dealer 1 → denied (wrong dealer).
+        assert cluster.reveal(1, cluster.accusation(accused_dealer=2, recipient=3)).status_code == 401
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("phase=reveal_share status=denied" in m and "wrong_dealer_or_recipient" in m for m in msgs)

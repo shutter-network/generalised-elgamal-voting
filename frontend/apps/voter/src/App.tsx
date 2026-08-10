@@ -22,7 +22,7 @@ export function App() {
       </header>
 
       <main className="page">
-        <Dashboard detailAction={(id) => <VoteButton electionId={id} />} />
+        <Dashboard audience="voter" detailAction={(id) => <VoteButton electionId={id} />} />
       </main>
     </div>
   );

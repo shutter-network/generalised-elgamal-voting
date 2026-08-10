@@ -51,7 +51,7 @@ class KeyperWorld:
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url=self.urls[i + 1])
                           for i in range(N)),
-            eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
+            eligibility_key=b"\xe1" * 48, result_publisher_key=self.coordinator.identity,  # coordinator = result publisher
             gateway_keys=(Signer.generate().identity,), admin_key=self.admin.identity, protocol_version="v1",
         )
         return self.dl.register_election(config, self.admin.sign_register(config))
@@ -171,9 +171,35 @@ def test_watcher_abandons_tally_when_aggregate_never_reaches_quorum(kw, monkeypa
 
     outs = [watcher.scan_once()[eid.hex()] for _ in range(watcher.max_tally_attempts)]
     assert outs[:-1] == ["collecting_aggregate"] * (watcher.max_tally_attempts - 1)
-    assert outs[-1] == "tally_abandoned"                   # 5th attempt → abandoned
-    assert watcher.scan_once()[eid.hex()] == "tally_abandoned"  # terminal, not retried
+    assert outs[-1] == "tally_abandoned"                   # 5th attempt → abandoned (flag set)
+    assert kw.dl.get_election(eid).tally_stalled is True    # persisted for the dashboard
+    assert watcher.scan_once()[eid.hex()] == "tally_stalled"  # now skipped (not re-driven)
     assert kw.dl.get_result(eid) is None
+
+
+def test_stall_survives_restart_and_resumes_only_on_admin_clear(kw, monkeypatch):
+    """The persisted flag is authoritative: a coordinator restart does NOT resurrect a
+    stalled tally (it skips). Only the admin's clear (the retry) resumes it — with a fresh
+    attempt budget."""
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register(voting_start=1000, voting_end=2000)
+    w1 = kw.watcher()
+    assert w1.scan_once()[eid.hex()] == "finalized"
+    kw.clock.set(2500)
+    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: None)
+    for _ in range(w1.max_tally_attempts):
+        w1.scan_once()
+    assert kw.dl.get_election(eid).tally_stalled is True
+
+    # Restart: a fresh coordinator skips the stalled election (does NOT re-drive).
+    w2 = kw.watcher()
+    assert w2.scan_once()[eid.hex()] == "tally_stalled"
+    assert kw.dl.get_election(eid).tally_stalled is True    # still stalled after restart
+
+    # The admin clears it (the retry) → coordinator resumes with a fresh budget.
+    kw.dl.set_tally_stalled(eid, False, kw.admin.sign("tally_resume", eid))
+    assert w2.scan_once()[eid.hex()] == "collecting_aggregate"  # resumed, retrying
 
 
 def test_watcher_abandons_tally_when_decryption_never_finalizes(kw, monkeypatch):
@@ -191,3 +217,4 @@ def test_watcher_abandons_tally_when_decryption_never_finalizes(kw, monkeypatch)
     assert outs[-1] == "tally_abandoned"                   # aggregate finalized, decrypt stalled → abandoned
     assert kw.dl.get_aggregate(eid) is not None            # the aggregate DID reach quorum
     assert kw.dl.get_result(eid) is None                   # but no result
+    assert kw.dl.get_election(eid).tally_stalled is True   # persisted

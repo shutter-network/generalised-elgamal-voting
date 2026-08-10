@@ -303,6 +303,38 @@ contract ElectionTallyTest is Test {
         assertEq(result.keyperIndices.length, 0);
     }
 
+    function test_tallyStalledMarkedByPublisherClearedByAdmin() external {
+        _publishAggregate();  // warps to votingEnd
+        bytes32 pubRole = election.RESULT_PUBLISHER_ROLE();    // read before pranks (external calls)
+        bytes32 adminRole = election.DEFAULT_ADMIN_ROLE();
+        assertFalse(election.tallyStalled());
+
+        // Only the result publisher can MARK (set true).
+        vm.prank(outsider);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, outsider, pubRole));
+        election.markTallyStalled();
+        vm.prank(resultPublisher);
+        election.markTallyStalled();
+        assertTrue(election.tallyStalled());
+
+        // The publisher CANNOT clear (admin-only, one-directional).
+        vm.prank(resultPublisher);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, resultPublisher, adminRole));
+        election.clearTallyStalled();
+
+        // The election admin clears it (the retry).
+        vm.prank(owner);
+        election.clearTallyStalled();
+        assertFalse(election.tallyStalled());
+    }
+
+    function test_markTallyStalledRejectsBeforeVotingEnd() external {
+        vm.warp(votingEnd - 1);
+        vm.prank(resultPublisher);
+        vm.expectRevert(abi.encodeWithSelector(ElectionBase.VotingStillOpen.selector, votingEnd - 1));
+        election.markTallyStalled();
+    }
+
     function _finalizeDkg() private {
         bytes memory pkElection = _g2Point(1);
         bytes[] memory committeePKs = _committeePKs(20);

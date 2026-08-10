@@ -39,6 +39,7 @@ export function ElectionPicker({
               cancelled: rec.cancelled,
               keyFinalized: rec.finalizedKey != null,
               resultPublished: result.result != null,
+              tallyStalled: rec.tallyStalled,
             }, now),
           };
         }),

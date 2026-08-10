@@ -48,6 +48,8 @@ export interface ElectionRecord {
   electionId: number;
   config: ElectionConfig;
   cancelled: boolean;
+  /** Advisory, recoverable: the coordinator abandoned the tally (overlays `Tallying`). */
+  tallyStalled?: boolean;
   finalizedKey: FinalizedKey | null;
 }
 

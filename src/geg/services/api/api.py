@@ -187,6 +187,7 @@ def build_api_app(
             "electionId": _eid_num(eid_b),
             "config": codecs.enc_config(rec.config),
             "cancelled": rec.cancelled,
+            "tallyStalled": rec.tally_stalled,
             "finalizedKey": _finalized_key_json(rec.finalized_key),
         })
 

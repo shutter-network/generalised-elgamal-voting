@@ -67,6 +67,10 @@ class ElectionRecord:
     config: ElectionConfig
     cancelled: bool
     finalized_key: FinalizedKey | None
+    # Advisory, recoverable: the coordinator abandoned the tally after exhausting its
+    # attempts (too few keypers to reach the quorum). Overlays `Tallying` in state
+    # derivation; a published result supersedes it. Cleared when the coordinator resumes.
+    tally_stalled: bool = False
 
 
 @dataclass(frozen=True)
@@ -221,6 +225,20 @@ class ElectionDataLayer(ABC):
     @abstractmethod
     def get_result(self, election_id: bytes) -> ResultArtifact | None:
         """Return the published result, or ``None``. Public read."""
+
+    @abstractmethod
+    def set_tally_stalled(self, election_id: bytes, stalled: bool, sig: bytes) -> None:
+        """Set/clear the advisory *tally stalled* flag (surfaced in ``get_election`` and the
+        derived state). **Direction-split, one-directional per party:**
+
+        - ``stalled=True`` (**mark**) — authorized by ``result_publisher_key`` (the coordinator),
+          op ``"tally_stall"``; only after ``voting_end`` and only if no result exists.
+        - ``stalled=False`` (**clear / retry**) — authorized by ``admin_key`` (the election
+          admin), op ``"tally_resume"``.
+
+        So the coordinator is the sole party that can stall, and the admin is the sole party
+        that can clear (the retry). Recoverable: a published result supersedes it (→ Complete),
+        and a coordinator restart does **not** clear it (the flag is authoritative)."""
 
     # --- capability --------------------------------------------------------- #
 

@@ -1028,6 +1028,24 @@
   background: #fef3c7;
   border: 1px solid #fef3c7;
 }
+.vd .stageBadge--stalled {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.08);
+  border: 1px solid rgba(185, 28, 28, 0.28);
+}
+.vd .stageStalledNotice {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(185, 28, 28, 0.06);
+  border: 1px solid rgba(185, 28, 28, 0.22);
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.vd .stageStalledNotice strong {
+  font-weight: 700;
+}
 .vd .stageBadge--sm {
   font-size: 10px;
   padding: 2px 7px;

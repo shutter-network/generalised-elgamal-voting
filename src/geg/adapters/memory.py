@@ -48,6 +48,7 @@ class _Stored:
     aggregate_by_keyper: dict[int, AggregateArtifact] = field(default_factory=dict)
     shares_by_keyper: dict[int, DecryptionShareEnvelope] = field(default_factory=dict)
     result: ResultArtifact | None = None
+    tally_stalled: bool = False  # advisory (coordinator abandoned the tally); recoverable
 
 
 class InMemoryDataLayer(ElectionDataLayer):
@@ -97,7 +98,8 @@ class InMemoryDataLayer(ElectionDataLayer):
     def get_election(self, election_id: bytes) -> ElectionRecord:
         st = self._get(election_id)
         return ElectionRecord(
-            config=st.config, cancelled=st.cancelled, finalized_key=self.get_finalized_key(election_id)
+            config=st.config, cancelled=st.cancelled, tally_stalled=st.tally_stalled,
+            finalized_key=self.get_finalized_key(election_id)
         )
 
     def list_elections(self, filter: ElectionFilter | None = None) -> list[bytes]:
@@ -253,6 +255,22 @@ class InMemoryDataLayer(ElectionDataLayer):
 
     def get_result(self, election_id) -> ResultArtifact | None:
         return self._get(election_id).result
+
+    def set_tally_stalled(self, election_id, stalled: bool, sig) -> None:
+        st = self._get(election_id)
+        if stalled:
+            # MARK — result publisher (coordinator) only; post-voting_end, no result yet.
+            if self._clock() < st.config.voting_end:
+                raise VotingWindowError("cannot mark stalled: voting has not ended")
+            if st.result is not None:
+                raise ImmutabilityError("result already published; tally cannot be marked stalled")
+            if not authz.verify_request(st.config.result_publisher_key, sig, "tally_stall", election_id):
+                raise WriteAuthorizationError("mark tally stalled: bad result-publisher signature")
+        else:
+            # CLEAR (retry) — election admin only.
+            if not authz.verify_request(st.config.admin_key, sig, "tally_resume", election_id):
+                raise WriteAuthorizationError("clear tally stalled: bad admin signature")
+        st.tally_stalled = bool(stalled)
 
     # -- capability --------------------------------------------------------- #
 

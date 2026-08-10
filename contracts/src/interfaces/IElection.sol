@@ -13,6 +13,7 @@ interface IElection is IAccessControl {
     event AggregatePublished(uint256 indexed electionId);
     event DecryptionSharePosted(uint8 indexed keyperIndex);
     event ResultPublished(uint256[] tally, uint8[] keyperIndices);
+    event TallyStalledSet(bool stalled);
     event FeesWithdrawn(address indexed recipient, uint256 amount);
     event ElectionCancelled(uint256 indexed electionId);
 

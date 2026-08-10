@@ -100,6 +100,7 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         return jsonify(
             config=codecs.enc_config(rec.config),
             cancelled=rec.cancelled,
+            tallyStalled=rec.tally_stalled,
             finalizedKey=_finalized_key_json(rec.finalized_key),
         )
 
@@ -190,6 +191,15 @@ def build_app(dl: ElectionDataLayer) -> Flask:
     def get_result(eid):
         res = dl.get_result(_eid())
         return jsonify(result=codecs.enc_result(res) if res else None)
+
+    @app.post("/elections/<eid>/tally-stalled")
+    def set_tally_stalled(eid):
+        body = request.get_json(force=True)
+        dl.set_tally_stalled(
+            _eid(), bool(body["stalled"]),
+            codecs.dec_bytes(body["resultPublisherSig"], name="resultPublisherSig"),
+        )
+        return "", 204
 
     # -- capability --------------------------------------------------------- #
 

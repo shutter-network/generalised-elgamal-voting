@@ -1,6 +1,6 @@
 import type { EncryptedTally, DecryptionShare } from "../eth/types";
 
-export type StageLifecycle = "done" | "in_progress" | "pending";
+export type StageLifecycle = "done" | "in_progress" | "stalled" | "pending";
 
 export type StageStatusContext = {
   isDKGFinalized: boolean;
@@ -11,6 +11,9 @@ export type StageStatusContext = {
   shares: DecryptionShare[] | null;
   /** A cancelled election is terminal before anything ran: no stage is done, active, or verifiable. */
   cancelled?: boolean;
+  /** The coordinator gave up on the tally (under-quorum aggregate/decryption). The
+   *  currently-active stage is shown as stalled until an admin retries. */
+  tallyStalled?: boolean;
 };
 
 export function getStageDone(stageNum: number, ctx: StageStatusContext): boolean {
@@ -54,7 +57,8 @@ export function getStageLifecycle(stageNum: number, ctx: StageStatusContext): St
   if (getStageDone(stageNum, ctx)) return "done";
   // DKG finalizes atomically on-chain — no meaningful "in progress" window for stage 1.
   if (stageNum === 1) return "pending";
-  if (getActiveStageNum(ctx) === stageNum) return "in_progress";
+  // The stage the tally is stuck on (aggregate or decryption) reads as stalled, not "in progress".
+  if (getActiveStageNum(ctx) === stageNum) return ctx.tallyStalled ? "stalled" : "in_progress";
   return "pending";
 }
 

@@ -11,7 +11,8 @@ export type ElectionState =
   | "Registered"
   | "KeyReady"
   | "Voting"
-  | "Tallying";
+  | "Tallying"
+  | "TallyStalled";
 
 export interface StateTimings {
   votingStart: number;
@@ -22,6 +23,9 @@ export interface StateFacts {
   cancelled: boolean;
   keyFinalized: boolean;
   resultPublished: boolean;
+  /** Advisory, recoverable: the coordinator abandoned the tally. Overlays `Tallying`;
+   * a published result still wins (→ `Complete`). Defaults to false when absent. */
+  tallyStalled?: boolean;
 }
 
 /** Same normative ordering as `derive_state`: terminal outcomes before live states. */
@@ -32,6 +36,7 @@ export function deriveState(c: StateTimings, f: StateFacts, now: number): Electi
   if (!f.keyFinalized) return "Registered"; // now < votingStart guaranteed here
   if (now < c.votingStart) return "KeyReady";
   if (now < c.votingEnd) return "Voting";
+  if (f.tallyStalled) return "TallyStalled"; // advisory overlay on Tallying (result would be Complete above)
   return "Tallying";
 }
 
@@ -53,6 +58,7 @@ export function stateBadgeClass(s: ElectionState): string {
     Voting: "badge--blue",
     KeyReady: "badge--blue",
     Tallying: "badge--amber",
+    TallyStalled: "badge--red",
     Registered: "badge--gray",
     Cancelled: "badge--gray",
     DKGFailed: "badge--red",

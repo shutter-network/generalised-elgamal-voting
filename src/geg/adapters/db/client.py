@@ -92,6 +92,7 @@ class HttpDataLayerClient(ElectionDataLayer):
         return ElectionRecord(
             config=codecs.dec_config(d["config"]),
             cancelled=bool(d["cancelled"]),
+            tally_stalled=bool(d.get("tallyStalled", False)),
             finalized_key=_finalized_key(d["finalizedKey"]),
         )
 
@@ -163,6 +164,12 @@ class HttpDataLayerClient(ElectionDataLayer):
     def get_result(self, election_id):
         d = self._get(f"/elections/{self._eid(election_id)}/result")
         return codecs.dec_result(d["result"]) if d["result"] else None
+
+    def set_tally_stalled(self, election_id, stalled: bool, result_publisher_sig) -> None:
+        self._post(f"/elections/{self._eid(election_id)}/tally-stalled", {
+            "stalled": bool(stalled),
+            "resultPublisherSig": codecs.enc_bytes(result_publisher_sig),
+        })
 
     # -- capability --------------------------------------------------------- #
 

@@ -103,7 +103,7 @@ docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env up --build
 # Blockchain (Anvil devnet) — compile contracts first; the registry is AUTO-DEPLOYED on `up`
 # (deterministic address the services default to — no separate step, no pasting an address):
 (cd contracts && forge build)
-docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env up -d
+docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env up --build -d
 ```
 
 > **Real chain** — identical to the devnet stack, but with `deploy/docker-compose.chain.yml`
@@ -293,9 +293,15 @@ layer **and** chain contract **reject** an aggregate submitted before `voting_en
 share submitted before `voting_end` **or before a canonical aggregate exists**. The sequence is
 aggregate → gate on the `t+1` canonical (byte-identical) quorum → **then** decrypt → publish. Each
 phase is bounded by 5 coordinator polls; a tally that never reaches quorum (too many keypers down) is
-**abandoned** with an `op=tally status=abandoned` alert rather than retried forever (a coordinator
-restart grants a fresh budget). Integrity is independent of ordering — a bogus aggregate can't reach
-the quorum, and decryption shares are DLEQ-verified against the canonical aggregate.
+**abandoned** — logged as `op=tally status=abandoned` **and** surfaced on the dashboard as a red
+**`TallyStalled`** badge (a persisted flag; the coordinator is the only writer of "stalled"). It's
+recoverable but **not** self-healing: the persisted flag is authoritative, so a **coordinator
+restart does NOT resume a stalled tally**. The only way out is the **Retry** button on the admin
+panel — the admin wallet signs a `clearTallyStalled`, which the admin service relays; the
+coordinator then resumes with a **fresh 5-attempt budget** (bring the keypers back online first,
+or it just re-stalls). A published result always supersedes it (→ `Complete`). Integrity is
+independent of ordering — a bogus aggregate can't reach the quorum, and decryption shares are
+DLEQ-verified against the canonical aggregate.
 
 **Admin auth.** Each register/cancel is authorized by the admin wallet's signature (no token);
 the same EOA is the wallet, `config.admin_key`, and `ADMIN_SIGNING_KEY`. "Changing keypers" is

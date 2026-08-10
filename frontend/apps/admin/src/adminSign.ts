@@ -48,3 +48,9 @@ export function cancelDigest(eid: string): Hex {
   return keccak256(concat([stringToBytes("cancel|"), hexToBytes(eid as `0x${string}`), stringToBytes("|")]));
 }
 
+/** request_digest("tally_resume", eid) — the admin's "retry" signature that clears a
+ * stalled tally so the coordinator resumes. */
+export function retryTallyDigest(eid: string): Hex {
+  return keccak256(concat([stringToBytes("tally_resume|"), hexToBytes(eid as `0x${string}`), stringToBytes("|")]));
+}
+

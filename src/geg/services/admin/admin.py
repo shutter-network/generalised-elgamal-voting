@@ -105,6 +105,25 @@ def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes,
     _LOG.info("op=cancel status=ok election=%s", election_id.hex())
 
 
+def retry_tally(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes, *, admin_identity: bytes) -> None:
+    """Clear a stalled tally (the admin **retry**), authorized by a relayed admin signature.
+
+    Verifies ``admin_sig`` (op ``"tally_resume"``) recovers to this election's admin and that
+    it is our admin identity, then relays the clear. Only the admin can clear; the coordinator
+    resumes driving on its next poll with a fresh attempt budget. Bring the keypers back first
+    — retrying while they are still down just re-stalls."""
+    admin_key = dl.get_election(election_id).config.admin_key
+    if admin_key != admin_identity:
+        raise WriteAuthorizationError(
+            "This wallet is not the admin wallet, so it cannot retry this election's tally.")
+    if not verify_request(admin_key, admin_sig, "tally_resume", election_id):
+        raise WriteAuthorizationError(
+            "Could not verify that you are this election's administrator. Connect the admin wallet that "
+            "registered it and sign again.")
+    dl.set_tally_stalled(election_id, False, admin_sig)
+    _LOG.info("op=retry_tally status=ok election=%s", election_id.hex())
+
+
 # --------------------------------------------------------------------------- #
 #  Admin HTTP service (wallet-signature authorized, admin-only, fail-closed)
 # --------------------------------------------------------------------------- #
@@ -180,6 +199,13 @@ def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
         body = request.get_json(force=True)
         admin_sig = codecs.dec_bytes(body["signature"], name="signature")
         cancel_election(dl, bytes.fromhex(eid), admin_sig, admin_identity=admin_identity)
+        return "", 204
+
+    @app.post("/elections/<eid>/tally/retry")
+    def retry_tally_route(eid):
+        body = request.get_json(force=True)
+        admin_sig = codecs.dec_bytes(body["signature"], name="signature")
+        retry_tally(dl, bytes.fromhex(eid), admin_sig, admin_identity=admin_identity)
         return "", 204
 
     return app

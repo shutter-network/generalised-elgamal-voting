@@ -419,6 +419,36 @@ class DataLayerConformance:
         backend.dl("keyper2").submit_aggregate(ELECTION_ID, agg, backend.aggregate_sig("keyper2", agg))
         assert backend.reader().get_aggregate(ELECTION_ID) == agg
 
+    # -- tally-stalled advisory flag (recoverable) -------------------------- #
+
+    def test_tally_stalled_marked_by_publisher_cleared_by_admin(self, backend):
+        backend.register()
+        backend.set_time(2_001)  # past voting_end
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
+        # MARK — result publisher (the coordinator) only.
+        backend.dl("result_publisher").set_tally_stalled(ELECTION_ID, True, backend.sig("result_publisher", "tally_stall"))
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is True
+        # CLEAR (retry) — the election admin only.
+        backend.dl("admin").set_tally_stalled(ELECTION_ID, False, backend.sig("admin", "tally_resume"))
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
+
+    def test_tally_mark_requires_result_publisher(self, backend):
+        backend.register()
+        backend.set_time(2_001)
+        with pytest.raises(WriteAuthorizationError):  # admin cannot mark
+            backend.dl("admin").set_tally_stalled(ELECTION_ID, True, backend.sig("admin", "tally_stall"))
+        with pytest.raises(WriteAuthorizationError):  # a keyper cannot mark
+            backend.dl("keyper1").set_tally_stalled(ELECTION_ID, True, backend.sig("keyper1", "tally_stall"))
+
+    def test_tally_clear_requires_admin(self, backend):
+        backend.register()
+        backend.set_time(2_001)
+        backend.dl("result_publisher").set_tally_stalled(ELECTION_ID, True, backend.sig("result_publisher", "tally_stall"))
+        # The result publisher (coordinator) cannot clear — clearing is admin-only.
+        with pytest.raises(WriteAuthorizationError):
+            backend.dl("result_publisher").set_tally_stalled(ELECTION_ID, False, backend.sig("result_publisher", "tally_resume"))
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is True  # still stalled
+
     def test_result_publish_authz_and_read(self, backend):
         backend.register()
         assert backend.reader().get_result(ELECTION_ID) is None

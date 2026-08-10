@@ -12,10 +12,13 @@ export function Dashboard({
   detailAction,
   focusId,
   onFocusConsumed,
+  audience = "voter",
 }: {
   adminFilter?: string;
   extra?: (selectedId: number | null) => React.ReactNode;
   detailAction?: (selectedId: number) => React.ReactNode;
+  /** Passed to the dashboard so advisory copy (e.g. the tally-stalled notice) fits the reader. */
+  audience?: "admin" | "voter";
   /** When set (e.g. a just-registered election), select it once and report back so the
    * caller can clear it — later manual selections then win. */
   focusId?: number | null;
@@ -68,6 +71,7 @@ export function Dashboard({
       elections={elections}
       onSelectElection={setSelected}
       headerAction={headerAction}
+      audience={audience}
     />
   );
 }

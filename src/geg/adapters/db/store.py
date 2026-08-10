@@ -108,13 +108,13 @@ class PostgresStore(ElectionDataLayer):
     def get_election(self, election_id: bytes) -> ElectionRecord:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT config, cancelled FROM elections WHERE election_id = %s", (election_id,)
+                "SELECT config, cancelled, tally_stalled FROM elections WHERE election_id = %s", (election_id,)
             ).fetchone()
             if row is None:
                 raise KeyError(f"unknown election {election_id.hex()}")
             config = codecs.dec_config(row[0])
             return ElectionRecord(
-                config=config, cancelled=bool(row[1]),
+                config=config, cancelled=bool(row[1]), tally_stalled=bool(row[2]),
                 finalized_key=self._finalized_key(conn, config),
             )
 
@@ -332,6 +332,25 @@ class PostgresStore(ElectionDataLayer):
             conn.execute(
                 "INSERT INTO results (election_id, result) VALUES (%s, %s)",
                 (election_id, Jsonb(codecs.enc_result(result))),
+            )
+
+    def set_tally_stalled(self, election_id, stalled: bool, sig) -> None:
+        with self._conn() as conn:
+            config = self._config(conn, election_id)
+            if stalled:
+                # MARK — result publisher (coordinator) only; post-voting_end, no result yet.
+                if self._clock() < config.voting_end:
+                    raise VotingWindowError("cannot mark stalled: voting has not ended")
+                if conn.execute("SELECT 1 FROM results WHERE election_id = %s", (election_id,)).fetchone() is not None:
+                    raise ImmutabilityError("result already published; tally cannot be marked stalled")
+                if not authz.verify_request(config.result_publisher_key, sig, "tally_stall", election_id):
+                    raise WriteAuthorizationError("mark tally stalled: bad result-publisher signature")
+            else:
+                # CLEAR (retry) — election admin only.
+                if not authz.verify_request(config.admin_key, sig, "tally_resume", election_id):
+                    raise WriteAuthorizationError("clear tally stalled: bad admin signature")
+            conn.execute(
+                "UPDATE elections SET tally_stalled = %s WHERE election_id = %s", (bool(stalled), election_id)
             )
 
     def get_result(self, election_id) -> ResultArtifact | None:

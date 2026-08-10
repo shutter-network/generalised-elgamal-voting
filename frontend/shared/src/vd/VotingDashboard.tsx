@@ -34,7 +34,7 @@ import { verifyBallotLocal, verifySharesLocal } from "./verify";
 /** On-demand verification state for a stage or a single ballot. */
 type VState = { status: "idle" } | { status: "verifying" } | { status: "ok" } | { status: "bad"; reason: string };
 
-type Overview = { config: ElectionConfigView; dkg: DkgResultView; phase: number; cancelled: boolean; isDKGFinalized: boolean; isResultFinalized: boolean };
+type Overview = { config: ElectionConfigView; dkg: DkgResultView; phase: number; cancelled: boolean; isDKGFinalized: boolean; isResultFinalized: boolean; tallyStalled: boolean };
 type Tab = "overview" | "dkg" | "ballots" | "aggregate" | "shares" | "result";
 
 const STAGE_ITEMS = [
@@ -170,11 +170,14 @@ function computeBallotDedup(all: Ballot[]): BallotDedup {
   return { superseded, revoted, counted: winnerIdx.size };
 }
 
-export function VotingDashboard({ electionId, elections, onSelectElection, headerAction }: {
+export function VotingDashboard({ electionId, elections, onSelectElection, headerAction, audience = "voter" }: {
   electionId: number;
   elections: number[];
   onSelectElection: (id: number) => void;
   headerAction?: ReactNode;
+  /** Tailors advisory copy (e.g. the tally-stalled notice) to who's reading. Defaults to
+   *  the voter view — the one that must never tell a reader to take an admin-only action. */
+  audience?: "admin" | "voter";
 }) {
   const { t } = useTranslation();
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -247,7 +250,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
   }, [electionId, tab, page]);
 
   const statusCtx: StageStatusContext | null = overview
-    ? { isDKGFinalized: overview.isDKGFinalized, phase: overview.phase, isResultFinalized: overview.isResultFinalized, thresholdT: Number(overview.config.thresholdT), aggregate, shares, cancelled: overview.cancelled }
+    ? { isDKGFinalized: overview.isDKGFinalized, phase: overview.phase, isResultFinalized: overview.isResultFinalized, thresholdT: Number(overview.config.thresholdT), aggregate, shares, cancelled: overview.cancelled, tallyStalled: overview.tallyStalled }
     : null;
   const stageLifecycle = (n: number) => (statusCtx ? getStageLifecycle(n, statusCtx) : "pending");
 
@@ -326,7 +329,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
 
   function renderStageHeader(stageNum: number, title: string, subLabel: ReactNode, desc: string) {
     const lc = stageLifecycle(stageNum);
-    const statusText = lc === "done" ? t("This stage is completed.") : lc === "in_progress" ? t("This stage is currently active.") : t("This stage hasn't started yet.");
+    const statusText = lc === "done" ? t("This stage is completed.") : lc === "stalled" ? t("This stage has stalled.") : lc === "in_progress" ? t("This stage is currently active.") : t("This stage hasn't started yet.");
     return (
       <div className="stageDetailHdr">
         <h2 className="stageDetailTitle">{t(title)}</h2>
@@ -345,6 +348,31 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
   function renderStageLocked(stageNum: number) {
     if (!overview) return null;
     return <StageLockedPanel stageNum={stageNum} waitingOn={buildWaitingOn(stageNum)} votingStart={overview.config.votingStart} votingEnd={overview.config.votingEnd} isEasy={false} />;
+  }
+  // Shown on whichever tally stage the coordinator gave up on (aggregate = stage 3, decryption
+  // = stage 4). It reached the max poll attempts and won't retry on its own. Copy is tailored
+  // to the reader: voters get reassurance (no action for them), admins get the recovery path.
+  // A stall has several causes (too few keypers reached quorum, or keypers disagreed / their
+  // submissions failed verification), so the wording stays cause-agnostic.
+  function renderStalledNotice(stageNum: number) {
+    if (!overview?.tallyStalled || stageLifecycle(stageNum) !== "stalled") return null;
+    let body: ReactNode;
+    if (audience === "admin") {
+      body = (<>
+        <strong>{t("Tally stalled")}</strong> — {stageNum === 3
+          ? t("the keyper committee did not produce a valid encrypted aggregate — too few keypers reached the quorum, or their submissions disagreed.")
+          : t("the keyper committee did not produce enough valid decryption shares — too few keypers reached the quorum, or their shares failed verification.")}{" "}
+        {t("Once the committee is healthy again, retry the tally to continue.")}
+      </>);
+    } else {
+      body = (<>
+        <strong>{t("Vote counting is paused")}</strong> — {stageNum === 3
+          ? t("the keyper committee hasn't finished combining the encrypted ballots yet.")
+          : t("the keyper committee hasn't finished decrypting the result yet.")}{" "}
+        {t("The election administrators have been notified and will resume the count. Your ballot is safely recorded and stays encrypted.")}
+      </>);
+    }
+    return <div className="stageStalledNotice" role="status">{body}</div>;
   }
   // ── on-demand verification (runs the real crypto in-browser, on click) ──
   const verifyCfg = () => ({
@@ -629,6 +657,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                 {tab === "aggregate" && (
                   <div className="stageDetail slideInRight">
                     {renderStageHeader(3, STAGE_ITEMS[2].title, <Term id={STAGE_ITEMS[2].subLabel}>{STAGE_ITEMS[2].subLabel}</Term>, STAGE_ITEMS[2].desc)}
+                    {renderStalledNotice(3)}
                     {stageLifecycle(3) === "pending" ? (<>{renderStageLocked(3)}{renderVerifySection(3)}</>) : !aggregate ? (<><p className="stageAwaitingData dim">{t("No aggregate published yet. The tally aggregator will homomorphically sum accepted ballots after voting closes.")}</p>{renderVerifySection(3)}</>) : (<>
                       {!isTriple && (<>
                         <div className="stageCountBadge">{t("candidates: {{n}}", { n: aggregate.aggregates.length })}</div>
@@ -645,6 +674,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                 {tab === "shares" && (
                   <div className="stageDetail slideInRight">
                     {renderStageHeader(4, STAGE_ITEMS[3].title, <Term id={STAGE_ITEMS[3].subLabel}>{STAGE_ITEMS[3].subLabel}</Term>, STAGE_ITEMS[3].desc)}
+                    {renderStalledNotice(4)}
                     {stageLifecycle(4) === "pending" ? (<>{renderStageLocked(4)}{renderVerifySection(4)}</>) : !shares ? (<div className="dim">{t("Loading shares…")}</div>) : shares.length === 0 ? (<><p className="stageAwaitingData dim">{t("No decryption shares submitted yet. Keypers publish one share per candidate once the aggregate is on-chain.")}</p>{renderVerifySection(4)}</>) : (<>
                       {!isTriple && (<>
                         <div className="stageCountBadge">{t("shares submitted: {{n}}", { n: shares.length })}</div>

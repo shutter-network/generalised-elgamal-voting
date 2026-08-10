@@ -71,9 +71,11 @@ class AutoDKG:
         self.log = logger or logging.getLogger("geg.coordinator")
         self._done: set[str] = set()      # result published / Complete → terminal
         self._failed: set[str] = set()    # DKGFailed / DKG complaint → terminal
-        self._tally_abandoned: set[str] = set()  # tally stalled past max_tally_attempts → terminal
+        # NB: a stalled tally is NOT tracked in memory — the persisted `tally_stalled` flag is
+        # authoritative (the coordinator reads it each poll and skips), so a restart never
+        # resurrects a stall. Only the admin's clearTallyStalled (retry) resumes it.
         self._attempts: dict[str, dict] = {}
-        self._tally_attempts: dict[str, dict] = {}  # eid_hex → {"agg": n, "dec": n}
+        self._tally_attempts: dict[str, dict] = {}  # eid_hex → {"agg": n, "dec": n} (per-run counter)
         self._tokens_by_committee: dict[tuple, dict] = {}
         self._tally_phase: dict[str, str] = {}  # eid_hex → last-logged tally phase (dedupes per-poll spam)
 
@@ -142,7 +144,7 @@ class AutoDKG:
         result_published = self.dl.get_result(election_id) is not None
         facts = StateFacts(
             cancelled=rec.cancelled, key_finalized=rec.finalized_key is not None,
-            result_published=result_published,
+            result_published=result_published, tally_stalled=rec.tally_stalled,
         )
         state = derive_state(rec.config, facts, now)
 
@@ -157,6 +159,11 @@ class AutoDKG:
             return self._drive_dkg(election_id, rec, now)
         if state is ElectionState.TALLYING:
             return self._drive_tally(election_id, rec)
+        if state is ElectionState.TALLY_STALLED:
+            # The persisted flag is authoritative: the coordinator does NOT drive a stalled
+            # tally (a restart never resurrects it). Only the admin's clearTallyStalled
+            # (retry) flips it back to Tallying, and the next poll resumes with a fresh budget.
+            return "tally_stalled"
         return "not_ready"  # KeyReady / Voting / Cancelled
 
     def _tally_transition(self, eid_hex: str, phase: str) -> None:
@@ -166,6 +173,15 @@ class AutoDKG:
         if self._tally_phase.get(eid_hex) != phase:
             self._tally_phase[eid_hex] = phase
             self.log.info("op=tally status=%s election=%s", phase, eid_hex)
+
+    def _mark_tally_stalled(self, election_id: bytes) -> None:
+        """Persist the stalled flag (result-publisher auth). The coordinator only ever
+        *marks* — clearing is the admin's retry. Best-effort: a write failure must never
+        break the tally loop (the mark is retried next poll)."""
+        try:
+            self.dl.set_tally_stalled(election_id, True, self.coordinator.sign("tally_stall", election_id))
+        except Exception as err:  # noqa: BLE001
+            self.log.warning("op=tally status=mark_stalled_error election=%s err=%s", election_id.hex(), err)
 
     def _drive_dkg(self, election_id: bytes, rec, now: int) -> str:
         eid_hex = election_id.hex()
@@ -227,11 +243,19 @@ class AutoDKG:
             return "error"
         rebootstrap = lambda i: self._rebootstrap_one(urls, member_addrs, i)  # noqa: E731 — 401 safety net
         att = self._tally_attempts.setdefault(eid_hex, {"agg": 0, "dec": 0})
+        # Fresh budget on resume: `_drive_tally` is only reached when the flag is clear
+        # (state Tallying). An exhausted counter here therefore means the admin cleared a
+        # prior stall (the retry) — reset and try again from zero.
+        if att["agg"] >= self.max_tally_attempts or att["dec"] >= self.max_tally_attempts:
+            self.log.info("op=tally status=retrying election=%s (admin cleared the stall — fresh budget)", eid_hex)
+            att = self._tally_attempts[eid_hex] = {"agg": 0, "dec": 0}
 
         def _abandon(phase: str, n: int) -> str:
-            self._tally_abandoned.add(eid_hex)
+            # Mark the persisted flag (result-publisher auth). The coordinator skips the
+            # election hereafter (state → TallyStalled); only the admin's retry clears it.
+            self._mark_tally_stalled(election_id)
             self.log.error("op=tally status=abandoned phase=%s election=%s attempts=%d — "
-                           "no progress; manual intervention needed",
+                           "stalled; admin 'retry' (clearTallyStalled) required to resume",
                            phase, eid_hex, n)
             return "tally_abandoned"
 
@@ -276,9 +300,6 @@ class AutoDKG:
                 continue
             if eid_hex in self._failed:
                 outcomes[eid_hex] = "already_failed"
-                continue
-            if eid_hex in self._tally_abandoned:
-                outcomes[eid_hex] = "tally_abandoned"
                 continue
             try:
                 pending.append((election_id, self.dl.get_election(election_id)))

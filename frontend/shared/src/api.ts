@@ -117,6 +117,10 @@ export const registerElection = (config: unknown, signature: Hex, dkgLeadTime?: 
 export const cancelElection = (idBareHex: string, signature: Hex) =>
   req<unknown>(`${ADMIN_URL}/elections/${idBareHex}/cancel`, jsonPost({ signature }));
 
+/** Admin "retry" for a stalled tally: clears the persisted flag so the coordinator resumes. */
+export const retryTally = (idBareHex: string, signature: Hex) =>
+  req<unknown>(`${ADMIN_URL}/elections/${idBareHex}/tally/retry`, jsonPost({ signature }));
+
 // -- eligibility (voter) ---------------------------------------------------- //
 
 /** Wallet-authenticated attestation: the voter proves address control by EIP-191

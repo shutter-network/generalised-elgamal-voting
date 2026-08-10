@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { deriveState, isVotingOpen } from "./state";
 
 const C = { votingStart: 1000, votingEnd: 2000 };
-const facts = (o: Partial<{ cancelled: boolean; keyFinalized: boolean; resultPublished: boolean }> = {}) => ({
+const facts = (
+  o: Partial<{ cancelled: boolean; keyFinalized: boolean; resultPublished: boolean; tallyStalled: boolean }> = {},
+) => ({
   cancelled: false,
   keyFinalized: false,
   resultPublished: false,
@@ -30,6 +32,15 @@ describe("deriveState (mirror of geg.core.state.derive_state)", () => {
   });
   it("after voting_end, key, no result -> Tallying", () => {
     expect(deriveState(C, facts({ keyFinalized: true }), 2500)).toBe("Tallying");
+  });
+  it("stalled flag after voting_end -> TallyStalled", () => {
+    expect(deriveState(C, facts({ keyFinalized: true, tallyStalled: true }), 2500)).toBe("TallyStalled");
+  });
+  it("result wins over a stalled flag -> Complete (recoverable)", () => {
+    expect(deriveState(C, facts({ keyFinalized: true, resultPublished: true, tallyStalled: true }), 2500)).toBe("Complete");
+  });
+  it("stalled flag doesn't affect the voting window", () => {
+    expect(deriveState(C, facts({ keyFinalized: true, tallyStalled: true }), 1500)).toBe("Voting");
   });
 });
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Dashboard } from "@geg/shared";
 import { ConnectButton, useWalletSigner } from "@geg/shared/wallet";
 import { CancelElectionButton } from "./CancelElectionButton";
+import { RetryTallyButton } from "./RetryTallyButton";
 import { RegisterForm } from "./RegisterForm";
 
 type Tab = "dashboard" | "register";
@@ -50,9 +51,15 @@ export function App() {
       <main className="page">
         {tab === "dashboard" ? (
           <Dashboard
+            audience="admin"
             focusId={focusId}
             onFocusConsumed={clearFocus}
-            extra={(id) => (id == null ? null : <CancelElectionButton electionId={id} wallet={wallet} />)}
+            extra={(id) => (id == null ? null : (
+              <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+                <CancelElectionButton electionId={id} wallet={wallet} />
+                <RetryTallyButton electionId={id} wallet={wallet} />
+              </div>
+            ))}
           />
         ) : (
           <RegisterForm wallet={wallet} onViewElection={viewElection} />

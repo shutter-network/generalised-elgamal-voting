@@ -25,6 +25,10 @@ class ElectionState(str, Enum):
     KEY_READY = "KeyReady"  # key finalized, now < voting_start
     VOTING = "Voting"  # key finalized, voting_start <= now < voting_end
     TALLYING = "Tallying"  # key finalized, now >= voting_end, no result (unbounded — no deadline)
+    # Advisory overlay on TALLYING (NOT terminal): the coordinator abandoned the tally after
+    # exhausting its attempts. Recoverable — a published result still wins (→ COMPLETE), and
+    # the coordinator clears it on resume.
+    TALLY_STALLED = "TallyStalled"
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,7 @@ class StateFacts:
     cancelled: bool  # a cancellation fact exists
     key_finalized: bool  # the DKG finalization quorum rule is met
     result_published: bool  # a result artifact exists
+    tally_stalled: bool = False  # coordinator abandoned the tally (advisory, recoverable)
 
 
 def derive_state(config: ElectionConfig, facts: StateFacts, now: int) -> ElectionState:
@@ -60,6 +65,10 @@ def derive_state(config: ElectionConfig, facts: StateFacts, now: int) -> Electio
         return ElectionState.KEY_READY
     if now < config.voting_end:
         return ElectionState.VOTING
+    # Past voting_end with a key but no result → Tallying, unless the coordinator has
+    # marked it stalled (advisory overlay; a result would have been COMPLETE above).
+    if facts.tally_stalled:
+        return ElectionState.TALLY_STALLED
     return ElectionState.TALLYING
 
 

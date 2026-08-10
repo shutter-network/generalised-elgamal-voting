@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS elections (
     config        JSONB NOT NULL,
     admin_key     BYTEA NOT NULL,
     voting_start  BIGINT NOT NULL,
-    cancelled     BOOLEAN NOT NULL DEFAULT FALSE
+    cancelled     BOOLEAN NOT NULL DEFAULT FALSE,
+    tally_stalled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS dkg_submissions (
@@ -61,6 +62,10 @@ CREATE TABLE IF NOT EXISTS results (
     election_id   BYTEA PRIMARY KEY REFERENCES elections(election_id),
     result        JSONB NOT NULL    -- ResultArtifact
 );
+
+-- Migration: add the advisory tally-stalled flag to an elections table created before
+-- this column existed (a fresh DB already has it from the CREATE above; idempotent).
+ALTER TABLE elections ADD COLUMN IF NOT EXISTS tally_stalled BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
 # Tables in dependency order (children before parent) for test truncation.

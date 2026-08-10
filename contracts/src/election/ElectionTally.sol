@@ -86,4 +86,26 @@ abstract contract ElectionTally is ElectionBase {
     function getResult() external view returns (VotingTypes.ElectionResult memory result) {
         return electionResult;
     }
+
+    /// @notice The result publisher (the off-chain coordinator) marks the tally stalled
+    ///         after exhausting its attempts. One-directional — only ever sets `true`; the
+    ///         coordinator is the sole party that can stall. Not a protocol gate: a published
+    ///         result wins. Surfaced to the dashboard via the `tallyStalled` getter.
+    function markTallyStalled() external onlyRole(RESULT_PUBLISHER_ROLE) {
+        _requireNotCancelled();
+        if (block.timestamp < votingEnd) revert VotingStillOpen(block.timestamp);
+        if (resultFinalized) revert AlreadyFinalized();  // result wins; nothing to stall
+        tallyStalled = true;
+        emit TallyStalledSet(true);
+    }
+
+    /// @notice The election admin clears a stall (the "retry" action) so the coordinator
+    ///         resumes driving with a fresh attempt budget. Admin-only and one-directional —
+    ///         it can only clear, never set. A restart alone never resurrects a stall; this
+    ///         is the sole way out (besides a published result → Complete).
+    function clearTallyStalled() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _requireNotCancelled();
+        tallyStalled = false;
+        emit TallyStalledSet(false);
+    }
 }

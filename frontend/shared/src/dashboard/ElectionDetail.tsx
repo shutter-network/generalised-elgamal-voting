@@ -107,6 +107,7 @@ export function ElectionDetail({
   const now = Math.floor(Date.now() / 1000);
   const state = deriveState(cfg, {
     cancelled: rec.cancelled, keyFinalized: rec.finalizedKey != null, resultPublished: result != null,
+    tallyStalled: rec.tallyStalled,
   }, now);
   const maxTotal = result ? Math.max(1, ...result.totals) : 1;
   const totalVotes = result ? result.totals.reduce((a, b) => a + b, 0) : 0;

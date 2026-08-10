@@ -168,7 +168,11 @@ class BlockchainDataLayer(ElectionDataLayer):
                 pk_election=bytes(dkg_raw[0]),
                 committee_pks=tuple(bytes(p) for p in dkg_raw[1]),
             )
-        return ElectionRecord(config=config, cancelled=bool(config_raw[16]), finalized_key=finalized)
+        return ElectionRecord(
+            config=config, cancelled=bool(config_raw[16]),
+            tally_stalled=bool(election.functions.tallyStalled().call()),
+            finalized_key=finalized,
+        )
 
     def list_elections(self, filter: ElectionFilter | None = None) -> list[bytes]:
         # Ids are dense (1..electionCount), so enumerate by index — one paged read,
@@ -348,6 +352,15 @@ class BlockchainDataLayer(ElectionDataLayer):
         bound = budget * (agg.total_admitted_weight if agg else 0)
         from geg.envelopes.types import ResultArtifact
         return ResultArtifact(election_id=election_id, totals=totals, keyper_indices=keyper_indices, bsgs_bound=bound)
+
+    def set_tally_stalled(self, election_id, stalled: bool, sig) -> None:
+        # Direction-split, tx-sender-authorized (the relayed sig is unused on chain):
+        #   mark (true)  → sent by the coordinator's account (RESULT_PUBLISHER_ROLE),
+        #   clear (false)→ sent by the admin's account (DEFAULT_ADMIN_ROLE).
+        # Each service's adapter is bound to the appropriate key, so msg.sender authorizes.
+        election = self._election(election_id)
+        fn = election.functions.markTallyStalled() if stalled else election.functions.clearTallyStalled()
+        self._send(fn)
 
     def verifiability_tier(self) -> int:
         return 0

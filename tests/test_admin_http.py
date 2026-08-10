@@ -17,7 +17,7 @@ from geg.services.admin import build_admin_app
 from conftest import ManualClock
 
 
-def _config(admin: Signer) -> ElectionConfig:
+def _config(admin: Signer, result_publisher: Signer | None = None) -> ElectionConfig:
     keypers = [Signer.generate() for _ in range(3)]
     return ElectionConfig(
         election_id=b"\x00" * 32, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
@@ -25,7 +25,7 @@ def _config(admin: Signer) -> ElectionConfig:
         voting_start=1_000, voting_end=2_000, threshold=Threshold(t=1, n=3),
         keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url=f"http://keyper{i+1}:8100")
                       for i in range(3)),
-        eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,
+        eligibility_key=b"\xe1" * 48, result_publisher_key=(result_publisher or Signer.generate()).identity,
         gateway_keys=(Signer.generate().identity,), admin_key=admin.identity, protocol_version="v1",
     )
 
@@ -106,3 +106,32 @@ def test_register_then_cancel():
     assert c.post(f"/elections/{eid.hex()}/cancel", json={"signature": bad}).status_code == 401
     assert c.post(f"/elections/{eid.hex()}/cancel", json={"signature": good}).status_code == 204
     assert dl.get_election(eid).cancelled is True
+
+
+def test_retry_tally_clears_stalled_flag_admin_only():
+    """The retry button: an admin-signed clear (tally_resume) clears the stalled flag; a
+    non-admin signature is rejected. (The coordinator marks it stalled; only admin clears.)"""
+    admin = Signer.generate()
+    publisher = Signer.generate()
+    clock = ManualClock(0)
+    dl = InMemoryDataLayer(clock=clock)
+    cfg = _config(admin, result_publisher=publisher)
+    eid = dl.register_election(cfg, admin.sign_register(cfg))
+    c = build_admin_app(dl, admin.identity, clock=lambda: 0).test_client()
+
+    clock.set(2_500)  # past voting_end
+    dl.set_tally_stalled(eid, True, publisher.sign("tally_stall", eid))  # coordinator marks it
+    assert dl.get_election(eid).tally_stalled is True
+
+    # Valid admin signature → cleared (retry).
+    r = c.post(f"/elections/{eid.hex()}/tally/retry",
+               json={"signature": codecs.enc_bytes(admin.sign("tally_resume", eid))})
+    assert r.status_code == 204
+    assert dl.get_election(eid).tally_stalled is False
+
+    # Re-mark; a non-admin signature is rejected (401) and the flag stays set.
+    dl.set_tally_stalled(eid, True, publisher.sign("tally_stall", eid))
+    r = c.post(f"/elections/{eid.hex()}/tally/retry",
+               json={"signature": codecs.enc_bytes(Signer.generate().sign("tally_resume", eid))})
+    assert r.status_code == 401
+    assert dl.get_election(eid).tally_stalled is True

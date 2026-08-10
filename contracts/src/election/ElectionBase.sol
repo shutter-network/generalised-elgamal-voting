@@ -82,6 +82,10 @@ abstract contract ElectionBase is AccessControl, IElection {
     bool internal aggregatePublished;
     VotingTypes.DecryptionShare[] internal decryptionShares;
     bool internal resultFinalized;
+    // Advisory, recoverable: the off-chain coordinator abandoned the tally after exhausting
+    // its attempts (too few keypers for the quorum). Public getter for the data-layer adapter;
+    // set/cleared by the result publisher. Not a protocol gate — a published result wins.
+    bool public tallyStalled;
     VotingTypes.ElectionResult internal electionResult;
 
     // forge-lint: disable-next-line(mixed-case-variable)

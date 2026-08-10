@@ -179,6 +179,13 @@
   },
   {
     "type": "function",
+    "name": "clearTallyStalled",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "duplicatePolicy",
     "inputs": [],
     "outputs": [
@@ -743,6 +750,13 @@
   },
   {
     "type": "function",
+    "name": "markTallyStalled",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "maxWeight",
     "inputs": [],
     "outputs": [
@@ -1126,6 +1140,19 @@
   },
   {
     "type": "function",
+    "name": "tallyStalled",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "variant",
     "inputs": [],
     "outputs": [
@@ -1454,6 +1481,19 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TallyStalledSet",
+    "inputs": [
+      {
+        "name": "stalled",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false

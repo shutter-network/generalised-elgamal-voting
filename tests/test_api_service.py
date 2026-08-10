@@ -67,6 +67,8 @@ def test_get_election_and_empty_reads(api):
     body = client.get(f"/elections/{n}").get_json()  # decimal id in the URL
     assert body["electionId"] == n
     assert body["cancelled"] is False and body["finalizedKey"] is None
+    # the stalled overlay is surfaced to the dashboard (drives the TallyStalled badge + retry button)
+    assert body["tallyStalled"] is False
     # Election ids are decimal *everywhere*, including inside the config
     # envelope; crypto byte-strings stay 0x-hex.
     assert body["config"]["electionId"] == n

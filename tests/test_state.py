@@ -9,8 +9,25 @@ from geg.core.state import ElectionState, StateFacts, derive_state, is_voting_op
 # voting_start=1000, voting_end=2000 (from env.config defaults)
 
 
-def _facts(cancelled=False, key=False, result=False):
-    return StateFacts(cancelled=cancelled, key_finalized=key, result_published=result)
+def _facts(cancelled=False, key=False, result=False, stalled=False):
+    return StateFacts(cancelled=cancelled, key_finalized=key, result_published=result, tally_stalled=stalled)
+
+
+def test_tally_stalled_overlays_tallying(env):
+    cfg = env.config()
+    assert derive_state(cfg, _facts(key=True, stalled=True), now=2500) is ElectionState.TALLY_STALLED
+
+
+def test_tally_stalled_only_after_voting_end(env):
+    """The stalled flag doesn't affect the live states — only Tallying is overlaid."""
+    cfg = env.config()
+    assert derive_state(cfg, _facts(key=True, stalled=True), now=1500) is ElectionState.VOTING
+
+
+def test_result_wins_over_tally_stalled(env):
+    """A published result → Complete, even if the stalled flag is still set (recoverable)."""
+    cfg = env.config()
+    assert derive_state(cfg, _facts(key=True, result=True, stalled=True), now=2500) is ElectionState.COMPLETE
 
 
 def test_registered_before_start_no_key(env):

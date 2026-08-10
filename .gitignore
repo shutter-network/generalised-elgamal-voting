@@ -33,6 +33,3 @@ eligibility-state/
 # Internal engineering / design docs — not published with the repo
 docs/
 .ai/
-
-# Generated sample election config (gen_deploy_env.py output; stale + tied to gitignored keys).
-deploy/sample-election.json

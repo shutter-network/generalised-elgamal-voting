@@ -21,6 +21,7 @@ export async function fetchElectionOverview(electionId: number): Promise<{
   cancelled: boolean;
   isDKGFinalized: boolean;
   isResultFinalized: boolean;
+  tallyStalled: boolean;
 }> {
   const [rec, resultResp] = await Promise.all([api.getElection(electionId), api.getResult(electionId)]);
   const cfg = rec.config;
@@ -52,6 +53,7 @@ export async function fetchElectionOverview(electionId: number): Promise<{
     cancelled: rec.cancelled,
     isDKGFinalized: rec.finalizedKey != null,
     isResultFinalized: resultResp.result != null,
+    tallyStalled: rec.tallyStalled ?? false,
   };
 }
 

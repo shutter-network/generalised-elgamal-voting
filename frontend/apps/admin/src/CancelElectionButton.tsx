@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, cancelElection, eidToBareHex, eidToHex, formatApiError, type ElectionRecord } from "@geg/shared";
+import { api, cancelElection, deriveState, eidToBareHex, eidToHex, formatApiError, type ElectionRecord } from "@geg/shared";
 import { type WalletSigner } from "@geg/shared/wallet";
 import { cancelDigest } from "./adminSign";
 
@@ -10,11 +10,23 @@ type Status = { kind: "ok" | "err" | "info"; msg: string } | null;
  * data layer likewise rejects a cancel once voting_start has passed. */
 export function CancelElectionButton({ electionId, wallet }: { electionId: number; wallet: WalletSigner | null }) {
   const [rec, setRec] = useState<ElectionRecord | null>(null);
+  const [stalled, setStalled] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    try { setRec(await api.getElection(electionId)); } catch { /* transient */ }
+    try {
+      const r = await api.getElection(electionId);
+      setRec(r);
+      // Hand the slot to the Retry button while the tally is stalled (they never co-render).
+      const res = await api.getResult(electionId);
+      const now = Math.floor(Date.now() / 1000);
+      const state = deriveState(r.config, {
+        cancelled: r.cancelled, keyFinalized: r.finalizedKey != null,
+        resultPublished: res.result != null, tallyStalled: r.tallyStalled,
+      }, now);
+      setStalled(state === "TallyStalled");
+    } catch { /* transient */ }
   }, [electionId]);
 
   useEffect(() => {
@@ -23,7 +35,7 @@ export function CancelElectionButton({ electionId, wallet }: { electionId: numbe
     return () => clearInterval(h);
   }, [load]);
 
-  if (!rec) return null;
+  if (!rec || stalled) return null; // stalled → the Retry button takes this slot instead
   const now = Math.floor(Date.now() / 1000);
   const votingStarted = now >= rec.config.votingStart;
   const cancelled = rec.cancelled;

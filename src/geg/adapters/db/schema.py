@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS ballots (
     election_id   BYTEA NOT NULL REFERENCES elections(election_id),
     seq           BIGINT NOT NULL,  -- stable total order, 0-based per election
     ballot        JSONB NOT NULL,   -- BallotEnvelope
+    submitted_at  BIGINT NOT NULL,  -- adapter receive time, for the tally-time window check
     PRIMARY KEY (election_id, seq)
 );
 
@@ -62,10 +63,6 @@ CREATE TABLE IF NOT EXISTS results (
     election_id   BYTEA PRIMARY KEY REFERENCES elections(election_id),
     result        JSONB NOT NULL    -- ResultArtifact
 );
-
--- Migration: add the advisory tally-stalled flag to an elections table created before
--- this column existed (a fresh DB already has it from the CREATE above; idempotent).
-ALTER TABLE elections ADD COLUMN IF NOT EXISTS tally_stalled BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
 # Tables in dependency order (children before parent) for test truncation.

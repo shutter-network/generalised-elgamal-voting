@@ -13,6 +13,7 @@ from __future__ import annotations
 import requests
 
 from geg.envelopes import codecs
+from geg.envelopes.types import StoredBallot
 from geg.ports.data_layer import (
     ElectionDataLayer,
     ElectionFilter,
@@ -128,7 +129,14 @@ class HttpDataLayerClient(ElectionDataLayer):
 
     def list_ballots(self, election_id, start: int, count: int):
         d = self._get(f"/elections/{self._eid(election_id)}/ballots", start=start, count=count)
-        return [codecs.dec_ballot(b) for b in d["ballots"]]
+        return [
+            StoredBallot(
+                sequence_number=int(row["sequenceNumber"]),
+                envelope=codecs.dec_ballot(row["ballot"]),
+                submitted_at=None if row.get("submittedAt") is None else int(row["submittedAt"]),
+            )
+            for row in d["ballots"]
+        ]
 
     def count_ballots(self, election_id) -> int:
         return int(self._get(f"/elections/{self._eid(election_id)}/ballots/count")["count"])

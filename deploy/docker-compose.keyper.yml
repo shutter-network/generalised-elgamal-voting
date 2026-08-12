@@ -1,13 +1,12 @@
 # Keyper operator stack — one independently-operated committee member.
 #
 # Run this on your own machine. You hold only your own keyper signing key; the
-# admin's data-layer + coordinator, and the other keypers, are all external to
-# this stack (reached over HTTP by URL — no shared Docker network).
+# admin's API + coordinator, and the other keypers, are all external to this stack
+# (reached over HTTP by URL — no shared Docker network).
 #
-# Backend-agnostic: a keyper only speaks HTTP. It reads election data from the
-# admin's data-layer service and relays its signed DKG/decryption writes through
-# the admin's coordinator (which pays gas / writes to the data layer). It holds
-# no chain key and never touches Postgres/the chain directly.
+# Backend-agnostic: a keyper only speaks HTTP. It reads election data from the admin's
+# public API (which serves the port read surface) and relays its signed DKG/decryption
+# writes through the admin's coordinator (which pays gas / writes to the data layer).
 #
 # Required .env (see .env.keyper.example):
 #   KEYPER_SIGNING_KEY     your keyper's secp256k1 key (secret). Its address must be
@@ -16,7 +15,8 @@
 #                          The keyper pins it — only the coordinator may bootstrap it.
 #                          This is the ONLY secret you pre-share (the relay bearer
 #                          token is pushed over /auth/bootstrap, not configured here).
-#   GEG_DATA_LAYER_URL     the admin's public data-layer URL (reads).
+#   GEG_API_URL            the admin's public API base URL (reads). Base only — no
+#                          path; the keyper appends its read-surface path itself.
 #   COORDINATOR_URL        the admin's public coordinator URL (write relay).
 # Optional:
 #   KEYPER_PORT            listen + publish port; MUST match this keyper's endpoint
@@ -46,7 +46,7 @@ services:
     environment:
       KEYPER_SIGNING_KEY: ${KEYPER_SIGNING_KEY:?set KEYPER_SIGNING_KEY (your keyper private key)}
       COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY:?set COORDINATOR_IDENTITY (coordinator address from the admin)}
-      GEG_DATA_LAYER_URL: ${GEG_DATA_LAYER_URL:-http://host.docker.internal:8000}
+      GEG_API_URL: ${GEG_API_URL:-http://host.docker.internal:8500}
       COORDINATOR_URL: ${COORDINATOR_URL:-http://host.docker.internal:8400}
       KEYPER_PORT: ${KEYPER_PORT:-8100}
       KEYPER_STATE_DIR: /keyper-state

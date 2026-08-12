@@ -22,7 +22,9 @@ Writes (under ``deploy/``, relative to repo root):
   * ``.env``               — admin/operator-stack keys + tokens (the coordinator key
                              doubles as the chain relayer + result publisher)
   * ``.env.keyper{1,2,3}`` — one self-contained env per keyper stack (its key, pinned
-                             coordinator address, port, state dir)
+                             coordinator address, port, state dir, plus the two admin
+                             URLs it needs: ``GEG_API_URL`` for reads and
+                             ``COORDINATOR_URL`` for its relayed writes)
   * ``.env.eligibility``   — the eligibility issuer's env (its private key + service
                              config), run with its own ``--env-file``
 
@@ -174,7 +176,9 @@ def main() -> None:
             f"KEYPER_SIGNING_KEY={sk}",
             f"COORDINATOR_IDENTITY={coord_addr.lower()}",
             "# (relay bearer token is NOT here — the coordinator pushes it via /auth/bootstrap)",
-            "GEG_DATA_LAYER_URL=http://host.docker.internal:8000",
+            "# Reads: the public API's BASE url — the keyper appends its read-surface path itself.",
+            "GEG_API_URL=http://host.docker.internal:8500",
+            "# Writes: signed DKG/aggregate/decryption artifacts, relayed by the coordinator.",
             "COORDINATOR_URL=http://host.docker.internal:8400",
             f"KEYPER_PORT={port}",
             f"KEYPER_STATE_DIR_HOST=../keyper-state{i + 1}",

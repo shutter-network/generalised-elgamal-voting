@@ -255,20 +255,68 @@ class DataLayerConformance:
 
     # -- ballots: ordering, sequence, pagination --------------------------- #
 
+    def _open_voting(self, backend, now: int = 1_500):
+        """Reach derived state ``Voting`` — the precondition for a ballot write.
+
+        Every backend now gates ``submit_ballot`` on the chain contract's
+        ``submitVote`` gate set (not cancelled + DKG finalized + inside the half-open
+        window), so a ballot write needs a finalized key and a clock in
+        ``[voting_start, voting_end)``.
+        """
+        pk, committee = backend.pk_and_committee()
+        for role in ("keyper1", "keyper2"):
+            backend.dl(role).submit_dkg_result(ELECTION_ID, pk, committee, backend.dkg_sig(role, pk, committee))
+        assert backend.reader().get_finalized_key(ELECTION_ID) is not None
+        backend.set_time(now)
+
     def test_ballot_ordering_and_monotonic_sequence(self, backend):
         backend.register()
+        self._open_voting(backend)
         seqs = [backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([i]) * 32)) for i in range(5)]
         assert seqs == [0, 1, 2, 3, 4]
         assert backend.reader().count_ballots(ELECTION_ID) == 5
         listed = backend.reader().list_ballots(ELECTION_ID, 0, 5)
-        assert [b.pseudonym for b in listed] == [bytes([i]) * 32 for i in range(5)]
+        assert [sb.envelope.pseudonym for sb in listed] == [bytes([i]) * 32 for i in range(5)]
+        assert [sb.sequence_number for sb in listed] == [0, 1, 2, 3, 4]
 
     def test_ballot_pagination(self, backend):
         backend.register()
+        self._open_voting(backend)
         for i in range(5):
             backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([i]) * 32))
         page = backend.reader().list_ballots(ELECTION_ID, 2, 2)
-        assert [b.pseudonym for b in page] == [bytes([2]) * 32, bytes([3]) * 32]
+        assert [sb.envelope.pseudonym for sb in page] == [bytes([2]) * 32, bytes([3]) * 32]
+        assert [sb.sequence_number for sb in page] == [2, 3]
+
+    # -- ballots: the voting-window gate (parity with the chain contract) --- #
+
+    def test_ballot_before_voting_start_rejected(self, backend):
+        backend.register()
+        self._open_voting(backend, now=999)  # key finalized, but window not yet open
+        with pytest.raises(VotingWindowError):
+            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+
+    def test_ballot_after_voting_end_rejected(self, backend):
+        backend.register()
+        self._open_voting(backend, now=2_000)  # half-open: voting_end itself is closed
+        with pytest.raises(VotingWindowError):
+            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+
+    def test_ballot_before_dkg_finalized_rejected(self, backend):
+        backend.register()
+        backend.set_time(1_500)  # inside the window, but no finalized key
+        with pytest.raises(VotingWindowError):
+            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+
+    def test_stored_ballot_carries_receive_time(self, backend):
+        """The adapter records its authoritative receive time, so the tally-time
+        OUT_OF_WINDOW check has something to verify against."""
+        backend.register()
+        self._open_voting(backend, now=1_500)
+        backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+        [sb] = backend.reader().list_ballots(ELECTION_ID, 0, 1)
+        assert sb.submitted_at is not None
+        assert backend.config.voting_start <= sb.submitted_at < backend.config.voting_end
 
     # -- DKG finalization quorum rule -------------------------------------- #
 

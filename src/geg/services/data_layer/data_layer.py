@@ -29,7 +29,7 @@ Backend semantics (``GEG_DATA_LAYER``):
 
 from __future__ import annotations
 
-from flask import Flask, jsonify, request
+from flask import Blueprint, Flask, jsonify, request
 
 from geg.envelopes import codecs
 from geg.ports.data_layer import (
@@ -51,32 +51,147 @@ def _finalized_key_json(fk: FinalizedKey | None):
     }
 
 
-def build_app(dl: ElectionDataLayer) -> Flask:
-    """Build the Flask app mapping the port onto HTTP routes over any adapter."""
-    app = Flask(__name__)
+# Where `api` mounts the port read surface. Shared so the mount point and the clients
+# that target it (keypers) cannot drift apart.
+PORT_READ_PREFIX = "/port"
 
-    @app.errorhandler(KeyError)
+
+def _register_error_handlers(bp: Blueprint) -> None:
+    """Map port exceptions onto the typed statuses ``HttpDataLayerClient`` expects.
+
+    Registered on the blueprint rather than the app so the port surface keeps its own
+    error contract when it is mounted inside a host app (``api``) that maps the same
+    exceptions differently for browsers.
+    """
+
+    @bp.errorhandler(KeyError)
     def _not_found(e):
         return jsonify(error="KeyError", message=str(e)), 404
 
-    @app.errorhandler(WriteAuthorizationError)
+    @bp.errorhandler(WriteAuthorizationError)
     def _forbidden(e):
         return jsonify(error="WriteAuthorizationError", message=str(e)), 403
 
-    @app.errorhandler(ImmutabilityError)
+    @bp.errorhandler(ImmutabilityError)
     def _conflict(e):
         return jsonify(error="ImmutabilityError", message=str(e)), 409
 
-    @app.errorhandler(VotingWindowError)
+    @bp.errorhandler(VotingWindowError)
     def _wrong_window(e):
         return jsonify(error="VotingWindowError", message=str(e)), 422
 
-    @app.errorhandler(ValueError)
+    @bp.errorhandler(ValueError)
     def _bad_request(e):
         return jsonify(error="ValueError", message=str(e)), 400
 
-    def _eid() -> bytes:
-        return bytes.fromhex(request.view_args["eid"])
+
+def _eid() -> bytes:
+    return bytes.fromhex(request.view_args["eid"])
+
+
+def _register_error_handlers_on_app(app: Flask) -> None:
+    """Same port error contract as the blueprint, for this app's write routes."""
+    app.register_error_handler(KeyError, lambda e: (jsonify(error="KeyError", message=str(e)), 404))
+    app.register_error_handler(
+        WriteAuthorizationError, lambda e: (jsonify(error="WriteAuthorizationError", message=str(e)), 403)
+    )
+    app.register_error_handler(
+        ImmutabilityError, lambda e: (jsonify(error="ImmutabilityError", message=str(e)), 409)
+    )
+    app.register_error_handler(
+        VotingWindowError, lambda e: (jsonify(error="VotingWindowError", message=str(e)), 422)
+    )
+    app.register_error_handler(ValueError, lambda e: (jsonify(error="ValueError", message=str(e)), 400))
+
+
+def port_read_blueprint(dl: ElectionDataLayer, *, name: str = "port_read",
+                        url_prefix: str | None = None) -> Blueprint:
+    """The **read-only** half of the port over HTTP.
+
+    Split out so a public-facing service can host the port's read surface without also
+    hosting its writes. The ``api`` service mounts this under ``/port`` so remote keyper
+    operators — which read the data layer but write through the coordinator relay — can
+    point ``GEG_DATA_LAYER_URL`` at the public API instead of requiring the data-layer
+    service itself to be reachable.
+
+    Unlike ``api``'s browser routes this is byte-faithful to the port: bare-hex election
+    ids (no decimalization), envelope JSON verbatim, storage metadata on ballots, and no
+    pagination cap — a keyper must be able to read *every* ballot or its aggregate would
+    silently diverge from the rest of the committee.
+    """
+    bp = Blueprint(name, __name__, url_prefix=url_prefix)
+    _register_error_handlers(bp)
+
+    @bp.get("/elections/<eid>")
+    def get_election(eid):
+        rec = dl.get_election(_eid())
+        return jsonify(
+            config=codecs.enc_config(rec.config),
+            cancelled=rec.cancelled,
+            tallyStalled=rec.tally_stalled,
+            finalizedKey=_finalized_key_json(rec.finalized_key),
+        )
+
+    @bp.get("/elections")
+    def list_elections():
+        admin_key = request.args.get("adminKey")
+        filt = ElectionFilter(admin_key=codecs.dec_bytes(admin_key, name="adminKey")) if admin_key else None
+        return jsonify(electionIds=[codecs.enc_bytes(e) for e in dl.list_elections(filt)])
+
+    @bp.get("/elections/<eid>/dkg")
+    def get_dkg(eid):
+        return jsonify(submissions=[codecs.enc_dkg_result(s) for s in dl.get_dkg_submissions(_eid())])
+
+    @bp.get("/elections/<eid>/dkg/finalized")
+    def get_finalized(eid):
+        return jsonify(finalizedKey=_finalized_key_json(dl.get_finalized_key(_eid())))
+
+    @bp.get("/elections/<eid>/ballots")
+    def list_ballots(eid):
+        start = int(request.args.get("start", 0))
+        count = int(request.args.get("count", 0))
+        # Storage metadata rides alongside the envelope, never inside it: the ballot
+        # JSON is the voter-signed artifact and the conformance-vector surface.
+        return jsonify(ballots=[
+            {
+                "ballot": codecs.enc_ballot(sb.envelope),
+                "sequenceNumber": sb.sequence_number,
+                "submittedAt": sb.submitted_at,
+            }
+            for sb in dl.list_ballots(_eid(), start, count)
+        ])
+
+    @bp.get("/elections/<eid>/ballots/count")
+    def count_ballots(eid):
+        return jsonify(count=dl.count_ballots(_eid()))
+
+    @bp.get("/elections/<eid>/aggregate")
+    def get_aggregate(eid):
+        agg = dl.get_aggregate(_eid())
+        return jsonify(aggregate=codecs.enc_aggregate(agg) if agg else None)
+
+    @bp.get("/elections/<eid>/shares")
+    def list_shares(eid):
+        return jsonify(shares=[codecs.enc_decryption_share(s) for s in dl.list_decryption_shares(_eid())])
+
+    @bp.get("/elections/<eid>/result")
+    def get_result(eid):
+        res = dl.get_result(_eid())
+        return jsonify(result=codecs.enc_result(res) if res else None)
+
+    @bp.get("/capability")
+    def capability():
+        return jsonify(verifiabilityTier=dl.verifiability_tier())
+
+    return bp
+
+
+def build_app(dl: ElectionDataLayer) -> Flask:
+    """Build the Flask app mapping the port onto HTTP routes over any adapter."""
+    app = Flask(__name__)
+    app.register_blueprint(port_read_blueprint(dl))
+
+    _register_error_handlers_on_app(app)
 
     # -- election lifecycle ------------------------------------------------- #
 
@@ -94,22 +209,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         dl.cancel_election(_eid(), codecs.dec_bytes(body["adminSig"], name="adminSig"))
         return "", 204
 
-    @app.get("/elections/<eid>")
-    def get_election(eid):
-        rec = dl.get_election(_eid())
-        return jsonify(
-            config=codecs.enc_config(rec.config),
-            cancelled=rec.cancelled,
-            tallyStalled=rec.tally_stalled,
-            finalizedKey=_finalized_key_json(rec.finalized_key),
-        )
-
-    @app.get("/elections")
-    def list_elections():
-        admin_key = request.args.get("adminKey")
-        filt = ElectionFilter(admin_key=codecs.dec_bytes(admin_key, name="adminKey")) if admin_key else None
-        return jsonify(electionIds=[codecs.enc_bytes(e) for e in dl.list_elections(filt)])
-
     # -- DKG ---------------------------------------------------------------- #
 
     @app.post("/elections/<eid>/dkg")
@@ -123,14 +222,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         )
         return "", 204
 
-    @app.get("/elections/<eid>/dkg")
-    def get_dkg(eid):
-        return jsonify(submissions=[codecs.enc_dkg_result(s) for s in dl.get_dkg_submissions(_eid())])
-
-    @app.get("/elections/<eid>/dkg/finalized")
-    def get_finalized(eid):
-        return jsonify(finalizedKey=_finalized_key_json(dl.get_finalized_key(_eid())))
-
     # -- ballots ------------------------------------------------------------ #
 
     @app.post("/elections/<eid>/ballots")
@@ -138,16 +229,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         body = request.get_json(force=True)
         seq = dl.submit_ballot(_eid(), codecs.dec_ballot(body["ballot"]))
         return jsonify(sequenceNumber=seq), 200
-
-    @app.get("/elections/<eid>/ballots")
-    def list_ballots(eid):
-        start = int(request.args.get("start", 0))
-        count = int(request.args.get("count", 0))
-        return jsonify(ballots=[codecs.enc_ballot(b) for b in dl.list_ballots(_eid(), start, count)])
-
-    @app.get("/elections/<eid>/ballots/count")
-    def count_ballots(eid):
-        return jsonify(count=dl.count_ballots(_eid()))
 
     # -- tally artifacts ---------------------------------------------------- #
 
@@ -160,11 +241,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         )
         return "", 204
 
-    @app.get("/elections/<eid>/aggregate")
-    def get_aggregate(eid):
-        agg = dl.get_aggregate(_eid())
-        return jsonify(aggregate=codecs.enc_aggregate(agg) if agg else None)
-
     @app.post("/elections/<eid>/shares")
     def submit_share(eid):
         body = request.get_json(force=True)
@@ -173,10 +249,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
             codecs.dec_bytes(body["keyperSig"], name="keyperSig"),
         )
         return "", 204
-
-    @app.get("/elections/<eid>/shares")
-    def list_shares(eid):
-        return jsonify(shares=[codecs.enc_decryption_share(s) for s in dl.list_decryption_shares(_eid())])
 
     @app.post("/elections/<eid>/result")
     def publish_result(eid):
@@ -187,11 +259,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         )
         return "", 204
 
-    @app.get("/elections/<eid>/result")
-    def get_result(eid):
-        res = dl.get_result(_eid())
-        return jsonify(result=codecs.enc_result(res) if res else None)
-
     @app.post("/elections/<eid>/tally-stalled")
     def set_tally_stalled(eid):
         body = request.get_json(force=True)
@@ -200,12 +267,6 @@ def build_app(dl: ElectionDataLayer) -> Flask:
             codecs.dec_bytes(body["resultPublisherSig"], name="resultPublisherSig"),
         )
         return "", 204
-
-    # -- capability --------------------------------------------------------- #
-
-    @app.get("/capability")
-    def capability():
-        return jsonify(verifiabilityTier=dl.verifiability_tier())
 
     return app
 

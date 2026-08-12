@@ -78,8 +78,9 @@ services:
     environment:
       <<: *chain-env
       DATA_LAYER_PORT: "8000"
-    ports:
-      - "8000:8000"
+    # No host port. Only internal service can access it.
+    expose:
+      - "8000"
     depends_on:
       deploy-registry:
         condition: service_completed_successfully

@@ -106,6 +106,36 @@ class BallotEnvelope:
 
 
 @dataclass(frozen=True)
+class StoredBallot:
+    """A ballot as the data layer stores it: an envelope plus its storage metadata.
+
+    This is what :meth:`~geg.ports.data_layer.ElectionDataLayer.list_ballots`
+    returns, so the tally-time admission check can see the adapter's own view of
+    *when* a ballot arrived rather than having to trust that some ingress enforced
+    the window.
+
+    ``submitted_at`` is the adapter's authoritative receive time: chain block time, or
+    the NTP-disciplined service clock on memory/DB. **Every stored ballot has one** —
+    all three adapters stamp it at write, and the DB column is ``NOT NULL``.
+
+    It is ``None`` only for ballots that were never stored: the gateway's pre-write
+    validity check, test fixtures, and the conformance-vector flow fixture all build
+    :class:`StoredBallot` in memory. Admission skips the ``OUT_OF_WINDOW`` check in that
+    case, because there is no receive time to check rather than because one was lost.
+
+    Note the trust boundary: on memory/DB the timestamp is supplied by the data
+    layer, which is untrusted for integrity, so this check catches rows written
+    out-of-band (direct SQL, a second writer, a restored backup) and makes the
+    window publicly auditable — it does **not** defeat an operator who backdates.
+    Only the chain's block time is adversarially authoritative.
+    """
+
+    sequence_number: int
+    envelope: BallotEnvelope
+    submitted_at: int | None = None
+
+
+@dataclass(frozen=True)
 class DKGResultSubmission:
     """A keyper's signed DKG result vote.
 

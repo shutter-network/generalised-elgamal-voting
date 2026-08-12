@@ -281,51 +281,68 @@
     ],
     "outputs": [
       {
-        "name": "ballot",
+        "name": "record",
         "type": "tuple",
-        "internalType": "struct VotingTypes.Ballot",
+        "internalType": "struct VotingTypes.BallotRecord",
         "components": [
           {
-            "name": "pseudonym",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "vk",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "ciphertexts",
-            "type": "tuple[]",
-            "internalType": "struct VotingTypes.Ciphertext[]",
+            "name": "ballot",
+            "type": "tuple",
+            "internalType": "struct VotingTypes.Ballot",
             "components": [
               {
-                "name": "c1",
+                "name": "pseudonym",
+                "type": "bytes32",
+                "internalType": "bytes32"
+              },
+              {
+                "name": "vk",
                 "type": "bytes",
                 "internalType": "bytes"
               },
               {
-                "name": "c2",
+                "name": "ciphertexts",
+                "type": "tuple[]",
+                "internalType": "struct VotingTypes.Ciphertext[]",
+                "components": [
+                  {
+                    "name": "c1",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  },
+                  {
+                    "name": "c2",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  }
+                ]
+              },
+              {
+                "name": "zkProof",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "voterSignature",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "wrAttestation",
                 "type": "bytes",
                 "internalType": "bytes"
               }
             ]
           },
           {
-            "name": "zkProof",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "submittedAt",
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
-            "name": "voterSignature",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "wrAttestation",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "submittedBy",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -349,51 +366,68 @@
     ],
     "outputs": [
       {
-        "name": "ballots",
+        "name": "records",
         "type": "tuple[]",
-        "internalType": "struct VotingTypes.Ballot[]",
+        "internalType": "struct VotingTypes.BallotRecord[]",
         "components": [
           {
-            "name": "pseudonym",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "vk",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "ciphertexts",
-            "type": "tuple[]",
-            "internalType": "struct VotingTypes.Ciphertext[]",
+            "name": "ballot",
+            "type": "tuple",
+            "internalType": "struct VotingTypes.Ballot",
             "components": [
               {
-                "name": "c1",
+                "name": "pseudonym",
+                "type": "bytes32",
+                "internalType": "bytes32"
+              },
+              {
+                "name": "vk",
                 "type": "bytes",
                 "internalType": "bytes"
               },
               {
-                "name": "c2",
+                "name": "ciphertexts",
+                "type": "tuple[]",
+                "internalType": "struct VotingTypes.Ciphertext[]",
+                "components": [
+                  {
+                    "name": "c1",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  },
+                  {
+                    "name": "c2",
+                    "type": "bytes",
+                    "internalType": "bytes"
+                  }
+                ]
+              },
+              {
+                "name": "zkProof",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "voterSignature",
+                "type": "bytes",
+                "internalType": "bytes"
+              },
+              {
+                "name": "wrAttestation",
                 "type": "bytes",
                 "internalType": "bytes"
               }
             ]
           },
           {
-            "name": "zkProof",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "submittedAt",
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
-            "name": "voterSignature",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "wrAttestation",
-            "type": "bytes",
-            "internalType": "bytes"
+            "name": "submittedBy",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }

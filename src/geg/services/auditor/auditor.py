@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from geg.core import write_auth
-from geg.core.admission import StoredBallot, admit
+from geg.core.admission import admit
 from geg.core.aggregation import build_aggregate_artifact, recover_result
 from geg.ports.data_layer import ElectionDataLayer
 
@@ -74,7 +74,9 @@ def audit(dl: ElectionDataLayer, election_id: bytes) -> AuditReport:
 
     # 2. Independently re-derive the admitted set + weighted aggregate; compare.
     n = dl.count_ballots(election_id)
-    stored = [StoredBallot(i, env) for i, env in enumerate(dl.list_ballots(election_id, 0, n))]
+    # Carries each row's authoritative submitted_at, so the auditor re-derives the
+    # voting-window exclusions too rather than being blind to them.
+    stored = dl.list_ballots(election_id, 0, n)
     admission = admit(stored, cfg, published_key.pk_election)
     recomputed_agg = build_aggregate_artifact(cfg, admission)
     published_agg = dl.get_aggregate(election_id)

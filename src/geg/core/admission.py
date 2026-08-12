@@ -23,24 +23,17 @@ from dataclasses import dataclass
 from geg.core.config import DuplicatePolicy, ElectionConfig
 from geg.crypto.ballot import verify_ballot_crypto
 from geg.crypto.points import g2_from_compressed
-from geg.envelopes.types import BallotEnvelope, Exclusion, ExclusionReason
+from geg.envelopes.types import BallotEnvelope, Exclusion, ExclusionReason, StoredBallot
 from geg.ports.eligibility import verify_attestation
 from geg.core.state import is_voting_open
 
-
-@dataclass(frozen=True)
-class StoredBallot:
-    """A ballot as the data layer stores it: an envelope with a stable sequence.
-
-    ``submitted_at`` is the adapter's authoritative receive time where it has one
-    (block time / NTP-disciplined service clock); ``None`` when the adapter has no
-    authoritative time and enforces the window at write instead,
-    in which case the ``OUT_OF_WINDOW`` check is skipped here.
-    """
-
-    sequence_number: int
-    envelope: BallotEnvelope
-    submitted_at: int | None = None
+__all__ = [
+    "StoredBallot",
+    "AdmittedBallot",
+    "AdmissionResult",
+    "validate_ballot",
+    "admit",
+]
 
 
 @dataclass(frozen=True)

@@ -17,7 +17,7 @@ HTTP, which is a transport concern, not a protocol one.
 from __future__ import annotations
 
 from geg.core import write_auth
-from geg.core.admission import StoredBallot, admit
+from geg.core.admission import admit
 from geg.core.aggregation import build_aggregate_artifact
 from geg.core.authz import Signer
 from geg.crypto import proofs
@@ -103,7 +103,7 @@ class KeyperService:
         # accept, but we skip the work when our own submission is already in.
 
         n = self.dl.count_ballots(election_id)
-        stored = [StoredBallot(i, env) for i, env in enumerate(self.dl.list_ballots(election_id, 0, n))]
+        stored = self.dl.list_ballots(election_id, 0, n)
         admission = admit(stored, cfg, rec.finalized_key.pk_election)  # only valid ballots admitted
         artifact = build_aggregate_artifact(cfg, admission)
         sig = write_auth.sign_aggregate(self.signer.private_key, election_id, artifact)

@@ -25,6 +25,7 @@ from psycopg.types.json import Jsonb
 from geg.core import authz, write_auth
 from geg.adapters.db.schema import DDL
 from geg.core.config import ElectionConfig
+from geg.core.state import ElectionState, StateFacts, derive_state
 from geg.envelopes import codecs
 from geg.envelopes.types import (
     AggregateArtifact,
@@ -32,6 +33,7 @@ from geg.envelopes.types import (
     DecryptionShareEnvelope,
     DKGResultSubmission,
     ResultArtifact,
+    StoredBallot,
 )
 from geg.ports.data_layer import (
     ElectionDataLayer,
@@ -195,23 +197,65 @@ class PostgresStore(ElectionDataLayer):
             ).fetchone()
             if locked is None:
                 raise KeyError(f"unknown election {election_id.hex()}")
+            now = self._clock()
+            self._require_voting_open(conn, election_id, now)
             row = conn.execute(
                 "SELECT COALESCE(MAX(seq) + 1, 0) FROM ballots WHERE election_id = %s", (election_id,)
             ).fetchone()
             seq = int(row[0])
             conn.execute(
-                "INSERT INTO ballots (election_id, seq, ballot) VALUES (%s, %s, %s)",
-                (election_id, seq, Jsonb(codecs.enc_ballot(ballot))),
+                "INSERT INTO ballots (election_id, seq, ballot, submitted_at) VALUES (%s, %s, %s, %s)",
+                (election_id, seq, Jsonb(codecs.enc_ballot(ballot)), now),
             )
             return seq
 
-    def list_ballots(self, election_id, start: int, count: int) -> list[BallotEnvelope]:
+    def _require_voting_open(self, conn, election_id: bytes, now: int) -> None:
+        """Reject a ballot written outside the open voting window.
+
+        Mirrors the chain contract's ``submitVote`` gate set exactly
+        (``_requireNotCancelled`` + ``dkgFinalized`` + ``[votingStart, votingEnd)``),
+        which is precisely ``derive_state(...) is VOTING``. Using the same predicate
+        the gateway and tally-time admission use means a ballot accepted here can
+        never be excluded as ``OUT_OF_WINDOW`` later — the two checks cannot drift.
+
+        Runs inside the caller's ``FOR UPDATE`` transaction, so the state it reads is
+        consistent with the sequence number it is about to assign.
+        """
+        config = self._config(conn, election_id)
+        cancelled = bool(
+            conn.execute(
+                "SELECT cancelled FROM elections WHERE election_id = %s", (election_id,)
+            ).fetchone()[0]
+        )
+        result_published = (
+            conn.execute(
+                "SELECT 1 FROM results WHERE election_id = %s", (election_id,)
+            ).fetchone()
+            is not None
+        )
+        facts = StateFacts(
+            cancelled=cancelled,
+            key_finalized=self._finalized_key(conn, config) is not None,
+            result_published=result_published,
+        )
+        if derive_state(config, facts, now) is not ElectionState.VOTING:
+            raise VotingWindowError("ballot submitted outside the open voting window")
+
+    def list_ballots(self, election_id, start: int, count: int) -> list[StoredBallot]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT ballot FROM ballots WHERE election_id = %s AND seq >= %s ORDER BY seq LIMIT %s",
+                "SELECT seq, ballot, submitted_at FROM ballots "
+                "WHERE election_id = %s AND seq >= %s ORDER BY seq LIMIT %s",
                 (election_id, start, count),
             ).fetchall()
-            return [codecs.dec_ballot(r[0]) for r in rows]
+            return [
+                StoredBallot(
+                    sequence_number=int(seq),
+                    envelope=codecs.dec_ballot(ballot),
+                    submitted_at=None if submitted_at is None else int(submitted_at),
+                )
+                for seq, ballot, submitted_at in rows
+            ]
 
     def count_ballots(self, election_id) -> int:
         with self._conn() as conn:

@@ -20,6 +20,7 @@ from geg.envelopes.types import (
     DecryptionShareEnvelope,
     Exclusion,
     ExclusionReason,
+    StoredBallot,
 )
 
 MODE_TO_U8 = {Mode.EXACT: 0, Mode.AT_MOST: 1}
@@ -63,6 +64,21 @@ def ballot_to_tuple(env: BallotEnvelope):
     """Contract ``Ballot``: (pseudonym, vk, ciphertexts[(c1,c2)], zkProof, voterSignature, wrAttestation)."""
     cts = [(ct.c1, ct.c2) for ct in env.ciphertexts]
     return (env.pseudonym, env.vk, cts, env.zk_proof, env.voter_signature, pack_attestation(env.attestation))
+
+
+def ballot_record_from_contract(raw, election_id: bytes, sequence_number: int) -> StoredBallot:
+    """Contract ``BallotRecord``: (ballot, submittedAt, submittedBy) -> StoredBallot.
+
+    ``submittedAt`` is the block timestamp the contract stamped at accept time — the
+    one adversarially authoritative receive time in the system, since the chain is the
+    only backend whose clock the data-layer operator does not control.
+    """
+    ballot, submitted_at = raw[0], raw[1]
+    return StoredBallot(
+        sequence_number=sequence_number,
+        envelope=ballot_from_contract(ballot, election_id),
+        submitted_at=int(submitted_at),
+    )
 
 
 def ballot_from_contract(raw, election_id: bytes) -> BallotEnvelope:

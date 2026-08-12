@@ -12,6 +12,8 @@ from dataclasses import replace
 
 import pytest
 
+from geg.envelopes.types import ExclusionReason, StoredBallot
+from geg.ports.data_layer import VotingWindowError
 from geg.services import admin, auditor
 from geg.services.coordinator import dkg_coordinator as coord
 from geg.services import tally_aggregator as agg
@@ -128,6 +130,56 @@ def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
     agg_artifact = fe.dl.get_aggregate(fe.config.election_id)
     assert agg_artifact.admitted == (0,)
     assert len(agg_artifact.exclusions) == 1
+
+
+def test_data_layer_rejects_ballot_outside_voting_window(full_env):
+    """H-3, prevention half: the storage layer itself refuses an out-of-window ballot,
+    so the bypassable gateway is no longer the only thing standing between a late
+    submission and the tally. Parity with the chain contract's VotingClosed revert."""
+    fe = full_env
+    _register_and_dkg(fe)
+    late = fe.voter_ballot([0, 3, 0], b"\x02" * 32)
+
+    fe.clock.set(2_500)  # past voting_end
+    with pytest.raises(VotingWindowError):
+        fe.dl.submit_ballot(fe.config.election_id, late)
+
+    fe.clock.set(500)  # before voting_start
+    with pytest.raises(VotingWindowError):
+        fe.dl.submit_ballot(fe.config.election_id, late)
+
+    assert fe.dl.count_ballots(fe.config.election_id) == 0
+
+
+def test_out_of_band_out_of_window_ballot_is_excluded_at_tally(full_env):
+    """H-3, auditability half: a row that reaches storage *bypassing* the write gate
+    (direct SQL, a second writer, a restored backup) is still excluded at tally time,
+    because admission re-derives the window from the adapter's recorded receive time.
+    Before this fix the row carried no receive time, so the check was skipped and the
+    late ballot was silently counted."""
+    fe = full_env
+    _register_and_dkg(fe)
+    fe.clock.set(1_500)
+    good = fe.voter_ballot([3, 0, 0], b"\x01" * 32)
+    submit_ballot(fe.dl, fe.config.election_id, good, clock=fe.clock)
+
+    # Inject the way a bypass would: straight into storage, stamped after voting_end.
+    late = fe.voter_ballot([0, 3, 0], b"\x02" * 32)
+    stored = fe.dl._elections[fe.config.election_id]
+    stored.ballots.append(
+        StoredBallot(sequence_number=len(stored.ballots), envelope=late, submitted_at=2_400)
+    )
+    assert fe.dl.count_ballots(fe.config.election_id) == 2
+
+    fe.clock.set(2_500)
+    result = agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
+
+    assert list(result.totals) == [3, 0, 0]  # the late ballot did not count
+    agg_artifact = fe.dl.get_aggregate(fe.config.election_id)
+    assert agg_artifact.admitted == (0,)
+    assert [x.reason for x in agg_artifact.exclusions] == [ExclusionReason.OUT_OF_WINDOW]
+    # And an auditor reading only public data reproduces the same exclusion.
+    assert auditor.audit(fe.dl, fe.config.election_id).ok
 
 
 # --------------------------------------------------------------------------- #

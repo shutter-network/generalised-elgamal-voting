@@ -53,8 +53,8 @@ contract ElectionVoteTest is Test {
         assertEq(election.getNumBallots(), 1);
         assertEq(address(election).balance, selfSubmitFee);
 
-        VotingTypes.Ballot[] memory ballots = election.getBallots(0, 1);
-        VotingTypes.Ballot memory storedBallot = ballots[0];
+        VotingTypes.BallotRecord[] memory records = election.getBallots(0, 1);
+        VotingTypes.Ballot memory storedBallot = records[0].ballot;
         assertEq(storedBallot.pseudonym, ballot.pseudonym);
         assertEq(storedBallot.vk, ballot.vk);
         assertEq(storedBallot.zkProof, ballot.zkProof);
@@ -83,14 +83,14 @@ contract ElectionVoteTest is Test {
         vm.stopPrank();
 
         assertEq(election.getNumBallots(), 2);
-        VotingTypes.Ballot[] memory ballots = election.getBallots(0, 2);
-        bytes32 firstPseudonym = ballots[0].pseudonym;
-        bytes32 secondPseudonym = ballots[1].pseudonym;
+        VotingTypes.BallotRecord[] memory records = election.getBallots(0, 2);
+        bytes32 firstPseudonym = records[0].ballot.pseudonym;
+        bytes32 secondPseudonym = records[1].ballot.pseudonym;
         assertEq(firstPseudonym, secondPseudonym);
 
-        VotingTypes.Ballot memory latestBallot = election.getBallot(_pseudonym("same-pseudonym"));
-        assertEq(latestBallot.vk, ballots[1].vk);
-        assertEq(latestBallot.ciphertexts[0].c1, ballots[1].ciphertexts[0].c1);
+        VotingTypes.BallotRecord memory latestRecord = election.getBallot(_pseudonym("same-pseudonym"));
+        assertEq(latestRecord.ballot.vk, records[1].ballot.vk);
+        assertEq(latestRecord.ballot.ciphertexts[0].c1, records[1].ballot.ciphertexts[0].c1);
     }
 
     function test_getBallotsAndCiphertextsReturnRanges() external {
@@ -101,16 +101,16 @@ contract ElectionVoteTest is Test {
         election.submitVote{value: selfSubmitFee}(_ballot(_pseudonym("pseudo-2"), 20));
         vm.stopPrank();
 
-        VotingTypes.Ballot[] memory ballots = election.getBallots(0, 2);
-        assertEq(ballots.length, 2);
-        assertEq(ballots[0].pseudonym, _pseudonym("pseudo-1"));
-        assertEq(ballots[1].pseudonym, _pseudonym("pseudo-2"));
-        assertEq(ballots[0].vk.length, 48);
-        assertEq(ballots[1].voterSignature.length, 32);
+        VotingTypes.BallotRecord[] memory records = election.getBallots(0, 2);
+        assertEq(records.length, 2);
+        assertEq(records[0].ballot.pseudonym, _pseudonym("pseudo-1"));
+        assertEq(records[1].ballot.pseudonym, _pseudonym("pseudo-2"));
+        assertEq(records[0].ballot.vk.length, 48);
+        assertEq(records[1].ballot.voterSignature.length, 32);
 
-        assertEq(ballots[1].ciphertexts.length, 3);
-        assertEq(ballots[1].ciphertexts[0].c1, _g2Point(20));
-        assertEq(ballots[1].ciphertexts[2].c2, _g2Point(25));
+        assertEq(records[1].ballot.ciphertexts.length, 3);
+        assertEq(records[1].ballot.ciphertexts[0].c1, _g2Point(20));
+        assertEq(records[1].ballot.ciphertexts[2].c2, _g2Point(25));
     }
 
     function test_getBallotByPseudonymAndElectionView() external {
@@ -120,10 +120,10 @@ contract ElectionVoteTest is Test {
         vm.prank(voter);
         election.submitVote{value: selfSubmitFee}(ballot);
 
-        VotingTypes.Ballot memory latestBallot = election.getBallot(_pseudonym("pseudo-1"));
-        assertEq(latestBallot.pseudonym, ballot.pseudonym);
-        assertEq(latestBallot.vk, ballot.vk);
-        assertEq(latestBallot.wrAttestation, ballot.wrAttestation);
+        VotingTypes.BallotRecord memory latestRecord = election.getBallot(_pseudonym("pseudo-1"));
+        assertEq(latestRecord.ballot.pseudonym, ballot.pseudonym);
+        assertEq(latestRecord.ballot.vk, ballot.vk);
+        assertEq(latestRecord.ballot.wrAttestation, ballot.wrAttestation);
 
         (VotingTypes.ElectionConfigView memory config, VotingTypes.DKGResult memory dkgResult) = election.getElection();
         assertEq(config.electionId, 1);

@@ -42,9 +42,10 @@ def _max_stored_nonce(dl: ElectionDataLayer, election_id: bytes, pseudonym: byte
     total = dl.count_ballots(election_id)
     best = 0
     for off in range(0, total, _NONCE_SCAN_PAGE):
-        for b in dl.list_ballots(election_id, off, _NONCE_SCAN_PAGE):
-            if b.pseudonym == pseudonym and b.attestation.nonce > best:
-                best = b.attestation.nonce
+        for sb in dl.list_ballots(election_id, off, _NONCE_SCAN_PAGE):
+            env = sb.envelope
+            if env.pseudonym == pseudonym and env.attestation.nonce > best:
+                best = env.attestation.nonce
     return best
 
 

@@ -27,6 +27,7 @@ from flask import Flask, jsonify, request
 
 from geg.envelopes import codecs
 from geg.ports.data_layer import ElectionDataLayer, ElectionFilter, FinalizedKey, VotingWindowError
+from geg.services.data_layer.data_layer import PORT_READ_PREFIX, port_read_blueprint
 from geg.services.gateway.gateway import GatewayRejection, submit_ballot
 
 _DEFAULT_LIMIT = 50
@@ -127,6 +128,14 @@ def build_api_app(
     write = write_dl if write_dl is not None else dl
     _clock = clock if clock is not None else (lambda: int(time.time()))
 
+    # The port's read surface, mounted verbatim under /port (bare-hex ids, envelope
+    # JSON, ballot storage metadata, no pagination cap). This is what remote keyper
+    # operators point GEG_DATA_LAYER_URL at: they read the data layer but write through
+    # the coordinator relay, so exposing reads here keeps the data-layer service itself
+    # off the public network. The browser routes below are a separate, friendlier shape;
+    # the blueprint carries its own error handlers so the two contracts don't mix.
+    app.register_blueprint(port_read_blueprint(dl, url_prefix=PORT_READ_PREFIX))
+
     @app.errorhandler(KeyError)
     def _not_found(e):
         return jsonify(error="KeyError", message=str(e)), 404
@@ -213,8 +222,11 @@ def build_api_app(
         offset = max(0, _int_arg("offset", 0))
         limit = min(_MAX_LIMIT, max(1, _int_arg("limit", _DEFAULT_LIMIT)))
         ballots = dl.list_ballots(eid_b, offset, limit)
+        # Public browser shape is the bare ballot envelope (unchanged): the storage
+        # metadata the port now carries is for tally/audit, and auditors read it through
+        # the data-layer port, not this presentation surface.
         return _reply({
-            "ballots": [codecs.enc_ballot(b) for b in ballots],
+            "ballots": [codecs.enc_ballot(sb.envelope) for sb in ballots],
             "total": total, "limit": limit, "offset": offset,
         })
 

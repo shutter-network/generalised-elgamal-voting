@@ -21,12 +21,14 @@ from typing import Callable
 
 from geg.core import authz, write_auth
 from geg.core.config import ElectionConfig
+from geg.core.state import ElectionState, StateFacts, derive_state
 from geg.envelopes.types import (
     AggregateArtifact,
     BallotEnvelope,
     DecryptionShareEnvelope,
     DKGResultSubmission,
     ResultArtifact,
+    StoredBallot,
 )
 from geg.ports.data_layer import (
     ElectionDataLayer,
@@ -44,7 +46,7 @@ class _Stored:
     config: ElectionConfig
     cancelled: bool = False
     dkg_by_keyper: dict[int, DKGResultSubmission] = field(default_factory=dict)
-    ballots: list[BallotEnvelope] = field(default_factory=list)
+    ballots: list[StoredBallot] = field(default_factory=list)
     aggregate_by_keyper: dict[int, AggregateArtifact] = field(default_factory=dict)
     shares_by_keyper: dict[int, DecryptionShareEnvelope] = field(default_factory=dict)
     result: ResultArtifact | None = None
@@ -140,7 +142,9 @@ class InMemoryDataLayer(ElectionDataLayer):
         return [st.dkg_by_keyper[i] for i in sorted(st.dkg_by_keyper)]
 
     def get_finalized_key(self, election_id) -> FinalizedKey | None:
-        st = self._get(election_id)
+        return self._finalized_key_of(self._get(election_id))
+
+    def _finalized_key_of(self, st: _Stored) -> FinalizedKey | None:
         needed = st.config.threshold.t + 1
         groups: dict[tuple, set[int]] = {}
         for idx, sub in st.dkg_by_keyper.items():
@@ -155,14 +159,34 @@ class InMemoryDataLayer(ElectionDataLayer):
 
     def submit_ballot(self, election_id, ballot: BallotEnvelope) -> int:
         st = self._get(election_id)
-        # Ballot writes are open in the reference (gateway restriction, where
-        # required, is enforced at the transport tier). Ballots are self-verifying;
-        # verification is authoritative at tally time.
+        # Ballot writes are open as to *identity* in the reference (gateway
+        # restriction, where required, is enforced at the transport tier), but the
+        # voting window is enforced here — see _require_voting_open. Ballots are
+        # self-verifying; proof verification stays authoritative at tally time.
+        now = self._clock()
+        self._require_voting_open(st, now)
         seq = len(st.ballots)
-        st.ballots.append(ballot)
+        st.ballots.append(StoredBallot(sequence_number=seq, envelope=ballot, submitted_at=now))
         return seq
 
-    def list_ballots(self, election_id, start: int, count: int) -> list[BallotEnvelope]:
+    def _require_voting_open(self, st: _Stored, now: int) -> None:
+        """Reject a ballot written outside the open voting window.
+
+        Mirrors the chain contract's ``submitVote`` gate set exactly
+        (``_requireNotCancelled`` + ``dkgFinalized`` + ``[votingStart, votingEnd)``),
+        which is precisely ``derive_state(...) is VOTING``. Using the same predicate
+        the gateway and tally-time admission use means a ballot accepted here can
+        never be excluded as ``OUT_OF_WINDOW`` later — the two checks cannot drift.
+        """
+        facts = StateFacts(
+            cancelled=st.cancelled,
+            key_finalized=self._finalized_key_of(st) is not None,
+            result_published=st.result is not None,
+        )
+        if derive_state(st.config, facts, now) is not ElectionState.VOTING:
+            raise VotingWindowError("ballot submitted outside the open voting window")
+
+    def list_ballots(self, election_id, start: int, count: int) -> list[StoredBallot]:
         st = self._get(election_id)
         return st.ballots[start : start + count]
 

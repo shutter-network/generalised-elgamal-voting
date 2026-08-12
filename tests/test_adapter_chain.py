@@ -304,7 +304,11 @@ def test_ballot_ordering_and_pagination(env):
     assert seqs == [0, 1, 2, 3, 4]
     assert env.reader().count_ballots(ELECTION_ID) == 5
     page = env.reader().list_ballots(ELECTION_ID, 2, 2)
-    assert [b.pseudonym for b in page] == [bytes([3]) * 32, bytes([4]) * 32]
+    assert [sb.envelope.pseudonym for sb in page] == [bytes([3]) * 32, bytes([4]) * 32]
+    assert [sb.sequence_number for sb in page] == [2, 3]
+    # Block time is the one adversarially authoritative receive time in the system.
+    # (The chain env uses absolute unix timestamps offset from env.base.)
+    assert all(env.base + 1_000 <= sb.submitted_at < env.base + 2_000 for sb in page)
 
 
 def test_writes_outside_voting_window_raise_voting_window_error(env):
@@ -329,7 +333,7 @@ def test_ballot_attestation_round_trips_through_wrattestation(env):
     env.finalize_dkg()
     env.warp(1500)
     env.dl("gateway").submit_ballot(ELECTION_ID, env.ballot(b"\x01" * 32))
-    got = env.reader().list_ballots(ELECTION_ID, 0, 1)[0]
+    got = env.reader().list_ballots(ELECTION_ID, 0, 1)[0].envelope
     assert got.attestation.weight == 1
     assert got.attestation.election_id == ELECTION_ID
 

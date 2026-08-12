@@ -186,7 +186,7 @@ docker compose -p keyper1 -f deploy/docker-compose.keyper.yml --env-file deploy/
 Within a few seconds the finalized election key is readable (`00..01` = first election):
 
 ```bash
-curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000000000000000000000000001/dkg/finalized
+curl -s http://127.0.0.1:8500/elections/1/dkg/finalized
 ```
 
 OR you can see it on the dashboard.
@@ -217,7 +217,7 @@ confirm from the API directly (totals reflect the ballots cast, each scaled by i
 eligibility-attested weight):
 
 ```bash
-curl -s http://127.0.0.1:8000/elections/0000000000000000000000000000000000000000000000000000000000000001/result
+curl -s http://127.0.0.1:8500/elections/1/result
 #   → {"result":{"totals":[...],"keyperIndices":[1,2],"bsgsBound":...,...}}
 ```
 
@@ -238,13 +238,22 @@ rm -rf postgres-data keyper-state* coordinator-state eligibility-state   # bind-
 ### Ports
 | Service | Port |
 |---|---|
-| data-layer | 8000 |
+| data-layer | 8000 — **internal only**, not published to the host |
 | keypers | separate stacks (local: 8101–8103) |
 | admin | 8300 |
 | coordinator | 8400 |
-| public API (reads + ballot ingest) | 8500 |
+| public API (reads + ballot ingest) | 8500 — also serves the port read surface at `/port` |
 | eligibility (standalone) | 8600 |
 | admin app (dev) / voter app (dev) | 5173 / 5174 |
+
+**Two read shapes on :8500 — which to curl.** The browser routes (`/elections/1/…`) take
+the friendly decimal id and are what the frontends use, so they are the ones to reach for
+when eyeballing an election by hand (the curls above). They are *display-shaped*: election
+ids are decimalized and ballot pages cap at 200. The `/port` routes
+(`/port/elections/<64-hex>/…`) are the byte-verbatim `ElectionDataLayer` contract —
+bare-hex ids, ballot storage metadata, no cap. Use `/port` when the bytes matter
+(re-deriving a digest, verifying a signature, reading every ballot) and when writing a
+client that speaks the port; that is what keypers point `GEG_API_URL` at.
 
 ### Operational notes
 

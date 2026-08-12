@@ -38,8 +38,9 @@ services:
       GEG_DATA_LAYER: database
       GEG_DATA_LAYER_DSN: postgresql://geg:geg@postgres:5432/geg
       DATA_LAYER_PORT: "8000"
-    ports:
-      - "8000:8000"
+    # No host port. Only internal service can access it.
+    expose:
+      - "8000"
     depends_on:
       postgres:
         condition: service_healthy

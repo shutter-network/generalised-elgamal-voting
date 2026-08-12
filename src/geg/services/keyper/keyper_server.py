@@ -40,6 +40,7 @@ from geg.core import write_auth
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
 from geg.crypto.points import g2_from_compressed, g2_to_compressed
 from geg.ports.data_layer import ImmutabilityError
+from geg.services.data_layer.data_layer import PORT_READ_PREFIX
 from . import keyper_bootstrap as boot
 from . import keyper_persistence as persist
 from .keyper import KeyperService
@@ -558,19 +559,40 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     return app
 
 
+def resolve_read_url(env) -> str:
+    """Resolve the keyper's read endpoint from the environment.
+
+    A keyper only **reads** the election data (its writes go to the coordinator relay),
+    and it reads them from the public API's port surface — not from the data-layer
+    service, which is internal-only because its ballot write path is unauthenticated.
+
+    ``GEG_API_URL`` is therefore the API's **base** URL (e.g. ``https://vote.example.org``
+    or ``http://host.docker.internal:8500``); the keyper appends the port-surface path
+    itself, so an operator never has to know or spell it.
+    """
+    api_url = (env.get("GEG_API_URL") or "").strip()
+    if api_url:
+        return api_url.rstrip("/") + PORT_READ_PREFIX
+
+    raise SystemExit(
+        "set GEG_API_URL to the public API's base URL (e.g. http://host.docker.internal:8500); "
+        f"the keyper reads through its port surface at {PORT_READ_PREFIX}"
+    )
+
+
 def main() -> None:
-    """Run one keyper process against the database data-layer microservice.
+    """Run one keyper process, reading through the public API's port surface.
 
     Env: ``KEYPER_SIGNING_KEY`` (hex secp256k1 scalar — this keyper's Ethereum
     identity, whose 20-byte address is its committee identity), ``COORDINATOR_IDENTITY``
     (hex 20-byte address the keyper pins for bootstrap auth — the coordinator is the
-    **sole** bootstrapper), ``GEG_DATA_LAYER_URL``
-    (the uniform data-layer service — used for **reads** only), ``COORDINATOR_URL``
-    (where the keyper POSTs its signed DKG result / decryption shares — the
-    coordinator relays them; if unset, writes go directly to the data layer). The
-    relay bearer token is **not** an env var: the coordinator pushes it over
-    ``/auth/bootstrap`` and it persists in state. ``KEYPER_STATE_DIR``,
-    ``KEYPER_HOST``/``KEYPER_PORT``.
+    **sole** bootstrapper), ``GEG_API_URL`` (the public API's **base** URL — the keyper
+    appends the port read surface itself; see :func:`resolve_read_url`),
+    ``COORDINATOR_URL`` (where the keyper POSTs its signed DKG result / decryption
+    shares — the coordinator relays them; if unset, writes go directly to the read
+    handle, which will fail against a read-only surface). The relay bearer token is
+    **not** an env var: the coordinator pushes it over ``/auth/bootstrap`` and it
+    persists in state. ``KEYPER_STATE_DIR``, ``KEYPER_HOST``/``KEYPER_PORT``.
     """
     import os
     import time
@@ -583,7 +605,7 @@ def main() -> None:
     signer = Signer.from_sk(int(os.environ["KEYPER_SIGNING_KEY"], 16))
     # The coordinator is the sole keyper bootstrapper; pin only its identity.
     trusted_identities = {bytes.fromhex(os.environ["COORDINATOR_IDENTITY"].removeprefix("0x"))}
-    data_layer = HttpDataLayerClient(os.environ["GEG_DATA_LAYER_URL"])
+    data_layer = HttpDataLayerClient(resolve_read_url(os.environ))
     state_dir = os.environ.get("KEYPER_STATE_DIR", "/keyper-state")
 
     # Writes go to the coordinator relay when configured; otherwise directly to the

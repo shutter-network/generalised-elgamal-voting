@@ -251,14 +251,19 @@ class BlockchainDataLayer(ElectionDataLayer):
         logs = election.events.VoteSubmitted().process_receipt(receipt)
         return int(logs[0]["args"]["ballotIndex"])
 
-    def list_ballots(self, election_id, start: int, count: int) -> list[BallotEnvelope]:
+    def list_ballots(self, election_id, start: int, count: int) -> list[StoredBallot]:
         election = self._election(election_id)
         total = election.functions.getNumBallots().call()
         count = min(count, max(0, total - start))
         if count <= 0:
             return []
+        # getBallots returns BallotRecord[] (payload + block-time submittedAt), so the
+        # window check has an authoritative receive time. Ballot index == sequence number.
         raw = election.functions.getBallots(start, count).call()
-        return [codec.ballot_from_contract(b, election_id) for b in raw]
+        return [
+            codec.ballot_record_from_contract(rec, election_id, start + offset)
+            for offset, rec in enumerate(raw)
+        ]
 
     def count_ballots(self, election_id) -> int:
         return int(self._election(election_id).functions.getNumBallots().call())

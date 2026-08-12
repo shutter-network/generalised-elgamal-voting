@@ -120,6 +120,24 @@ pseudonyms — self-pay puts the voter's address on-chain and can deanonymize th
 ballot, so sponsored submission is the anonymity-preserving choice. See
 [`RUNNING.md`](./RUNNING.md).
 
+> **The bundled eligibility issuer is reference code, not a production service.** The
+> dev stub (`services/eligibility`), the wallet adapter (`adapters/eligibility_wallet`),
+> and the chain voting-power reader (`adapters/voting_power`) exist to show the shape of
+> the port; a real deployment supplies its own hardened issuer. Because the eligibility
+> service is the **sole authority on weight**, a production implementation MUST, at
+> minimum:
+> - **Pin the voting-power snapshot block** (e.g. to the election's `votingStart` block)
+>   rather than reading `"latest"`. `chain_voting_power(...)` defaults to `"latest"` for
+>   convenience; left unpinned, a voter can move tokens between wallets and vote twice
+>   with the same balance.
+> - **Clamp attested `weight` to the election's `maxWeight`** and enforce eligibility
+>   durably (the bundled reissue/nonce guards are single-process).
+> - **Bind a freshness/expiry (and ideally a one-time nonce) into the wallet challenge**
+>   so a captured signature can't be replayed to mint credentials.
+>
+> `geg`'s core verifies only the attestation's signature, `weight ≤ maxWeight`, and the
+> bindings — it trusts the issuer for weight correctness by design.
+
 ### Source layout (`src/geg/`)
 
 Layered top-to-bottom so imports flow downward:

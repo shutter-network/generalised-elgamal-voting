@@ -44,6 +44,7 @@ from geg.envelopes.types import (
     DecryptionShareEnvelope,
     DKGResultSubmission,
     ResultArtifact,
+    StoredBallot,
 )
 
 
@@ -160,11 +161,25 @@ class ElectionDataLayer(ABC):
         Authorized writer: a ``gateway_key`` (or open where direct submission is
         enabled). No proof verification here — ballots are self-verifying and
         verification is authoritative at tally time.
+
+        **Voting-window gate.** Every backend rejects a ballot written outside the
+        open voting window with :class:`VotingWindowError`, using the same gate set
+        the chain contract's ``submitVote`` applies (not cancelled, DKG finalized,
+        ``voting_start <= now < voting_end`` — i.e. derived state ``Voting``). This
+        is defense in depth, not the integrity boundary: the authoritative check is
+        the ``OUT_OF_WINDOW`` reason at tally time, re-derived from the
+        ``submitted_at`` that :meth:`list_ballots` returns.
         """
 
     @abstractmethod
-    def list_ballots(self, election_id: bytes, start: int, count: int) -> list[BallotEnvelope]:
-        """Return ballots in stable total order from ``start``. Public read."""
+    def list_ballots(self, election_id: bytes, start: int, count: int) -> list[StoredBallot]:
+        """Return stored ballots in stable total order from ``start``. Public read.
+
+        Each row carries its ``sequence_number`` and the adapter's authoritative
+        ``submitted_at`` receive time alongside the envelope, so the tally-time
+        ``OUT_OF_WINDOW`` check is re-derivable from a public read instead of
+        depending on an ingress having filtered correctly.
+        """
 
     @abstractmethod
     def count_ballots(self, election_id: bytes) -> int:

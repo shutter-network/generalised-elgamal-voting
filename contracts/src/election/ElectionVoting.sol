@@ -50,16 +50,17 @@ abstract contract ElectionVoting is ElectionBase {
         return ballotRecords.length;
     }
 
-    function getBallot(bytes32 pseudonym) external view returns (VotingTypes.Ballot memory ballot) {
+    function getBallot(bytes32 pseudonym) external view returns (VotingTypes.BallotRecord memory record) {
         uint256 ballotIndexPlusOne = ballotIndexPlusOneByPseudonym[pseudonym];
         if (ballotIndexPlusOne == 0) revert BallotNotFound(pseudonym);
-        return ballotRecords[ballotIndexPlusOne - 1].ballot;
+        return ballotRecords[ballotIndexPlusOne - 1];
     }
 
-    function getBallots(uint256 startIndex, uint256 count) external view returns (VotingTypes.Ballot[] memory ballots) {
-        ballots = new VotingTypes.Ballot[](count);
+    function getBallots(uint256 startIndex, uint256 count) external view returns (VotingTypes.BallotRecord[] memory records)
+    {
+        records = new VotingTypes.BallotRecord[](count);
         for (uint256 index = 0; index < count; index++) {
-            ballots[index] = ballotRecords[startIndex + index].ballot;
+            records[index] = ballotRecords[startIndex + index];
         }
     }
 }

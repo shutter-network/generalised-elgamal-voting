@@ -41,8 +41,11 @@ interface IElection is IAccessControl {
 
     function submitVote(VotingTypes.Ballot calldata ballot) external payable;
     function getNumBallots() external view returns (uint256);
-    function getBallot(bytes32 pseudonym) external view returns (VotingTypes.Ballot memory ballot);
-    function getBallots(uint256 startIndex, uint256 count) external view returns (VotingTypes.Ballot[] memory ballots);
+    function getBallot(bytes32 pseudonym) external view returns (VotingTypes.BallotRecord memory record);
+    function getBallots(uint256 startIndex, uint256 count)
+        external
+        view
+        returns (VotingTypes.BallotRecord[] memory records);
 
     function submitAggregate(VotingTypes.EncryptedTally calldata aggregate) external;
     function submitAggregateSigned(VotingTypes.EncryptedTally calldata aggregate, bytes calldata keyperSig) external;

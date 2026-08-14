@@ -120,7 +120,7 @@ export function ElectionDetail({
         <div style={{ marginLeft: "auto" }}>
           {action ?? (
             <span className="dim">
-              {cfg.numCandidates} candidates · budget {cfg.budget} · {cfg.threshold.t + 1}-of-{cfg.threshold.n}
+              {cfg.numCandidates} candidates · budget {cfg.budget} · {cfg.threshold.t}-of-{cfg.threshold.n}
             </span>
           )}
         </div>
@@ -138,7 +138,7 @@ export function ElectionDetail({
         </div>
       </Card>
 
-      <Card title="Committee & DKG" right={<span className="label">{cfg.threshold.t + 1}-of-{cfg.threshold.n} threshold</span>}>
+      <Card title="Committee & DKG" right={<span className="label">{cfg.threshold.t}-of-{cfg.threshold.n} threshold</span>}>
         <div>
           {cfg.keypers.map((k, i) => (
             <div className="keyper" key={i}>

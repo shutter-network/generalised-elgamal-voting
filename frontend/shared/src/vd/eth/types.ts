@@ -33,10 +33,20 @@ export type Ballot = {
   voterSignature: Hex;
   wrAttestation: Hex;
   nonce: number; // attestation re-vote nonce (last-wins ordering; 1 for a first vote)
+  /** Eligibility weight this ballot is counted at. The tally multiplies the voter's points
+   *  by it, so it is the difference between "80 points" and "6320 points" — but it was
+   *  previously visible nowhere, leaving no way to confirm a ballot counted as intended. */
+  weight: number;
 };
 
 export type EncryptedTally = {
   aggregates: Ciphertext[];
+  /** Sum of the admitted ballots' eligibility weights — the "voting power" behind the
+   *  result. With budget B the per-candidate totals sum to B x this, so it is what makes
+   *  a weighted tally readable (5100 points from 51 voting power, not 5100 voters). */
+  totalAdmittedWeight: bigint;
+  /** How many ballots the tally actually counted (after duplicates/invalid are excluded). */
+  admittedCount: number;
 };
 
 export type DecryptionShare = {

@@ -123,8 +123,11 @@ class HttpDataLayerClient(ElectionDataLayer):
 
     # -- ballots ------------------------------------------------------------ #
 
-    def submit_ballot(self, election_id, ballot) -> int:
-        out = self._post(f"/elections/{self._eid(election_id)}/ballots", {"ballot": codecs.enc_ballot(ballot)})
+    def submit_ballot(self, election_id, ballot, gateway_sig: bytes = b"") -> int:
+        body = {"ballot": codecs.enc_ballot(ballot)}
+        if gateway_sig:
+            body["gatewaySig"] = codecs.enc_bytes(gateway_sig)
+        out = self._post(f"/elections/{self._eid(election_id)}/ballots", body)
         return int(out["sequenceNumber"])
 
     def list_ballots(self, election_id, start: int, count: int):

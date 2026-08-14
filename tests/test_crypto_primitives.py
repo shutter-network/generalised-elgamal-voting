@@ -195,3 +195,58 @@ def test_transcript_diverges_on_different_input():
     t1 = Transcript("L"); t1.append("a", b"\x01")
     t2 = Transcript("L"); t2.append("a", b"\x02")
     assert t1.challenge("c") != t2.challenge("c")
+
+
+# --- canonical scalar decoding --------------------------------- #
+#
+# Scalar arithmetic is mod CURVE_ORDER, so `s` and `s + CURVE_ORDER` are the SAME scalar
+# and verify identically — but they are different 32 bytes on the wire. Accepting both
+# means one signature/proof has many valid encodings. Nothing keys identity off those
+# bytes today; the reason to reject non-canonical forms is cross-implementation
+# agreement, since every keyper independently re-derives the aggregate from the stored
+# ballots and a peer that reduced (or rejected) differently would never reach quorum.
+
+def test_schnorr_rejects_non_canonical_s():
+    sk, vk = schnorr.keygen(0x1234)
+    R, s = schnorr.sign(sk, vk, b"msg")
+    assert schnorr.verify(vk, b"msg", *schnorr.decode(schnorr.encode(R, s)))
+
+    # s + CURVE_ORDER is the same scalar (it verifies) and still fits in 32 bytes,
+    # so it is a second valid encoding of one signature unless decode rejects it.
+    malleated = s + CURVE_ORDER
+    assert malleated < 2**256
+    assert schnorr.verify(vk, b"msg", R, malleated)
+    wire = schnorr.encode(R, s)[:48] + malleated.to_bytes(32, "big")
+    assert wire != schnorr.encode(R, s)
+    with pytest.raises(ValueError, match="non-canonical"):
+        schnorr.decode(wire)
+
+
+def test_schnorr_rejects_s_equal_to_curve_order():
+    sk, vk = schnorr.keygen(0x1234)
+    R, _ = schnorr.sign(sk, vk, b"msg")
+    with pytest.raises(ValueError, match="non-canonical"):
+        schnorr.decode(schnorr.encode(R, 0)[:48] + CURVE_ORDER.to_bytes(32, "big"))
+
+
+def test_schnorr_accepts_canonical_boundary_scalars():
+    """CURVE_ORDER - 1 and 0 are legal scalars; only >= CURVE_ORDER is not."""
+    sk, vk = schnorr.keygen(0x1234)
+    R, _ = schnorr.sign(sk, vk, b"msg")
+    for s in (0, 1, CURVE_ORDER - 1):
+        _, decoded = schnorr.decode(schnorr.encode(R, 0)[:48] + s.to_bytes(32, "big"))
+        assert decoded == s
+
+
+@pytest.mark.parametrize("bad_half", ["e", "z"])
+def test_dleq_rejects_non_canonical_scalars(bad_half):
+    good = (12345).to_bytes(32, "big")
+    over = (CURVE_ORDER + 7).to_bytes(32, "big")
+    wire = over + good if bad_half == "e" else good + over
+    with pytest.raises(ValueError, match="non-canonical"):
+        proofs.decode_dleq(wire)
+
+
+def test_dleq_roundtrips_canonical_scalars():
+    e, z = 12345, CURVE_ORDER - 1
+    assert proofs.decode_dleq(proofs.encode_dleq(e, z)) == (e, z)

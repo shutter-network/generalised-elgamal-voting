@@ -20,7 +20,13 @@ from web3 import Web3
 from geg.core import write_auth
 from geg.adapters.chain import codec
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.envelopes.types import AggregateArtifact, BallotEnvelope, DecryptionShareEnvelope, DKGResultSubmission
+from geg.envelopes.types import (
+    AggregateArtifact,
+    BallotEnvelope,
+    DecryptionShareEnvelope,
+    DKGResultSubmission,
+    StoredBallot,
+)
 from geg.ports.data_layer import (
     ElectionDataLayer,
     ElectionFilter,
@@ -138,12 +144,26 @@ class BlockchainDataLayer(ElectionDataLayer):
     # -- election lifecycle ------------------------------------------------- #
 
     def register_election(self, config: ElectionConfig, admin_sig: bytes) -> bytes:
+        # Replay guard, BEFORE any transaction. The signed config asserts the id it
+        # expects; the registry assigns ++electionCount. If they disagree this body has
+        # already been registered (or the sequence moved on), so refuse here — the
+        # KeyperSet deploy below is itself a tx, so checking later would still burn the
+        # admin's gas, which is exactly the drain this guard exists to prevent.
+        expected = (int(self.registry.functions.electionCount().call()) + 1).to_bytes(32, "big")
+        if config.election_id != expected:
+            raise ImmutabilityError(
+                f"register: expected election id {config.election_id.hex()} but the next id is "
+                f"{expected.hex()} — the sequence moved on; re-read it and sign again"
+            )
         # Deploy a fresh KeyperSet from the config's keyper addresses + URLs
         # (fresh DKG per election). Storing URLs on-chain lets any service read
         # keyper URLs through the data-layer port — no off-chain URL registry.
         members = [Web3.to_checksum_address(k.signing_key) for k in config.keypers]
         urls = [k.url for k in config.keypers]
-        quorum = config.threshold.t + 1  # on-chain threshold is the quorum count
+        # threshold.t IS the quorum, and KeyperSet stores the quorum, so this is now a
+        # straight pass-through — the old `+1` (and the matching `-1` on read) existed
+        # only because the two sides disagreed on what `t` meant.
+        quorum = config.threshold.quorum
         ks = self._deploy(KEYPERSET_ABI, "KeyperSet", members, urls, quorum)
         params = self._config_to_params(config)
         # The registry assigns the next sequential id; read it back from the event.
@@ -245,7 +265,10 @@ class BlockchainDataLayer(ElectionDataLayer):
 
     # -- ballots ------------------------------------------------------------ #
 
-    def submit_ballot(self, election_id, ballot: BallotEnvelope) -> int:
+    def submit_ballot(self, election_id, ballot: BallotEnvelope, gateway_sig: bytes = b"") -> int:
+        # gateway_sig is ignored on chain: the contract authorizes by msg.sender holding
+        # VOTE_PROXY_ROLE (or charging selfSubmitFee), so the writer is already
+        # authenticated by the transaction itself.
         election = self._election(election_id)
         receipt = self._send(election.functions.submitVote(codec.ballot_to_tuple(ballot)))
         logs = election.events.VoteSubmitted().process_receipt(receipt)
@@ -405,7 +428,8 @@ class BlockchainDataLayer(ElectionDataLayer):
         keyper_addrs = [_addr_bytes(a) for a in v[14]]
         keyper_urls = [str(e) for e in v[20]]  # index-aligned with keyperAddresses
         threshold_n = int(v[12])
-        threshold_t = int(v[13]) - 1  # on-chain threshold is the quorum count (t+1)
+        # No `-1`: `thresholdT` is the quorum and so is `Threshold.t`.
+        threshold_t = int(v[13])
         return ElectionConfig(
             election_id=codec.uint_to_eid(int(v[0])),
             num_candidates=int(v[4]),

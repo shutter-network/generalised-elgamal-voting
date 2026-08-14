@@ -57,6 +57,9 @@ services:
       # the named volume below so re-vote nonces survive restarts — a reset would let a stale
       # ballot outrank a genuine re-vote.
       ELIGIBILITY_NONCE_DB: /eligibility-state/nonces.db
+      # Public API base. Used to read each election's maxWeight from its registered config
+      # so an issued weight is clamped to it.
+      GEG_API_URL: ${GEG_API_URL:-http://host.docker.internal:8500}
     volumes:
       # Mount the allowlist read-only when one is configured on the host. Harmless when
       # ELIGIBILITY_ALLOWLIST is unset (the file is present but never read).
@@ -66,3 +69,7 @@ services:
       - ../eligibility-state:/eligibility-state
     ports:
       - "${ELIGIBILITY_PORT:-8600}:8600"
+    extra_hosts:
+      # Lets the GEG_API_URL default (host.docker.internal) reach the admin's api when this
+      # issuer runs as its own stack. Harmless when GEG_API_URL is a real public URL.
+      - "host.docker.internal:host-gateway"

@@ -34,11 +34,21 @@ class DKGError(RuntimeError):
     pass
 
 
+# How many times the coordinator will drive accuse → reveal → re-verify before giving up
+# and publishing with whoever is able. Bounded because a malicious accuser can keep
+# returning verified:false even after receiving a share that provably verifies, and an
+# unbounded loop would hand it the very DoS this repair path exists to remove.
+_MAX_REPAIR_ROUNDS = 2
+
+
 class DKGComplaint(DKGError):
-    """A committee member reported a Feldman-VSS complaint against a dealer during
-    round2. Terminal for this ceremony: a divergent transcript can never finalize, so
-    the coordinator halts *before* publishing and surfaces the signed accusations for
-    manual resolution (see DKG_SECURITY_HARDENING_PLAN.md). Carries the accusations."""
+    """Complaints survived the repair attempts *and* cost the quorum.
+
+    Raised only when the key did **not** finalize — i.e. fewer keypers ended up able to
+    publish than the threshold requires. A complaint on its own is no longer terminal:
+    the coordinator asks the accused dealer to re-deal, re-runs round 2 for the accuser,
+    and then publishes with whoever holds a verified share, so a single member returning
+    ``verified:false`` excludes only itself. Carries the signed accusations."""
 
     def __init__(self, message: str, accusations: list[dict]):
         super().__init__(message)
@@ -218,7 +228,7 @@ def bootstrap_keypers(coordinator, keyper_urls: dict[int, str], *, member_addrs:
 
 
 def _post_keyper(url: str, path: str, election_id: bytes, api_tokens: dict[int, str], i: int,
-                 *, rebootstrap=None, timeout: float, op: str | None = None):
+                 *, rebootstrap=None, timeout: float, op: str | None = None, extra: dict | None = None):
     """POST a coordinator→keyper trigger, recovering from a stale-token 401.
 
     On ``401`` — the keyper doesn't hold the token we presented (state loss, or a
@@ -235,7 +245,7 @@ def _post_keyper(url: str, path: str, election_id: bytes, api_tokens: dict[int, 
     """
     op = op or path.lstrip("/")
     eid_hex = election_id.hex()
-    body = {"electionId": eid_hex}
+    body = {"electionId": eid_hex, **(extra or {})}
     try:
         r = requests.post(url.rstrip("/") + path, json=body,
                           headers={"Authorization": f"Bearer {api_tokens[i]}"}, timeout=timeout)
@@ -287,28 +297,82 @@ def run_dkg_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: di
         _LOG.info("op=dkg phase=%s status=ok election=%s keypers=%d", phase, eid_hex, len(idxs))
 
     # round2 — collect complaints. A verified:false response carries recipient-signed
-    # accusations (DKG-ACCUSE-v1). If ANY keyper complains we HALT before publishing (a
-    # divergent transcript would never finalize) and surface the signed evidence for
-    # manual resolution. Automated adjudicate → exclude → re-round2 is future work.
-    complaints = [(i, resp) for i in idxs
-                  if isinstance(resp := call(i, "round2"), dict) and resp.get("verified") is False]
-    _LOG.info("op=dkg phase=round2 status=ok election=%s keypers=%d", eid_hex, len(idxs))
+    # accusations (DKG-ACCUSE-v1).
+    def round2_complaints(targets):
+        """Run round 2 on `targets`; return {accuser: [accusation, ...]} for the failures."""
+        out = {}
+        for i in targets:
+            resp = call(i, "round2")
+            if isinstance(resp, dict) and resp.get("verified") is False:
+                out[i] = resp.get("accusations", [])
+        return out
+
+    complaints = round2_complaints(idxs)
+    _LOG.info("op=dkg phase=round2 status=ok election=%s keypers=%d complaining=%d",
+              eid_hex, len(idxs), len(complaints))
+
+    attempts = 0
+    while complaints and attempts < _MAX_REPAIR_ROUNDS:
+        attempts += 1
+        for accuser, accusations in sorted(complaints.items()):
+            for acc in accusations:
+                dealer = acc.get("accusedDealerIndex")
+                _LOG.warning("op=dkg_complaint accuser_kid=%s accused_dealer=%s election=%s signature=%s",
+                             acc.get("recipientIndex"), dealer, acc.get("electionId"), acc.get("signature"))
+                if dealer not in keyper_urls:
+                    continue
+                # Best-effort by design: a dealer that refuses (or is unreachable) is exactly
+                # the case the loop must survive, so a failure here is logged, not raised.
+                resp = _post_keyper(keyper_urls[dealer], "/dkg/reveal_share", election_id, api_tokens,
+                                    dealer, rebootstrap=rebootstrap, timeout=timeout, op="reveal_share",
+                                    extra={"accusation": acc})
+                ok = resp is not None and getattr(resp, "status_code", 0) == 200
+                _LOG.log(
+                    logging.INFO if ok else logging.ERROR,
+                    "op=dkg phase=repair status=%s election=%s dealer=%s recipient=%s attempt=%d",
+                    "redealt" if ok else "reveal_refused", eid_hex, dealer, accuser, attempts)
+        # Only the accusers need re-running; everyone else already holds a valid share.
+        complaints = round2_complaints(sorted(complaints))
+        _LOG.info("op=dkg phase=repair status=rechecked election=%s attempt=%d still_complaining=%d",
+                  eid_hex, attempts, len(complaints))
+
     if complaints:
-        accusations = [acc for _i, resp in complaints for acc in resp.get("accusations", [])]
-        for acc in accusations:
-            _LOG.error("op=dkg_complaint accuser_kid=%s accused_dealer=%s election=%s signature=%s",
-                       acc.get("recipientIndex"), acc.get("accusedDealerIndex"),
-                       acc.get("electionId"), acc.get("signature"))
+        # Every accusation was given its repair attempt and some keyper still cannot verify.
+        # Publish anyway if a quorum can: a keyper that still refuses only excludes *itself*
+        # from decryption, and the data layer finalizes on the t-quorum. Halting here is what
+        # handed one member a veto.
+        _LOG.error("op=dkg phase=repair status=unresolved election=%s keypers=%s "
+                   "reason=still_complaining_after_%d_attempts", eid_hex, sorted(complaints), attempts)
+
+    publishers = []
+    for i in idxs:
+        if i in complaints:
+            _LOG.warning("op=dkg phase=publish status=skipped election=%s keyper=%d "
+                         "reason=no_verified_share", eid_hex, i)
+            continue
+        try:
+            call(i, "publish")
+            publishers.append(i)
+        except Exception as err:  # noqa: BLE001 — one keyper failing must not end the ceremony
+            _LOG.error("op=dkg phase=publish status=error election=%s keyper=%d err=%s", eid_hex, i, err)
+    _LOG.info("op=dkg phase=publish status=ok election=%s published=%d/%d",
+              eid_hex, len(publishers), len(idxs))
+
+    finalized = data_layer.get_finalized_key(election_id) is not None
+    if finalized and len(publishers) < len(idxs):
+        # Finalized, but with less decryption redundancy than the committee was sized for:
+        # every publisher must now be reachable at tally. Operators should see this.
+        _LOG.error("op=dkg status=finalized_degraded election=%s published=%s absent=%s "
+                   "reason=no_spare_decryption_capacity",
+                   eid_hex, publishers, sorted(set(idxs) - set(publishers)))
+    if not finalized and complaints:
+        accusations = [acc for accs in complaints.values() for acc in accs]
         accused = sorted({acc.get("accusedDealerIndex") for acc in accusations})
         raise DKGComplaint(
-            f"DKG halted: complaint(s) against dealer(s) {accused}; not publishing on chain. "
-            f"Signed accusations logged above; resolve manually (see DKG_SECURITY_HARDENING_PLAN.md).",
+            f"DKG did not finalize: unrepaired complaint(s) against dealer(s) {accused} left "
+            f"fewer than the quorum able to publish. Signed accusations logged above.",
             accusations)
-
-    for i in idxs:
-        call(i, "publish")
-    _LOG.info("op=dkg phase=publish status=ok election=%s keypers=%d", eid_hex, len(idxs))
-    return data_layer.get_finalized_key(election_id) is not None
+    return finalized
 
 
 def trigger_decrypt_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
@@ -321,11 +385,44 @@ def trigger_decrypt_http(election_id: bytes, keyper_urls: dict[int, str], api_to
 
 
 def trigger_aggregate_http(election_id: bytes, keyper_urls: dict[int, str], api_tokens: dict[int, str],
-                           *, rebootstrap=None, timeout: float = 30.0) -> None:
-    """Trigger each keyper's /aggregate (keypers self-guard on votingEnd). A ``401`` is
-    recovered via ``rebootstrap`` (Option D safety net); other failures are best-effort.
+                           *, rebootstrap=None, timeout: float = 10.0,
+                           recompute: bool = False) -> dict[int, str]:
+    """Trigger each keyper's /aggregate and report what each one said.
 
-    Each keyper re-derives the same deterministic aggregate from the ordered ballots
-    and submits it signed; the data layer makes it canonical at the t+1 quorum."""
+    Each keyper re-derives the same deterministic aggregate from the ordered ballots and
+    submits it signed; the data layer makes it canonical at the t+1 quorum.
+
+    ``/aggregate`` is **asynchronous** — it accepts and computes on a worker thread — so
+    this returns near-instantly and the per-keyper status is what tells the caller whether
+    to keep waiting. Returns ``{keyper_index: status}`` where status is one of:
+
+    * ``"submitted"``   — that keyper has already contributed
+    * ``"started"`` / ``"in_progress"`` — accepted, still computing
+    * ``"refused"``     — a precondition failed (409); the keyper self-guarded
+    * ``"failed"``      — unreachable or 5xx
+
+    ``recompute=True`` asks keypers to discard a previous submission and re-derive — the
+    coordinator sends it when every keyper reports ``submitted`` yet no quorum formed, since
+    a keyper's aggregate stays overridable until the quorum freezes precisely so honest
+    keypers can re-converge.
+
+    The distinction matters: treating "still computing" as a failed attempt is what used
+    to stall healthy elections (a large aggregate takes minutes). The 10 s timeout is
+    ample now that the call only *accepts* work — and keeps a hanging keyper from holding
+    up the coordinator's other elections, which it scans sequentially.
+    """
+    out: dict[int, str] = {}
     for i, url in keyper_urls.items():
-        _post_keyper(url, "/aggregate", election_id, api_tokens, i, rebootstrap=rebootstrap, timeout=timeout, op="aggregate")
+        r = _post_keyper(url, "/aggregate", election_id, api_tokens, i,
+                         rebootstrap=rebootstrap, timeout=timeout, op="aggregate",
+                         extra={"recompute": True} if recompute else None)
+        if r is None or r.status_code >= 500:
+            out[i] = "failed"
+        elif r.status_code == 409:
+            out[i] = "refused"
+        else:
+            try:
+                out[i] = str(r.json().get("status", "started"))
+            except Exception:  # noqa: BLE001 — a 2xx without the field: treat as accepted
+                out[i] = "started"
+    return out

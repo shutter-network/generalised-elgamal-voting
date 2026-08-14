@@ -48,7 +48,7 @@ from geg.crypto import schnorr  # noqa: E402
 from geg.crypto.points import g1_to_compressed  # noqa: E402
 
 N_KEYPERS = 3
-T = 1  # (t, n) = (1, 3): any 2 of 3 decrypt
+T = 2  # (t, n) = (2, 3): any 2 of 3 decrypt — t IS the quorum
 
 # Well-known Anvil dev accounts (default mnemonic "test test … junk"), accounts [0..2].
 # This is a LOCAL-DEV generator, so the operator EOAs (admin / gateway / coordinator) use
@@ -159,8 +159,14 @@ def main() -> None:
         "ELIGIBILITY_PORT=8600",
         "# Default weight granted to an eligible wallet (dummy issuer).",
         "ELIGIBILITY_DUMMY_WEIGHT=1",
-        "# Optional deny path: point at the mounted allowlist to gate issuance. Unset = allow all.",
+        "# Optional deny path: point at the mounted allowlist to gate issuance. Unset = allow all",
+        "# (every wallet gets ELIGIBILITY_DUMMY_WEIGHT above, so the per-wallet weights in the",
+        "# allowlist file are IGNORED until this is uncommented). Needs a container recreate.",
         "# ELIGIBILITY_ALLOWLIST=/app/eligibility-allowlist.json",
+        "# Public API base. The issuer reads each election's maxWeight from its registered",
+        "# config so an issued weight is clamped to it; unreachable -> /attest fails closed",
+        "# with a 503 rather than minting a credential the tally would reject.",
+        "GEG_API_URL=http://host.docker.internal:8500",
         "",
     ]))
 

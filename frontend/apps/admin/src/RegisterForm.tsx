@@ -4,13 +4,41 @@ import "react-datepicker/dist/react-datepicker.css";
 import { parseEther } from "viem";
 import { api, cancelElection, eidToBareHex, eidToHex, ELIGIBILITY_URL, fetchEligibilityKey, formatApiError, registerElection } from "@geg/shared";
 import { type WalletSigner } from "@geg/shared/wallet";
-import { cancelDigest, lowercaseHex, registerDigest } from "./adminSign";
+import { cancelDigest, encodeElectionId, lowercaseHex, registerDigest } from "./adminSign";
+import { requireAddress, requireEligibilityKey, sponsorAddress } from "./fieldValidation";
 import { FieldHint } from "./FieldHint";
 
 // A connected signer (its account is non-null wherever a Wallet is passed).
 type Wallet = WalletSigner;
 
+// Placeholder only — doRegister replaces it with the id this registration asserts
+// (the sequence head + 1), which is what the admin signature binds.
 const ZERO_EID = "0x" + "0".repeat(64);
+
+// Ballot/tally feasibility ceilings, mirroring ElectionConfig. Checked here so
+// the admin is told before signing; the authoritative check is in the config itself, so
+// bypassing this form changes nothing.
+const MAX_NUM_CANDIDATES = 0xffff;
+const MAX_BUDGET = 0xfffe;          // the proof encodes budget+1 as two bytes
+const MAX_PROOF_BRANCHES = 2500;    // ~3 ms each to verify, on every keyper and auditor
+const MAX_BUDGET_TIMES_WEIGHT = 1_000_000;   // keeps the BSGS recovery bound tractable
+
+/** Reject configs that would register cleanly but leave every ballot unusable. */
+function checkBallotBounds(numCandidates: number, budget: number, maxWeight: number): string | null {
+  if (numCandidates > MAX_NUM_CANDIDATES) return `At most ${MAX_NUM_CANDIDATES} candidates.`;
+  if (budget > MAX_BUDGET) return `Budget must be at most ${MAX_BUDGET}.`;
+  const branches = numCandidates * (budget + 1);
+  if (branches > MAX_PROOF_BRANCHES) {
+    return `Too expensive to tally: ${numCandidates} candidates x (budget ${budget} + 1) = ` +
+      `${branches} proof branches per ballot, over the ${MAX_PROOF_BRANCHES} limit. Every keyper ` +
+      `and auditor verifies every ballot. Reduce the candidates or the budget.`;
+  }
+  if (budget * maxWeight > MAX_BUDGET_TIMES_WEIGHT) {
+    return `Budget x max weight = ${budget * maxWeight} exceeds ${MAX_BUDGET_TIMES_WEIGHT}; ` +
+      `the tally could not recover the totals. Reduce the budget or the max weight.`;
+  }
+  return null;
+}
 // Fixed crypto-suite + wire-format label; not a per-election knob (see crypto/params.py).
 const PROTOCOL_VERSION = "v1";
 type Status = { kind: "ok" | "err" | "info"; msg: string } | null;
@@ -46,11 +74,11 @@ const HINT: Record<string, Hint> = {
   votingStart: { title: "Voting start", body: "Ballots are only accepted from this moment. The DKG must finalize before it (see DKG lead time)." },
   votingEnd: { title: "Voting end", body: "When voting closes. After this the committee aggregates and decrypts." },
   dkgLeadTime: { title: "DKG lead time", body: "Seconds of headroom the keyper committee needs to run the distributed key generation before voting opens. Must be ≤ the time from now until voting start." },
-  threshold: { title: "Threshold (t / n)", body: "n keypers form the committee; any t+1 of them, acting together, can decrypt — fewer learn nothing. Enter t and n. n must match the number of keyper URLs." },
+  threshold: { title: "Threshold (t of n)", body: "n keypers form the committee; any t of them, acting together, can decrypt — fewer learn nothing. t IS the quorum: enter 2 and 3 for 2-of-3. It must be a MAJORITY (t > n/2), so 2-of-3 and 3-of-5 are allowed but 2-of-5 is not — the committee also uses this count to agree on the key and the tally, and a non-majority lets two different groups each claim the quorum. n must match the number of keyper URLs." },
   keyperUrls: { title: "Keyper URLs", body: "One HTTPS endpoint per committee member (n total), one per line. Each keyper's own address is read from its /status and pinned into the signed config." },
-  eligibilityKey: { title: "Eligibility public key", body: "The 48-byte BLS12-381 G1 public key of the eligibility issuer. Every ballot carries an ATTESTATION_V1 credential signed by its private counterpart; admission verifies it." },
-  resultPublisher: { title: "Result-publisher address", body: "The EOA account authorized to publish the final decrypted tally. Others cannot post a result." },
-  gatewayKeys: { title: "On-chain ballot sponsor", body: "Blockchain elections only: the single account that submits ballots fee-free (it is granted VOTE_PROXY_ROLE on the contract). Required for a blockchain-backed election." },
+  eligibilityKey: { title: "Eligibility public key", body: "The 48-byte BLS12-381 G1 public key of the eligibility issuer — 0x followed by 96 hex characters. Every ballot carries an ATTESTATION_V1 credential signed by its private counterpart; admission verifies it." },
+  resultPublisher: { title: "Result-publisher address", body: "The EOA account authorized to publish the final decrypted tally — 0x followed by 40 hex characters. Others cannot post a result." },
+  gatewayKeys: { title: "On-chain ballot sponsor", body: "Blockchain elections only: the single account that submits ballots fee-free (it is granted VOTE_PROXY_ROLE on the contract) — 0x followed by 40 hex characters. Required for a blockchain-backed election; leave blank on the database backend." },
   selfSubmitFee: { title: "Self-submit fee (ETH)", body: "Blockchain elections only: the per-ballot fee a voter pays to submit their OWN ballot on-chain (not through the sponsor). 0 = free for everyone. Enter ETH, e.g. 0.0010." },
 };
 
@@ -90,7 +118,13 @@ async function doRegister(wallet: Wallet, config: Record<string, unknown>, dkgLe
   // a free-form field; we force it to the signing account here (also for pasted JSON).
   // dkgLeadTime is a separate (unsigned) gate param; selfSubmitFee is inside `config` (signed).
   if (!wallet.account) throw new Error("Connect a wallet first.");
-  const full = lowercaseHex({ ...config, adminKey: wallet.account });
+  // The signed config asserts which election id it expects — the sequence head plus one.
+  // The backend still assigns the id and refuses on disagreement, which makes this signed
+  // body single-use: once it registers, the head moves on and a replay can never match.
+  // (Ids are dense and append-only, so total + 1 is the next one.)
+  const { total } = await api.listElections({ limit: 1 });
+  const electionId = encodeElectionId(total + 1);
+  const full = lowercaseHex({ ...config, electionId, adminKey: wallet.account });
   const signature = await wallet.signDigest(registerDigest(full));
   return registerElection(full, signature, dkgLeadTime);
 }
@@ -233,7 +267,7 @@ function browserProbeUrl(url: string): string {
  * keyper's own address from its open `/status`. Rejects (before any signature) on:
  *  - duplicate URLs (operator typo), and
  *  - two distinct URLs that resolve to the *same* keyper address (one keyper listed
- *    twice) — which would corrupt the t-of-n threshold.
+ *    twice) — which would corrupt the t-of-n quorum.
  * The admin service re-checks both authoritatively, but failing here gives the admin
  * an immediate, specific error. */
 export async function resolveKeypers(rawUrls: string[]): Promise<ResolvedKeyper[]> {
@@ -327,7 +361,7 @@ function initialForm() {
   return {
     numCandidates: 3, budget: 1, mode: "exact", variant: "A", weighted: false, maxWeight: 1,
     duplicatePolicy: "last-wins", ...defaultSchedule(), dkgLeadTime: 180,
-    t: 1, n: 3,
+    t: 2, n: 3,  // 2-of-3: t IS the quorum
     keyperUrls: "", eligibilityKey: "", resultPublisherKey: "", gatewayKeys: "", selfSubmitFee: "0",
   };
 }
@@ -369,8 +403,38 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
       if (keypers.length !== Number(f.n)) {
         throw new Error(`Threshold n = ${f.n} but ${keypers.length} keyper URL(s) provided — they must match.`);
       }
+      // t IS the quorum, so the legal range is 1 <= t <= n.
+      const tq = Number(f.t);
+      const nq = Number(f.n);
+      if (!Number.isInteger(tq) || tq < 1 || tq > nq) {
+        throw new Error(
+          `Threshold t = ${f.t} is invalid: t is the quorum (how many keypers must combine ` +
+          `to decrypt), so it must be a whole number with 1 <= t <= n (n = ${f.n}).`
+        );
+      }
+      // The quorum must be a strict majority. 2-of-3 and 3-of-5 are majorities; 2-of-5 is
+      // not, and two disjoint groups of 2 could each claim it. Mirrors both
+      // `Threshold.__post_init__` and the KeyperSet constructor, so the admin is told
+      // before signing instead of getting a 400 (db) or a revert (chain).
+      if (tq * 2 <= nq) {
+        throw new Error(
+          `Threshold ${tq}-of-${nq} is not a majority. The quorum must satisfy t > n/2 — ` +
+          `use t >= ${Math.floor(nq / 2) + 1}. (${tq}-of-${nq} would let two different ` +
+          `groups of ${tq} each claim the quorum.)`
+        );
+      }
+      // Shape-check the 0x-hex identities first. Doing this before the issuer round-trip
+      // means a truncated or non-hex key reports exactly that, instead of surfacing as a
+      // confusing "does not match the issuer" — and nothing is signed until all three are
+      // well formed. Values are returned lowercased, which is the form the digest binds.
+      const eligibilityKey = requireEligibilityKey(f.eligibilityKey);
+      const resultPublisherKey = requireAddress(f.resultPublisherKey, "Result-publisher address");
+      // Required on chain, optional on db — decided by the same `dataStore` capability that
+      // decides whether the field is rendered at all (see `showChainOnly`).
+      const sponsor = sponsorAddress(f.gatewayKeys, dataStore);
+
       setStatus({ kind: "info", msg: "Verifying eligibility public key with the issuer…" });
-      await verifyEligibilityKey(f.eligibilityKey);
+      await verifyEligibilityKey(eligibilityKey);
       const votingStart = fromLocalInputValue(f.votingStart);
       const votingEnd = fromLocalInputValue(f.votingEnd);
       setStatus({ kind: "info", msg: "Awaiting wallet signature…" });
@@ -378,8 +442,7 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
       // 1-element list because config.gatewayKeys is a list. On-chain requires it; the db
       // backend ignores it. Blank → empty list (fine on db; the chain adapter returns a
       // clear error).
-      const gw = f.gatewayKeys.trim();
-      const gatewayKeys = gw ? [gw] : [];
+      const gatewayKeys = sponsor ? [sponsor] : [];
       // Self-submit fee → wei string, inside the SIGNED config. parseEther gives an exact wei
       // bigint from the ETH decimal (no float precision loss). Only meaningful on chain; on
       // db it rides along as "0" and is ignored. Sent as a decimal string (matches the
@@ -392,6 +455,8 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
           throw new Error(`Invalid self-submit fee "${f.selfSubmitFee}" — enter ETH, e.g. 0.0010 (or 0).`);
         }
       }
+      const boundsError = checkBallotBounds(Number(f.numCandidates), Number(f.budget), Number(f.maxWeight));
+      if (boundsError) throw new Error(boundsError);
       const config = {
         electionId: ZERO_EID,
         numCandidates: Number(f.numCandidates), budget: Number(f.budget), mode: f.mode, variant: f.variant,
@@ -399,8 +464,8 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
         votingStart, votingEnd,
         threshold: { t: Number(f.t), n: Number(f.n) },
         keypers,
-        eligibilityKey: f.eligibilityKey.trim(),
-        resultPublisherKey: f.resultPublisherKey.trim(),
+        eligibilityKey,
+        resultPublisherKey,
         gatewayKeys,
         // adminKey is injected by doRegister (always the connected wallet).
         protocolVersion: PROTOCOL_VERSION,
@@ -465,7 +530,7 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
     <div className="reg-sec" data-sec="committee">
       <p className="reg-sec__title">Committee</p>
       <div className="reg-sec__grid">
-        <F label="Threshold t / n" hint={HINT.threshold}>
+        <F label="Threshold t of n" hint={HINT.threshold}>
           <span style={{ display: "flex", gap: 6 }}>
             <input type="number" value={f.t} onChange={(e) => set("t", e.target.value)} style={{ width: 70 }} />
             <input type="number" value={f.n} onChange={(e) => set("n", e.target.value)} style={{ width: 70 }} />

@@ -18,6 +18,7 @@ This module has no HTTP surface of its own: the ingest endpoint lives on the
 
 from __future__ import annotations
 
+from geg.core import write_auth
 from geg.core.admission import StoredBallot, validate_ballot
 from geg.crypto.points import g2_from_compressed
 from geg.envelopes.types import AttestationScheme, BallotEnvelope
@@ -26,6 +27,9 @@ from geg.core.state import ElectionState, StateFacts, derive_state
 
 # Page size for scanning stored ballots when computing a pseudonym's max nonce.
 _NONCE_SCAN_PAGE = 200
+# How far back that scan reaches. Bounds the per-submission cost to O(1) instead of O(n)
+# at the price of making the filter best-effort — see _max_stored_nonce.
+_NONCE_SCAN_LIMIT = 1000
 
 
 class GatewayRejection(ValueError):
@@ -33,19 +37,33 @@ class GatewayRejection(ValueError):
 
 
 def _max_stored_nonce(dl: ElectionDataLayer, election_id: bytes, pseudonym: bytes) -> int:
-    """Highest attestation nonce already stored for ``pseudonym`` (0 if none).
+    """Highest attestation nonce stored for ``pseudonym`` among the most recent ballots.
 
-    Scans the stored ballots via the paginated ``list_ballots`` (no by-pseudonym index in
-    the port). O(n) — acceptable for the reference implementation; a production data layer
-    would expose an indexed lookup. Used only for the best-effort ingestion replay filter,
-    NOT for tally correctness (that is the authoritative nonce ordering in ``admit``)."""
+    Scans **backwards from the newest ballot**, at most ``_NONCE_SCAN_LIMIT`` rows.
+    The old full scan was O(n) per accepted submission — O(n²) to fill an election,
+    and on the HTTP backend that is ``n/page`` network round trips *per vote*, which is a
+    self-inflicted amplifier on a public endpoint.
+
+    Backwards is the right direction: the issuer allocates nonces monotonically and voters
+    submit in order, so a pseudonym's highest nonce is overwhelmingly among its latest
+    ballots. Bounding the walk makes this **best-effort**, which it already was — a
+    determined replayer could bury the newest ballot under ``_NONCE_SCAN_LIMIT`` others and
+    slip a stale one past *this filter*. That costs nothing in integrity: the tally ranks
+    duplicates by ``(nonce, sequence_number)`` in ``admit`` regardless of what got stored,
+    which is the authoritative ordering. This is a funds/DoS guard on the ingest path, not
+    the integrity boundary."""
     total = dl.count_ballots(election_id)
     best = 0
-    for off in range(0, total, _NONCE_SCAN_PAGE):
-        for sb in dl.list_ballots(election_id, off, _NONCE_SCAN_PAGE):
+    floor = max(0, total - _NONCE_SCAN_LIMIT)
+    off = max(floor, ((total - 1) // _NONCE_SCAN_PAGE) * _NONCE_SCAN_PAGE) if total else 0
+    while off >= floor and total:
+        for sb in dl.list_ballots(election_id, off, min(_NONCE_SCAN_PAGE, total - off)):
             env = sb.envelope
             if env.pseudonym == pseudonym and env.attestation.nonce > best:
                 best = env.attestation.nonce
+        if off == floor:
+            break
+        off = max(floor, off - _NONCE_SCAN_PAGE)
     return best
 
 
@@ -56,11 +74,18 @@ def submit_ballot(
     *,
     clock,
     filter_on: bool = True,
+    gateway_signer=None,
 ) -> int:
     """Accept a ballot iff the election is ``Voting``; filter it first if enabled.
 
     Returns the assigned sequence number. Raises :class:`GatewayRejection` if the
     window is closed or (when ``filter_on``) the ballot fails verification.
+
+    ``gateway_signer`` (a :class:`~geg.core.authz.Signer`) authorizes the *write* when the
+    election declares a closed writer set (``config.gateway_keys``). It is
+    unrelated to the filter above: the filter is UX, this is authorization, and the data
+    layer is what enforces it. Unnecessary when ``gateway_keys`` is empty (open writes) or
+    on the chain backend (the transaction sender is the writer).
     """
     rec = dl.get_election(election_id)
     cfg = rec.config
@@ -94,4 +119,6 @@ def submit_ballot(
             if att.nonce <= _max_stored_nonce(dl, election_id, ballot.pseudonym):
                 raise GatewayRejection("STALE_OR_REPLAYED")
 
-    return dl.submit_ballot(election_id, ballot)
+    gateway_sig = write_auth.sign_ballot(gateway_signer.private_key, election_id, ballot) \
+        if gateway_signer is not None else b""
+    return dl.submit_ballot(election_id, ballot, gateway_sig)

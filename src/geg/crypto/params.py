@@ -57,6 +57,26 @@ def scalar_to_bytes(s: int) -> bytes:
     return (int(s) % CURVE_ORDER).to_bytes(SCALAR_BYTES, "big")
 
 
+def scalar_from_bytes(b: bytes, field: str = "scalar") -> int:
+    """Decode a **canonical** 32-byte big-endian scalar.
+
+    Rejects ``v >= CURVE_ORDER``. The scalar arithmetic is mod ``CURVE_ORDER``, so
+    ``s`` and ``s + CURVE_ORDER`` are the same scalar and verify identically — meaning
+    without this check one signature/proof has many valid wire encodings.
+    Nothing in this stack keys identity off those bytes today, but every keyper
+    re-derives the aggregate from the stored ballots: an implementation that reduced
+    (or rejected) differently from its peers would compute a different aggregate and
+    the quorum would never converge. Canonical-only decoding removes that class of
+    divergence. Zero is permitted — it is a legal, if vanishingly improbable, scalar.
+    """
+    if len(b) != SCALAR_BYTES:
+        raise ValueError(f"{field}: expected {SCALAR_BYTES} bytes, got {len(b)}")
+    v = int.from_bytes(b, "big")
+    if v >= CURVE_ORDER:
+        raise ValueError(f"{field}: non-canonical scalar (>= CURVE_ORDER)")
+    return v
+
+
 def wide_reduce(b: bytes) -> int:
     """Reduce a wide byte string to a scalar (used by dual-keccak challenges)."""
     return int.from_bytes(b, "big") % CURVE_ORDER

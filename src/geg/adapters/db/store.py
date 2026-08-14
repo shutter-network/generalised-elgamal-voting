@@ -21,8 +21,10 @@ from typing import Callable
 
 import psycopg
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool
 
 from geg.core import authz, write_auth
+from geg.core.quorum import resolve_unique
 from geg.adapters.db.schema import DDL
 from geg.core.config import ElectionConfig
 from geg.core.state import ElectionState, StateFacts, derive_state
@@ -46,15 +48,32 @@ from geg.ports.data_layer import (
 )
 
 
+# Upper bound on concurrent Postgres connections held by one store. Bounded so a burst of
+# requests queues rather than exhausting the server's connection slots.
+POOL_MAX_SIZE = 10
+
+# Arbitrary constant keying the advisory lock that serializes registrations (so the
+# election-id peek and the nextval that follows it cannot interleave).
+_REGISTER_LOCK_KEY = 0x6765675F72656769  # "geg_regi"
+
+
 class PostgresStore(ElectionDataLayer):
     def __init__(self, dsn: str, clock: Callable[[], int] | None = None):
         self._dsn = dsn
+        # `open=False` then an explicit `open()`: psycopg_pool deprecates implicit opening,
+        # and open() does not block on Postgres being reachable — important because the
+        # service constructs the store at startup, before the DB may be accepting.
+        self._pool = ConnectionPool(dsn, min_size=1, max_size=POOL_MAX_SIZE, open=False)
+        self._pool.open()
         self._clock = clock or (lambda: 0)
 
     # -- connection + schema ------------------------------------------------ #
 
     def _conn(self):
-        return psycopg.connect(self._dsn)
+        """A pooled connection. Every store method opens one, so without a pool each call
+        paid a full TCP + TLS + auth round trip to Postgres — cheap to exhaust from the
+        outside, since the data-layer routes are one-call-per-request."""
+        return self._pool.connection()
 
     def init_schema(self) -> None:
         with self._conn() as conn:
@@ -82,6 +101,23 @@ class PostgresStore(ElectionDataLayer):
         if not authz.verify_register(config.admin_key, admin_sig, config):
             raise WriteAuthorizationError("register: bad admin signature")
         with self._conn() as conn:
+            # Serialize registrations so the peek below is consistent with the nextval
+            # that follows. Registrations are rare and admin-driven, so a single
+            # transaction-scoped advisory lock costs nothing.
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_REGISTER_LOCK_KEY,))
+            # Peek the sequence head WITHOUT consuming it: the signed config asserts the
+            # id it expects, and a mismatch must not burn an id (that would leave gaps and
+            # break the "same dense 1..N ids on every backend" property).
+            row = conn.execute(
+                "SELECT last_value, is_called FROM election_id_seq"
+            ).fetchone()
+            peek = int(row[0]) + 1 if row[1] else int(row[0])
+            expected = peek.to_bytes(32, "big")
+            if config.election_id != expected:
+                raise ImmutabilityError(
+                    f"register: expected election id {config.election_id.hex()} but the next id is "
+                    f"{expected.hex()} — the sequence moved on; re-read it and sign again"
+                )
             (next_id,) = conn.execute("SELECT nextval('election_id_seq')").fetchone()
             election_id = int(next_id).to_bytes(32, "big")  # registry-style sequential id
             stored = replace(config, election_id=election_id)
@@ -181,16 +217,26 @@ class PostgresStore(ElectionDataLayer):
         for idx, sub_json in rows:
             sub = codecs.dec_dkg_result(sub_json)
             groups.setdefault((sub.pk_election, sub.committee_pks), set()).add(int(idx))
-        needed = config.threshold.t + 1
-        for (pk, committee), keypers in groups.items():
-            if len(keypers) >= needed:
-                return FinalizedKey(pk_election=pk, committee_pks=committee)
-        return None
+        winner = resolve_unique(
+            (((pk, com), kps) for (pk, com), kps in groups.items()),
+            config.threshold.quorum, artifact="dkg result", election_id=config.election_id,
+        )
+        return FinalizedKey(pk_election=winner[0], committee_pks=winner[1]) if winner else None
 
     # -- ballots ------------------------------------------------------------ #
 
-    def submit_ballot(self, election_id, ballot: BallotEnvelope) -> int:
+    def submit_ballot(self, election_id, ballot: BallotEnvelope, gateway_sig: bytes = b"") -> int:
         with self._conn() as conn:
+            # Closed ballot-writer set. Empty gateway_keys = open writes.
+            gateway_keys = self._config(conn, election_id).gateway_keys
+            if gateway_keys:
+                try:
+                    recovered = write_auth.recover_digest(
+                        write_auth.ballot_digest(election_id, ballot), gateway_sig)
+                except Exception as exc:  # noqa: BLE001
+                    raise WriteAuthorizationError("submit_ballot: bad gateway signature") from exc
+                if recovered not in gateway_keys:
+                    raise WriteAuthorizationError("submit_ballot: signature matches no registered gateway key")
             # Lock the election row to serialize sequence assignment (stable total order).
             locked = conn.execute(
                 "SELECT 1 FROM elections WHERE election_id = %s FOR UPDATE", (election_id,)
@@ -313,17 +359,18 @@ class PostgresStore(ElectionDataLayer):
         return groups
 
     def _aggregate_finalized(self, conn, config: ElectionConfig) -> bool:
-        needed = config.threshold.t + 1
-        return any(len(kps) >= needed for _, kps in self._aggregate_group_counts(conn, config.election_id).values())
+        return resolve_unique(
+            self._aggregate_group_counts(conn, config.election_id).values(),
+            config.threshold.quorum, artifact="aggregate", election_id=config.election_id,
+        ) is not None
 
     def get_aggregate(self, election_id) -> AggregateArtifact | None:
         with self._conn() as conn:
             config = self._config(conn, election_id)
-            needed = config.threshold.t + 1
-            for agg, keypers in self._aggregate_group_counts(conn, election_id).values():
-                if len(keypers) >= needed:
-                    return agg
-            return None
+            return resolve_unique(
+                self._aggregate_group_counts(conn, election_id).values(),
+                config.threshold.quorum, artifact="aggregate", election_id=election_id,
+            )
 
     def submit_decryption_share(self, election_id, share: DecryptionShareEnvelope, keyper_sig) -> None:
         with self._conn() as conn:
@@ -364,7 +411,10 @@ class PostgresStore(ElectionDataLayer):
     def publish_result(self, election_id, result: ResultArtifact, result_publisher_sig) -> None:
         with self._conn() as conn:
             config = self._config(conn, election_id)
-            if not authz.verify_request(config.result_publisher_key, result_publisher_sig, "result", election_id):
+            if not authz.verify_request(
+                config.result_publisher_key, result_publisher_sig, "result", election_id,
+                write_auth.result_digest(election_id, result),
+            ):
                 raise WriteAuthorizationError("publish_result: bad result-publisher signature")
             existing = conn.execute(
                 "SELECT result FROM results WHERE election_id = %s", (election_id,)

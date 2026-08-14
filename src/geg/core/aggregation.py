@@ -62,12 +62,15 @@ def recover_result(
     aggregate: AggregateArtifact,
     shares: list[DecryptionShareEnvelope],
     committee_pks: tuple[bytes, ...],
-    threshold_t: int,
+    quorum: int,
 ) -> ResultArtifact | None:
-    """Recover per-candidate totals from ``t+1`` DLEQ-verified shares.
+    """Recover per-candidate totals from ``quorum`` DLEQ-verified shares.
 
+    ``quorum`` is ``config.threshold.t`` — the number of keypers required, since ``t``
+    *is* the quorum; it is passed explicitly rather than read off ``config``
+    so callers can recover under a deliberately different count in tests.
     ``committee_pks`` is the finalized ``committee_pks`` tuple (index
-    ``keyper_index - 1``). Returns ``None`` if any candidate lacks ``t+1`` valid
+    ``keyper_index - 1``). Returns ``None`` if any candidate lacks ``quorum`` valid
     shares or BSGS fails — the caller leaves the election in ``Tallying``.
     """
     bound = bsgs_bound(config, aggregate.total_admitted_weight)
@@ -95,9 +98,9 @@ def recover_result(
             if verify_decryption_share(t, c1, c2, mpk_k, sigma, e, z, idx):
                 valid.append((idx, sigma))
 
-        if len(valid) < threshold_t + 1:
+        if len(valid) < quorum:
             return None
-        chosen = valid[: threshold_t + 1]
+        chosen = valid[:quorum]
         combined = combine_shares(chosen)
         tau = add(c2, neg(combined))
         m = baby_step_giant_step(tau, bound)

@@ -159,3 +159,43 @@ def test_wallet_attestation_flows_through_admission(env):
     assert len(result.admitted) == 1
     assert result.admitted[0].weight == 3
     assert result.total_admitted_weight == 3
+
+
+# --------------------------------------------------------------------------- #
+#  Per-election max_weight (wallet-adapter half)
+# --------------------------------------------------------------------------- #
+
+ELECTION_2 = (2).to_bytes(32, "big")
+
+
+def test_max_weight_may_be_resolved_per_election():
+    """The ceiling belongs to the election, not the issuer.
+
+    One voter with power 79 must be clamped to 50 under an election capped at 50 and left
+    at 79 under one capped at 100 — from the *same* issuer instance. A fixed int reused
+    across elections is wrong in both directions: too low silently under-counts the voter,
+    too high issues a credential `verify_attestation` rejects at tally (disenfranchisement).
+    """
+    acct, addr = _voter()
+    caps = {ELECTION: 50, ELECTION_2: 100}
+    elig_sk, _ = schnorr.keygen()
+    svc = WalletEligibilityService(
+        elig_sk, lambda a: {addr: 79}.get(a, 0),
+        max_weight=lambda eid: caps[bytes(eid)], chain_id=CHAIN_ID,
+    )
+
+    vk1 = _vk()
+    att1 = svc.issue_for_wallet(ELECTION, vk1, _sign(svc, acct, ELECTION, vk1))
+    assert att1.weight == 50   # clamped to this election's ceiling
+
+    vk2 = _vk()
+    att2 = svc.issue_for_wallet(ELECTION_2, vk2, _sign(svc, acct, ELECTION_2, vk2))
+    assert att2.weight == 79   # under the other election's ceiling, so untouched
+
+
+def test_plain_int_max_weight_still_works():
+    """The single-election form stays a plain int — the callable is opt-in."""
+    acct, addr = _voter()
+    svc = _service({addr: 79}, max_weight=50)
+    vk = _vk()
+    assert svc.issue_for_wallet(ELECTION, vk, _sign(svc, acct, ELECTION, vk)).weight == 50

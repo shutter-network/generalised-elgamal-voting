@@ -41,7 +41,7 @@ ANVIL_KEYS = [
     "0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e",
 ]
 ELECTION_ID = (1).to_bytes(32, "big")  # registry-assigned first id
-N, T, NUM_CANDIDATES, BUDGET = 3, 1, 3, 3
+N, T, NUM_CANDIDATES, BUDGET = 3, 2, 3, 3  # T = quorum
 
 
 def _b(size, fill):
@@ -208,6 +208,14 @@ def test_register_and_get_round_trip(env):
     assert [(k.signing_key, k.url) for k in rec.config.keypers] == [
         (env._addr(f"keyper{i}"), f"http://keyper{i}:8100") for i in range(1, N + 1)
     ]
+    # The quorum-semantics guard: `t` survives a chain round-trip UNCHANGED. `threshold.t` is the
+    # quorum and `KeyperSet.getThreshold()` stores the quorum, so deploy and read-back are
+    # both straight pass-throughs. This assertion is what would have caught the old
+    # arrangement, where a `+1` on write and a `-1` on read cancelled out invisibly — and
+    # would catch it again if either half were ever reintroduced alone.
+    assert rec.config.threshold.t == T == 2
+    assert rec.config.threshold.n == N == 3
+    assert rec.config.threshold.quorum == T
 
 
 def test_register_unauthorized_rejected(env):
@@ -216,9 +224,23 @@ def test_register_unauthorized_rejected(env):
 
 
 def test_register_assigns_sequential_ids(env):
-    # Registry assigns dense sequential ids; each register yields a new election.
+    # Registry assigns dense sequential ids; each register yields a new election. The
+    # config asserts the id it expects, so the second one must be built for id 2 —
+    # re-sending the first body is refused (the register replay guard).
+    from dataclasses import replace
+
     assert env.register() == (1).to_bytes(32, "big")
-    assert env.register() == (2).to_bytes(32, "big")
+    cfg2 = replace(env.config, election_id=(2).to_bytes(32, "big"))
+    assert env.dl("admin").register_election(cfg2, b"") == (2).to_bytes(32, "big")
+
+
+def test_register_body_cannot_be_replayed(env):
+    """On chain: the replay is refused BEFORE any transaction, so a replayer cannot
+    drain the admin's gas (the KeyperSet deploy alone would otherwise cost it)."""
+    env.register()
+    with pytest.raises(ImmutabilityError):
+        env.dl("admin").register_election(env.config, b"")
+    assert env.reader().list_elections() == [ELECTION_ID]
 
 
 def test_list_elections_and_filter(env):

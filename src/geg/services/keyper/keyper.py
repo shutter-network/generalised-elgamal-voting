@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from geg.core import write_auth
 from geg.core.admission import admit
+from geg.services.common.reads import read_all_ballots
 from geg.core.aggregation import build_aggregate_artifact
 from geg.core.authz import Signer
 from geg.crypto import proofs
@@ -56,14 +57,36 @@ class KeyperService:
         Honest keypers submit byte-identical ``(pk_election, committee_pks)``, so
         the data layer's quorum rule finalizes the key.
         """
-        pk = derive_joint_mpk(all_commitments)
-        committee = [derive_mpk_share(i, all_commitments) for i in sorted(all_commitments)]
+        quorum = self.dkg.quorum
+        pk = derive_joint_mpk(all_commitments, quorum)
+        committee = [derive_mpk_share(i, all_commitments, quorum) for i in sorted(all_commitments)]
         pk_b = g2_to_compressed(pk)
         committee_b = [g2_to_compressed(c) for c in committee]
         sig = write_auth.sign_dkg_result(self.signer.private_key, election_id, pk_b, committee_b)
         self.dl.submit_dkg_result(election_id, pk_b, committee_b, sig) # TODO
 
     # -- aggregation (keyper-quorum, mirrors the DKG-result quorum) ---------- #
+
+    def check_can_aggregate(self, election_id: bytes):
+        """The cheap self-guards :meth:`produce_aggregate` applies, without the expensive
+        part. Returns the ``ElectionRecord`` so the caller need not re-read it.
+
+        Split out so the HTTP layer can answer a genuine refusal *synchronously* (409)
+        while the aggregation itself — which verifies every ballot and can run for many
+        minutes — proceeds in the background. Raises :class:`KeyperRefusal`.
+        """
+        rec = self.dl.get_election(election_id)  # raises if unknown
+        facts = StateFacts(
+            cancelled=rec.cancelled,
+            key_finalized=rec.finalized_key is not None,
+            result_published=self.dl.get_result(election_id) is not None,
+        )
+        state = derive_state(rec.config, facts, self._clock())
+        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE):
+            raise KeyperRefusal(f"refuse: state is {state.value}, not tallying")
+        if rec.finalized_key is None:
+            raise KeyperRefusal("refuse: no finalized key")
+        return rec
 
     def produce_aggregate(self, election_id: bytes):
         """Re-derive the canonical aggregate from the data layer and sign it.
@@ -82,28 +105,20 @@ class KeyperService:
         ``None`` if this keyper already submitted (idempotent no-op). Reads only;
         the caller decides where to write.
         """
-        rec = self.dl.get_election(election_id)  # raises if unknown
+        rec = self.check_can_aggregate(election_id)
         cfg = rec.config
-
-        # Self-guard: voting has ended and the key is finalized.
-        facts = StateFacts(
-            cancelled=rec.cancelled,
-            key_finalized=rec.finalized_key is not None,
-            result_published=self.dl.get_result(election_id) is not None,
-        )
-        state = derive_state(cfg, facts, self._clock())
-        if state not in (ElectionState.TALLYING, ElectionState.COMPLETE):
-            raise KeyperRefusal(f"refuse: state is {state.value}, not tallying")
-        if rec.finalized_key is None:
-            raise KeyperRefusal("refuse: no finalized key")
 
         # Idempotent: don't resubmit if this keyper already contributed.
         # get_aggregate returns the canonical (quorum) artifact — resubmitting an
         # already-canonical aggregate is a harmless no-op the data layer would
         # accept, but we skip the work when our own submission is already in.
 
-        n = self.dl.count_ballots(election_id)
-        stored = self.dl.list_ballots(election_id, 0, n)
+        # Paged, and verified complete: ballot pages are capped server-side,
+        # and a silently short read here would make this keyper aggregate a different
+        # subset from the rest of the committee, so the t+1 byte-identical quorum would
+        # never form. Rows carry the adapter's (sequence_number, submitted_at), so admit()'s
+        # OUT_OF_WINDOW check runs against storage's own receive time.
+        stored = read_all_ballots(self.dl, election_id)
         admission = admit(stored, cfg, rec.finalized_key.pk_election)  # only valid ballots admitted
         artifact = build_aggregate_artifact(cfg, admission)
         sig = write_auth.sign_aggregate(self.signer.private_key, election_id, artifact)

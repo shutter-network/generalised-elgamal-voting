@@ -97,6 +97,24 @@ class VotingWindowError(RuntimeError):
     is authoritative at tally time."""
 
 
+class QuorumConflictError(RuntimeError):
+    """Raised when **two different** artifacts each reached the keyper quorum.
+
+    Reading order would otherwise decide which one "won": the memory adapter
+    iterates submission order and the DB adapter iterates whatever order the query
+    returns, so the same submissions could finalize a *different* key or aggregate on the
+    two backends — precisely the cross-backend divergence the conformance suite exists to
+    prevent. Fail closed instead: an election whose committee has irreconcilably split
+    cannot be tallied correctly under either answer, and picking one silently publishes a
+    result that a re-computing auditor would not reproduce.
+
+    Reachable only when ``n >= 2 * t`` (two disjoint quorums must fit in the committee),
+    so it is impossible for the common 2-of-3 but legal for e.g. 1-of-3 or 2-of-4 — and it
+    additionally requires ``t`` keypers to submit a divergent artifact, which is already
+    outside the honest-committee assumption. This is a detection guard, not a live bug.
+    """
+
+
 class ElectionDataLayer(ABC):
     """Storage port. Availability-only; every stored artifact is self-verifying."""
 
@@ -155,12 +173,18 @@ class ElectionDataLayer(ABC):
     # --- ballots ------------------------------------------------------------ #
 
     @abstractmethod
-    def submit_ballot(self, election_id: bytes, ballot: BallotEnvelope) -> int:
+    def submit_ballot(self, election_id: bytes, ballot: BallotEnvelope, gateway_sig: bytes = b"") -> int:
         """Append a ballot; return its monotonic sequence number.
 
         Authorized writer: a ``gateway_key`` (or open where direct submission is
         enabled). No proof verification here — ballots are self-verifying and
         verification is authoritative at tally time.
+
+        **Write authorization.** When ``config.gateway_keys`` is non-empty, ``gateway_sig``
+        must be a ``write_auth.sign_ballot`` signature recovering to one of those keys, or
+        the write is refused with :class:`WriteAuthorizationError`. Empty ``gateway_keys``
+        means open writes and the signature is ignored. The chain ignores it in both cases
+        — there the writer is the transaction sender holding ``VOTE_PROXY_ROLE``.
 
         **Voting-window gate.** Every backend rejects a ballot written outside the
         open voting window with :class:`VotingWindowError`, using the same gate set

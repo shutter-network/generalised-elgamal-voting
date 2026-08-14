@@ -46,7 +46,20 @@ class DuplicatePolicy(str, Enum):
 
 @dataclass(frozen=True)
 class Threshold:
-    """(t, n): any ``t + 1`` of ``n`` keypers can decrypt."""
+    """(t, n): any ``t`` of ``n`` keypers can decrypt — ``t`` **is** the quorum.
+
+    ``t`` is the number of keypers that must act together, not the corruption
+    threshold: (2, 3) means 2-of-3. This is deliberate. The on-chain
+    ``KeyperSet.getThreshold()`` has always stored the quorum count, and
+    ``ElectionConfigView.thresholdT`` exposes it under the ``t`` name, so the previous
+    "``t`` is the corruption threshold, quorum is ``t+1``" reading made one field mean
+    two different things across backends and left the whole cross-backend agreement
+    resting on a single compensating ``-1`` in the chain codec. One meaning everywhere
+    now: **the number in the config is the number of keypers you need.**
+
+    The Feldman-VSS polynomial that ``t`` implies is degree ``t - 1`` (``t``
+    coefficients, so ``t`` shares interpolate it) — see :attr:`polynomial_degree`.
+    """
 
     t: int
     n: int
@@ -54,8 +67,35 @@ class Threshold:
     def __post_init__(self) -> None:
         if self.n < 1:
             raise ValueError("The committee size (n) must be at least 1.")
-        if not (0 <= self.t < self.n):
-            raise ValueError("The threshold must satisfy 0 <= t < n (you need t+1 keypers to decrypt).")
+        if not (1 <= self.t <= self.n):
+            raise ValueError(
+                f"The threshold must satisfy 1 <= t <= n (t is the quorum: t of n keypers "
+                f"decrypt); got t={self.t}, n={self.n}."
+            )
+        # The quorum must be a strict MAJORITY. 2-of-3 and 3-of-5 are majorities; 2-of-5 is
+        # not — it is just a subset, and two *disjoint* ones fit in the committee at once.
+        # That matters because this number is used for agreement, not only for decryption:
+        # an artifact becomes canonical when the quorum submits it byte-identically, and
+        # without majority intersection two different artifacts could each be "canonical",
+        # leaving the winner to iteration order. Threshold decryption alone
+        # would tolerate t <= n/2 (it favours liveness), but agreement will not.
+        if self.t * 2 <= self.n:
+            raise ValueError(
+                f"The threshold must be a majority: t > n/2. Got t={self.t}, n={self.n} "
+                f"— use t >= {self.n // 2 + 1}. Two disjoint groups of {self.t} fit in a "
+                f"committee of {self.n}, so they could each claim the same quorum."
+            )
+
+    @property
+    def quorum(self) -> int:
+        """Keypers required to act together. An alias for ``t``, for call sites where
+        naming the concept is clearer than the bare letter."""
+        return self.t
+
+    @property
+    def polynomial_degree(self) -> int:
+        """Degree of each dealer's Feldman polynomial: ``t`` coefficients ⇒ degree ``t-1``."""
+        return self.t - 1
 
 
 @dataclass(frozen=True)
@@ -114,6 +154,7 @@ class ElectionConfig:
             raise ValueError("The budget must be at least 1.")
         if self.max_weight < 1:
             raise ValueError("Max weight must be at least 1.")
+        self._check_ballot_bounds()
         if not self.weighted and self.max_weight != 1:
             raise ValueError("An unweighted election must have a max weight of 1 (enable weighting to allow higher weights).")
         if self.voting_end <= self.voting_start:
@@ -131,3 +172,67 @@ class ElectionConfig:
         keys = [k.signing_key for k in self.keypers]
         if len(set(keys)) != len(keys):
             raise ValueError("Duplicate keyper: each committee member must be a distinct wallet.")
+
+    # -- ballot / tally feasibility bounds ----------------------- #
+    #
+    # Enforced here, in the frozen config, rather than at any single entry point: every
+    # path builds an ElectionConfig (admin service, data-layer service via dec_config, the
+    # CLI, tests), so a caller who bypasses the frontend — or the admin service entirely —
+    # is still caught. Registering a config that no voter can vote under, and only finding
+    # out at tally, is the failure these ceilings prevent.
+
+    # A ballot's validity proof is one OR-proof branch per (candidate, budget level):
+    # num_candidates * (budget + 1) branches, each 256 bytes. Two independent ceilings.
+
+    #: Absolute encoding limits. ``n_outer`` is written as 2 bytes big-endian and
+    #: ``branch_count = budget + 1`` likewise — so budget tops out one BELOW 0xFFFF, or the
+    #: encoder raises OverflowError. Mirrors ``crypto.ballot.verify_ballot_crypto``.
+    MAX_NUM_CANDIDATES = 0xFFFF
+    MAX_BUDGET = 0xFFFE
+
+    #: Verification ceiling, and in practice the binding one. Each branch costs ~2.8 ms to
+    #: verify, and **every keyper and every auditor verifies every ballot** at tally. Sized
+    #: for the real target shape — 20 candidates at budget 100 = 2020 branches (~5.7 s per
+    #: ballot, ~1 MiB of ballot) — with headroom to 25 candidates at that budget. The
+    #: encoding limits above would allow 4.3 billion branches, i.e. an election that
+    #: registers cleanly and can never be tallied.
+    #:
+    #: Note this bounds per-*ballot* cost only. Total tally cost is branches x ballots,
+    #: which registration cannot know; that is bounded at run time by the coordinator's
+    #: tally-phase deadline instead.
+    MAX_PROOF_BRANCHES = 2500
+
+    #: Recovery ceiling. ``bsgs_bound = budget * sum(admitted weights)``, and BSGS holds a
+    #: baby-step table of sqrt(bound) points — memory is the wall, not time. Capping the
+    #: per-voter contribution at 1e6 keeps the bound near 1e12 for an electorate of a
+    #: million (~10^6 table entries, ~200 MB, ~20 s per candidate). Normal use is far
+    #: below: one-person-one-vote is 3*1, token voting at budget 1 sits exactly at the line.
+    MAX_BUDGET_TIMES_WEIGHT = 1_000_000
+
+    def _check_ballot_bounds(self) -> None:
+        if self.num_candidates > self.MAX_NUM_CANDIDATES:
+            raise ValueError(
+                f"Too many candidates: {self.num_candidates} exceeds the {self.MAX_NUM_CANDIDATES} "
+                f"the ballot proof format can encode."
+            )
+        if self.budget > self.MAX_BUDGET:
+            raise ValueError(
+                f"Budget too large: {self.budget} exceeds {self.MAX_BUDGET} (the proof encodes "
+                f"budget+1 as two bytes)."
+            )
+        branches = self.num_candidates * (self.budget + 1)
+        if branches > self.MAX_PROOF_BRANCHES:
+            raise ValueError(
+                f"This election is too expensive to tally: {self.num_candidates} candidates x "
+                f"(budget {self.budget} + 1) = {branches} proof branches per ballot, over the "
+                f"{self.MAX_PROOF_BRANCHES} limit. Every keyper and auditor verifies every "
+                f"ballot, at roughly 3 ms per branch. Reduce the candidates or the budget."
+            )
+        if self.budget * self.max_weight > self.MAX_BUDGET_TIMES_WEIGHT:
+            raise ValueError(
+                f"Budget x max weight = {self.budget * self.max_weight} exceeds "
+                f"{self.MAX_BUDGET_TIMES_WEIGHT}. The tally recovers each total by "
+                f"baby-step giant-step within budget x total weight, which becomes "
+                f"infeasible above that. Reduce the budget or the max weight."
+            )
+

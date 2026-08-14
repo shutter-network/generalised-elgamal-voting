@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from geg.crypto import ballot, schnorr
+from geg.crypto.params import CURVE_ORDER
 from geg.crypto.points import G2, mul, random_scalar
 
 
@@ -106,3 +107,44 @@ def test_canonical_message_binds_election_id():
     m1 = ballot.canonical_ballot_message(b"\x11" * 32, b"\x22" * 32, [], b"")
     m2 = ballot.canonical_ballot_message(b"\x33" * 32, b"\x22" * 32, [], b"")
     assert m1 != m2
+
+
+# --- canonical scalars inside the ballot-validity proof --------- #
+
+def _bvp_offsets(num_candidates: int):
+    """Byte offset of the first OR-branch's `e`, and of the trailing budget-proof `e`."""
+    header = 1 + 1 + 2 + 2 * num_candidates          # version, variant, n_outer, branch_counts
+    first_branch_e = header + 96 + 96                # a1 || a2 || e || z
+    return header, first_branch_e
+
+
+def test_bvp_rejects_non_canonical_branch_scalar():
+    """A branch scalar bumped by CURVE_ORDER is the same scalar, so the proof still
+    verifies mathematically — decode must refuse the second encoding of it."""
+    mpk, b = _build([1, 0, 2], budget=3)
+    _, off = _bvp_offsets(3)
+    e = int.from_bytes(b.zk_proof[off:off + 32], "big")
+    assert e < CURVE_ORDER  # the honest encoding is canonical
+    tampered = b.zk_proof[:off] + (e + CURVE_ORDER).to_bytes(32, "big") + b.zk_proof[off + 32:]
+    assert len(tampered) == len(b.zk_proof)
+    with pytest.raises(ValueError, match="non-canonical"):
+        ballot.decode_ballot_validity_proof(tampered, 3, 3)
+
+
+def test_bvp_rejects_non_canonical_budget_scalar():
+    mpk, b = _build([1, 0, 2], budget=3)
+    # budget proof sits at the very end: ... || tag(1) || e_b(32) || z_b(32)
+    off = len(b.zk_proof) - 64
+    z_b = int.from_bytes(b.zk_proof[off + 32:], "big")
+    tampered = b.zk_proof[:off + 32] + (z_b + CURVE_ORDER).to_bytes(32, "big")
+    with pytest.raises(ValueError, match="non-canonical"):
+        ballot.decode_ballot_validity_proof(tampered, 3, 3)
+
+
+def test_bvp_honest_proof_still_decodes_and_verifies():
+    """Guard against the canonicality check being too strict."""
+    mpk, b = _build([2, 1, 0], budget=3)
+    rp, e, z = ballot.decode_ballot_validity_proof(b.zk_proof, 3, 3)
+    assert ballot.encode_ballot_validity_proof(rp, e, z) == b.zk_proof
+    ok, reason = _verify(mpk, b, 3, 3)
+    assert ok, reason

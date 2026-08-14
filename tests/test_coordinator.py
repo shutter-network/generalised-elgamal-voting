@@ -18,7 +18,7 @@ from geg.services.keyper import build_keyper_app
 
 from conftest import ManualClock
 
-N, T = 3, 1
+N, T = 3, 2  # T is the quorum
 
 
 class KeyperWorld:
@@ -45,7 +45,9 @@ class KeyperWorld:
 
     def register(self, *, voting_start=1000, voting_end=2000) -> bytes:
         config = ElectionConfig(
-            election_id=b"\x00" * 32, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
+            # Assert the next id (the register replay guard); this env registers several.
+            election_id=(len(self.dl.list_elections()) + 1).to_bytes(32, "big"),
+            num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
             weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=voting_start, voting_end=voting_end,
             threshold=Threshold(t=T, n=N),
@@ -167,7 +169,8 @@ def test_watcher_abandons_tally_when_aggregate_never_reaches_quorum(kw, monkeypa
     watcher = kw.watcher()
     assert watcher.scan_once()[eid.hex()] == "finalized"   # DKG done (clock=0)
     kw.clock.set(2500)                                     # → Tallying
-    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: None)  # aggregate never lands
+    # Unreachable keypers: every trigger fails, which is what the attempt budget bounds.
+    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: {1: "failed", 2: "failed", 3: "failed"})
 
     outs = [watcher.scan_once()[eid.hex()] for _ in range(watcher.max_tally_attempts)]
     assert outs[:-1] == ["collecting_aggregate"] * (watcher.max_tally_attempts - 1)
@@ -187,7 +190,7 @@ def test_stall_survives_restart_and_resumes_only_on_admin_clear(kw, monkeypatch)
     w1 = kw.watcher()
     assert w1.scan_once()[eid.hex()] == "finalized"
     kw.clock.set(2500)
-    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: None)
+    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: {1: "failed", 2: "failed", 3: "failed"})
     for _ in range(w1.max_tally_attempts):
         w1.scan_once()
     assert kw.dl.get_election(eid).tally_stalled is True
@@ -218,3 +221,73 @@ def test_watcher_abandons_tally_when_decryption_never_finalizes(kw, monkeypatch)
     assert kw.dl.get_aggregate(eid) is not None            # the aggregate DID reach quorum
     assert kw.dl.get_result(eid) is None                   # but no result
     assert kw.dl.get_election(eid).tally_stalled is True   # persisted
+
+
+def test_working_keypers_are_not_counted_as_failed_attempts(kw, monkeypatch):
+    """A slow aggregate must not look like a stalled tally.
+
+    Aggregation runs for minutes on a large election. Before /aggregate went async the
+    coordinator timed out, read that as a failed attempt, and marked TallyStalled after
+    five polls — on a committee that was working perfectly.
+    """
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register(voting_start=1000, voting_end=2000)
+    watcher = kw.watcher()
+    assert watcher.scan_once()[eid.hex()] == "finalized"
+    kw.clock.set(2500)
+    monkeypatch.setattr(coord, "trigger_aggregate_http",
+                        lambda *a, **k: {1: "in_progress", 2: "in_progress", 3: "started"})
+
+    # Far more polls than max_tally_attempts: still waiting, never abandoned.
+    for _ in range(watcher.max_tally_attempts * 3):
+        assert watcher.scan_once()[eid.hex()] == "collecting_aggregate"
+    assert kw.dl.get_election(eid).tally_stalled is False
+
+
+def test_divergent_keypers_are_asked_to_re_derive_then_bounded(kw, monkeypatch):
+    """All keypers submitted yet no t+1 quorum → they disagree.
+
+    Divergence is often transient (one keyper read the ballot list a moment before
+    another), and a keyper's aggregate stays overridable until the quorum freezes precisely
+    so honest keypers can re-converge. So each attempt must actually ask them to re-derive
+    — and the whole thing is still bounded, in case the divergence is permanent.
+    """
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register(voting_start=1000, voting_end=2000)
+    watcher = kw.watcher()
+    assert watcher.scan_once()[eid.hex()] == "finalized"
+    kw.clock.set(2500)
+
+    recomputes = []
+
+    def fake_trigger(*a, recompute=False, **k):
+        recomputes.append(recompute)
+        return {1: "submitted", 2: "submitted", 3: "submitted"}
+
+    monkeypatch.setattr(coord, "trigger_aggregate_http", fake_trigger)
+
+    outs = [watcher.scan_once()[eid.hex()] for _ in range(watcher.max_tally_attempts)]
+    assert outs[:-1] == ["collecting_aggregate"] * (watcher.max_tally_attempts - 1)
+    assert outs[-1] == "tally_abandoned"
+    assert kw.dl.get_election(eid).tally_stalled is True
+    # Every non-final poll asked the committee to re-derive — the convergence path.
+    assert recomputes.count(True) == watcher.max_tally_attempts - 1
+
+
+def test_tally_phase_deadline_is_the_backstop(kw, monkeypatch):
+    """Keypers claim to be working forever → the wall-clock budget ends it. Measured from
+    voting_end, so it is derived and survives a coordinator restart."""
+    from geg.services.coordinator import dkg_coordinator as coord
+
+    eid = kw.register(voting_start=1000, voting_end=2000)
+    watcher = kw.watcher()
+    assert watcher.scan_once()[eid.hex()] == "finalized"
+    monkeypatch.setattr(coord, "trigger_aggregate_http", lambda *a, **k: {1: "in_progress"})
+
+    kw.clock.set(2500)                                    # just past voting_end
+    assert watcher.scan_once()[eid.hex()] == "collecting_aggregate"
+    kw.clock.set(2000 + int(watcher.max_tally_phase_s) + 1)   # past the deadline
+    assert watcher.scan_once()[eid.hex()] == "tally_abandoned"
+    assert kw.dl.get_election(eid).tally_stalled is True

@@ -8,7 +8,13 @@ Used for the voter ballot signature and the ATTESTATION_V1 eligibility signature
 
 from __future__ import annotations
 
-from geg.crypto.params import CURVE_ORDER, DST_SCHNORR, SCHNORR_BYTES, scalar_to_bytes
+from geg.crypto.params import (
+    CURVE_ORDER,
+    DST_SCHNORR,
+    SCHNORR_BYTES,
+    scalar_from_bytes,
+    scalar_to_bytes,
+)
 from geg.crypto.points import (
     G1,
     Z1,
@@ -61,4 +67,4 @@ def encode(R, s: int) -> bytes:
 def decode(b: bytes) -> tuple[object, int]:
     if len(b) != SCHNORR_BYTES:
         raise ValueError(f"Expected {SCHNORR_BYTES}-byte Schnorr signature, got {len(b)}")
-    return g1_from_compressed(b[:48]), int.from_bytes(b[48:], "big")
+    return g1_from_compressed(b[:48]), scalar_from_bytes(b[48:], "schnorr s")

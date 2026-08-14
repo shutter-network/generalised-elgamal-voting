@@ -22,6 +22,7 @@ transport differs (the same split as the DKG ``run_dkg_once`` vs ``run_dkg_http`
 from __future__ import annotations
 
 from geg.core.aggregation import recover_result
+from geg.core import write_auth
 from geg.core.authz import Signer
 from geg.ports.data_layer import ElectionDataLayer
 from geg.core.state import ElectionState, StateFacts, derive_state
@@ -87,7 +88,11 @@ def finalize(dl: ElectionDataLayer, election_id: bytes, result_publisher: Signer
     )
     if result is None:
         return None  # not enough valid shares yet
-    dl.publish_result(election_id, result, result_publisher.sign("result", election_id))
+    # payload binds the signature to these totals, not just to ("result", electionId).
+    dl.publish_result(
+        election_id, result,
+        result_publisher.sign("result", election_id, write_auth.result_digest(election_id, result)),
+    )
     return result
 
 

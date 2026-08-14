@@ -20,6 +20,8 @@ Skips if ``anvil`` is unavailable.
 
 from __future__ import annotations
 
+import time as _time
+
 import shutil
 import socket
 import subprocess
@@ -42,7 +44,7 @@ from geg.services.gateway import submit_ballot
 from test_adapter_chain import ANVIL_KEYS  # reuse dev keys (7 funded accounts)
 
 ELECTION_ID = (1).to_bytes(32, "big")
-N, T = 3, 1
+N, T = 3, 2  # T is the quorum
 TOKEN = "coordinator-relay-token"
 
 
@@ -205,6 +207,11 @@ def test_full_election_over_chain_daemons(world):
     # t+1 byte-identical quorum. Then trigger decrypt, and the result_publisher finalizes.
     w.warp(2500)
     coord.trigger_aggregate_http(ELECTION_ID, w.keyper_urls, api_tokens)
+    # /aggregate is asynchronous (202 + worker thread), so poll for the canonical artifact.
+    for _ in range(600):
+        if w.admin_dl.get_aggregate(ELECTION_ID) is not None:
+            break
+        _time.sleep(0.1)
     assert w.admin_dl.get_aggregate(ELECTION_ID) is not None  # t+1 keypers agreed → canonical
     coord.trigger_decrypt_http(ELECTION_ID, w.keyper_urls, api_tokens)
     result = agg.finalize(w.result_publisher_dl, ELECTION_ID, w.result_publisher, clock=w.clock)

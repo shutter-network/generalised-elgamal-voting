@@ -27,6 +27,7 @@ import logging
 
 from geg.core.authz import Signer, verify_register, verify_request
 from geg.core.config import ElectionConfig
+from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH
 from geg.ports.data_layer import ElectionDataLayer, WriteAuthorizationError
 
 _LOG = logging.getLogger("geg.admin")
@@ -140,6 +141,8 @@ def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
     from geg.ports.data_layer import ImmutabilityError
 
     app = Flask(__name__)
+    # Bound the body every route buffers via get_json(force=True).
+    app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
     @app.after_request
     def _cors(resp):

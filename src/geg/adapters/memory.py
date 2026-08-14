@@ -20,6 +20,7 @@ from dataclasses import dataclass, field, replace
 from typing import Callable
 
 from geg.core import authz, write_auth
+from geg.core.quorum import resolve_unique
 from geg.core.config import ElectionConfig
 from geg.core.state import ElectionState, StateFacts, derive_state
 from geg.envelopes.types import (
@@ -83,8 +84,17 @@ class InMemoryDataLayer(ElectionDataLayer):
     def register_election(self, config: ElectionConfig, admin_sig: bytes) -> bytes:
         if not authz.verify_register(config.admin_key, admin_sig, config):
             raise WriteAuthorizationError("register: bad admin signature")
+        # The signed config asserts which id it expects; we still assign it ourselves and
+        # refuse on disagreement. That makes the signature single-use: once this
+        # registration lands the sequence moves on, so replaying the same body can never
+        # match again.
+        election_id = (self._next_id + 1).to_bytes(32, "big")  # registry-style sequential id
+        if config.election_id != election_id:
+            raise ImmutabilityError(
+                f"register: expected election id {config.election_id.hex()} but the next id is "
+                f"{election_id.hex()} — the sequence moved on; re-read it and sign again"
+            )
         self._next_id += 1
-        election_id = self._next_id.to_bytes(32, "big")  # registry-style sequential id
         stored = replace(config, election_id=election_id)
         self._elections[election_id] = _Stored(config=stored)
         return election_id
@@ -145,29 +155,48 @@ class InMemoryDataLayer(ElectionDataLayer):
         return self._finalized_key_of(self._get(election_id))
 
     def _finalized_key_of(self, st: _Stored) -> FinalizedKey | None:
-        needed = st.config.threshold.t + 1
+        needed = st.config.threshold.quorum
         groups: dict[tuple, set[int]] = {}
         for idx, sub in st.dkg_by_keyper.items():
             key = (sub.pk_election, sub.committee_pks)
             groups.setdefault(key, set()).add(idx)
-        for (pk, committee), keypers in groups.items():
-            if len(keypers) >= needed:
-                return FinalizedKey(pk_election=pk, committee_pks=committee)
-        return None
+        winner = resolve_unique(
+            (((pk, com), kps) for (pk, com), kps in groups.items()),
+            needed, artifact="dkg result", election_id=st.config.election_id,
+        )
+        return FinalizedKey(pk_election=winner[0], committee_pks=winner[1]) if winner else None
 
     # -- ballots ------------------------------------------------------------ #
 
-    def submit_ballot(self, election_id, ballot: BallotEnvelope) -> int:
+    def submit_ballot(self, election_id, ballot: BallotEnvelope, gateway_sig: bytes = b"") -> int:
         st = self._get(election_id)
-        # Ballot writes are open as to *identity* in the reference (gateway
-        # restriction, where required, is enforced at the transport tier), but the
-        # voting window is enforced here — see _require_voting_open. Ballots are
-        # self-verifying; proof verification stays authoritative at tally time.
+        # Ballots are self-verifying and proof verification stays authoritative at tally
+        # time; these two gates are about *who may write* and *when*.
+        self._require_gateway(st, ballot, gateway_sig)
         now = self._clock()
         self._require_voting_open(st, now)
         seq = len(st.ballots)
         st.ballots.append(StoredBallot(sequence_number=seq, envelope=ballot, submitted_at=now))
         return seq
+
+    def _require_gateway(self, st: _Stored, ballot: BallotEnvelope, gateway_sig: bytes) -> None:
+        """Enforce the config's closed ballot-writer set.
+
+        Empty ``gateway_keys`` means open writes — the documented default for a
+        deployment that lets voters submit directly. When it is non-empty it is a real
+        restriction, not decoration: previously the port carried no signature at all, so
+        a deployer could set ``gateway_keys`` and have it silently ignored on this backend
+        while the chain enforced it via ``VOTE_PROXY_ROLE``.
+        """
+        if not st.config.gateway_keys:
+            return
+        try:
+            recovered = write_auth.recover_digest(
+                write_auth.ballot_digest(st.config.election_id, ballot), gateway_sig)
+        except Exception as exc:  # noqa: BLE001
+            raise WriteAuthorizationError("submit_ballot: bad gateway signature") from exc
+        if recovered not in st.config.gateway_keys:
+            raise WriteAuthorizationError("submit_ballot: signature matches no registered gateway key")
 
     def _require_voting_open(self, st: _Stored, now: int) -> None:
         """Reject a ballot written outside the open voting window.
@@ -225,16 +254,14 @@ class InMemoryDataLayer(ElectionDataLayer):
         return groups
 
     def _aggregate_finalized(self, st) -> bool:
-        needed = st.config.threshold.t + 1
-        return any(len(kps) >= needed for _, kps in self._aggregate_groups(st.config.election_id, st).values())
+        return self.get_aggregate(st.config.election_id) is not None
 
     def get_aggregate(self, election_id) -> AggregateArtifact | None:
         st = self._get(election_id)
-        needed = st.config.threshold.t + 1
-        for agg, keypers in self._aggregate_groups(election_id, st).values():
-            if len(keypers) >= needed:
-                return agg
-        return None
+        return resolve_unique(
+            self._aggregate_groups(election_id, st).values(),
+            st.config.threshold.quorum, artifact="aggregate", election_id=election_id,
+        )
 
     def submit_decryption_share(self, election_id, share: DecryptionShareEnvelope, keyper_sig) -> None:
         st = self._get(election_id)
@@ -269,7 +296,10 @@ class InMemoryDataLayer(ElectionDataLayer):
 
     def publish_result(self, election_id, result: ResultArtifact, result_publisher_sig) -> None:
         st = self._get(election_id)
-        if not authz.verify_request(st.config.result_publisher_key, result_publisher_sig, "result", election_id):
+        if not authz.verify_request(
+                st.config.result_publisher_key, result_publisher_sig, "result", election_id,
+                write_auth.result_digest(election_id, result),
+            ):
             raise WriteAuthorizationError("publish_result: bad result-publisher signature")
         if st.result is not None:
             if st.result != result:

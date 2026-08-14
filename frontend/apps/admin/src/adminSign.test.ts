@@ -14,7 +14,7 @@ const CONFIG = {
   duplicatePolicy: "last-wins",
   votingStart: 1000,
   votingEnd: 2000,
-  threshold: { t: 1, n: 3 },
+  threshold: { t: 2, n: 3 },
   keypers: [
     { signingKey: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", url: "http://k1:8101" },
     { signingKey: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", url: "http://k2:8102" },
@@ -30,17 +30,22 @@ const CONFIG = {
 };
 
 const EXPECTED_CANON =
-  '{"adminKey":"0xabababababababababababababababababababab","budget":3,"duplicatePolicy":"last-wins","electionId":"0x0000000000000000000000000000000000000000000000000000000000000000","eligibilityKey":"0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1","gatewayKeys":["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"keypers":[{"signingKey":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"http://k1:8101"},{"signingKey":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"http://k2:8102"},{"signingKey":"0xcccccccccccccccccccccccccccccccccccccccc","url":"http://k3:8103"}],"maxWeight":10,"mode":"exact","numCandidates":3,"protocolVersion":"v1","resultPublisherKey":"0xdddddddddddddddddddddddddddddddddddddddd","selfSubmitFee":"0","threshold":{"n":3,"t":1},"variant":"A","votingEnd":2000,"votingStart":1000,"weighted":true}';
-const EXPECTED_REGISTER = "0x61d01b9779cd7681537c0a6ccc21cd82b7ea51c04c2cbaae66ab349b5e563482";
-const EXPECTED_CANCEL = "0x2fe6f4c5c76a0413ccc9bd1b4b11bfc872c0c6c747f4477ff0c7033d69410669";
+  '{"adminKey":"0xabababababababababababababababababababab","budget":3,"duplicatePolicy":"last-wins","electionId":"0x1111111111111111111111111111111111111111111111111111111111111111","eligibilityKey":"0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1","gatewayKeys":["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"keypers":[{"signingKey":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"http://k1:8101"},{"signingKey":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"http://k2:8102"},{"signingKey":"0xcccccccccccccccccccccccccccccccccccccccc","url":"http://k3:8103"}],"maxWeight":10,"mode":"exact","numCandidates":3,"protocolVersion":"v1","resultPublisherKey":"0xdddddddddddddddddddddddddddddddddddddddd","selfSubmitFee":"0","threshold":{"n":3,"t":2},"variant":"A","votingEnd":2000,"votingStart":1000,"weighted":true}';
+const EXPECTED_REGISTER = "0x67ba111b6e42c26cb4af4cc03c4b2ed569c4b6cf512126a31013a67f900406bd";
+const EXPECTED_CANCEL = "0x565f20982cb67ac495bf11fd0bba3020cab421e17ce0e8ae697d42f8f06ecce3";
 const EID_7 = ("0x" + (7).toString(16).padStart(64, "0")) as `0x${string}`;
 
 describe("admin digests match geg.core.authz (byte-exact)", () => {
-  it("canonicalize == Python canonical JSON (electionId zeroed)", () => {
-    expect(canonicalize({ ...CONFIG, electionId: "0x" + "0".repeat(64) })).toBe(EXPECTED_CANON);
+  it("canonicalize == Python canonical JSON (electionId included)", () => {
+    expect(canonicalize(CONFIG)).toBe(EXPECTED_CANON);
   });
-  it("registerDigest == register_digest (zeroes electionId itself)", () => {
+  it("registerDigest == register_digest (binds electionId)", () => {
     expect(registerDigest(CONFIG)).toBe(EXPECTED_REGISTER);
+  });
+  it("a different asserted electionId yields a different digest (the replay guard)", () => {
+    // Signing is per-id: the body that registered election N cannot be replayed to
+    // register N+1, because the backend's next id would no longer match what was signed.
+    expect(registerDigest({ ...CONFIG, electionId: "0x" + "2".repeat(64) })).not.toBe(EXPECTED_REGISTER);
   });
   it("cancelDigest == request_digest('cancel', eid)", () => {
     expect(cancelDigest(EID_7)).toBe(EXPECTED_CANCEL);

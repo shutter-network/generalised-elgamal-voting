@@ -26,6 +26,7 @@ from geg.crypto.params import (
     BVP_VERSION,
     CURVE_ORDER,
     VARIANT_A_BYTE,
+    scalar_from_bytes,
 )
 from geg.crypto.points import (
     G2,
@@ -102,8 +103,8 @@ def decode_ballot_validity_proof(buf: bytes, num_candidates: int, budget: int):
         for _ in range(bc):
             a1 = g2_from_compressed(buf[o:o + 96]); o += 96
             a2 = g2_from_compressed(buf[o:o + 96]); o += 96
-            e = int.from_bytes(buf[o:o + 32], "big"); o += 32
-            z = int.from_bytes(buf[o:o + 32], "big"); o += 32
+            e = scalar_from_bytes(buf[o:o + 32], "branch e"); o += 32
+            z = scalar_from_bytes(buf[o:o + 32], "branch z"); o += 32
             branches.append(ORBranch(a1, a2, e, z))
         range_proofs.append(branches)
 
@@ -112,8 +113,8 @@ def decode_ballot_validity_proof(buf: bytes, num_candidates: int, budget: int):
     tag = buf[o]; o += 1
     if tag != BUDGET_EXACT_TAG:
         raise ValueError(f"only exact-budget supported (got 0x{tag:02x})")
-    e_b = int.from_bytes(buf[o:o + 32], "big"); o += 32
-    z_b = int.from_bytes(buf[o:o + 32], "big"); o += 32
+    e_b = scalar_from_bytes(buf[o:o + 32], "budget e"); o += 32
+    z_b = scalar_from_bytes(buf[o:o + 32], "budget z"); o += 32
     if o != len(buf):
         raise ValueError(f"{len(buf) - o} trailing bytes after parse")
     return range_proofs, e_b, z_b
@@ -266,7 +267,11 @@ def verify_ballot_crypto(*, mpk, election_id: bytes, pseudonym: bytes, vk_bytes:
     """
     if not (1 <= num_candidates <= 0xFFFF):
         return False, "MALFORMED"
-    if not (1 <= budget <= 0xFFFF):
+    # 0xFFFE, not 0xFFFF: the proof encodes ``branch_count = budget + 1`` as two bytes
+    # big-endian, so budget = 0xFFFF makes branch_count 0x10000 and
+    # ``encode_ballot_validity_proof`` raises OverflowError. Accepting it here would turn a
+    # clean MALFORMED rejection into an uncaught crash on the verify path.
+    if not (1 <= budget <= 0xFFFE):
         return False, "MALFORMED"
     if len(election_id) != 32 or len(pseudonym) != 32:
         return False, "MALFORMED"

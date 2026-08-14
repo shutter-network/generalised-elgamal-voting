@@ -23,6 +23,7 @@ from geg.crypto.params import (
     CURVE_ORDER,
     DLEQ_BYTES,
     ONCHAIN_DECRYPT_LABEL,
+    scalar_from_bytes,
     scalar_to_bytes,
     u16be,
 )
@@ -58,7 +59,7 @@ def encode_dleq(e: int, z: int) -> bytes:
 def decode_dleq(b: bytes) -> tuple[int, int]:
     if len(b) != DLEQ_BYTES:
         raise ValueError(f"Expected {DLEQ_BYTES}-byte DLEQ, got {len(b)}")
-    return int.from_bytes(b[:32], "big"), int.from_bytes(b[32:], "big")
+    return scalar_from_bytes(b[:32], "dleq e"), scalar_from_bytes(b[32:], "dleq z")
 
 
 # --------------------------------------------------------------------------- #

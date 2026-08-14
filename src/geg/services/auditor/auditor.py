@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from geg.core import write_auth
 from geg.core.admission import admit
+from geg.services.common.reads import read_all_ballots
 from geg.core.aggregation import build_aggregate_artifact, recover_result
 from geg.ports.data_layer import ElectionDataLayer
 
@@ -60,7 +61,7 @@ def audit(dl: ElectionDataLayer, election_id: bytes) -> AuditReport:
             report.discrepancies.append("dkg: a submission is signed by no registered keyper")
             continue
         groups.setdefault((sub.pk_election, sub.committee_pks), set()).add(idx)
-    finalized = next((k for k, v in groups.items() if len(v) >= cfg.threshold.t + 1), None)
+    finalized = next((k for k, v in groups.items() if len(v) >= cfg.threshold.quorum), None)
     published_key = dl.get_finalized_key(election_id)
     if finalized is None:
         report.discrepancies.append("dkg: no quorum among submissions")
@@ -73,10 +74,10 @@ def audit(dl: ElectionDataLayer, election_id: bytes) -> AuditReport:
         return report  # cannot proceed without a key
 
     # 2. Independently re-derive the admitted set + weighted aggregate; compare.
-    n = dl.count_ballots(election_id)
-    # Carries each row's authoritative submitted_at, so the auditor re-derives the
-    # voting-window exclusions too rather than being blind to them.
-    stored = dl.list_ballots(election_id, 0, n)
+    # Paged and verified complete: a short read would make the auditor
+    # "detect" a discrepancy that is really its own truncated view. Each row carries the
+    # authoritative submitted_at, so the voting-window exclusions are re-derived too.
+    stored = read_all_ballots(dl, election_id)
     admission = admit(stored, cfg, published_key.pk_election)
     recomputed_agg = build_aggregate_artifact(cfg, admission)
     published_agg = dl.get_aggregate(election_id)

@@ -42,7 +42,7 @@ from geg.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuth
 # Election ids are registry-assigned sequential values; a fresh backend per test
 # means the first (and usually only) registration is id 1.
 ELECTION_ID = (1).to_bytes(32, "big")
-N, T = 3, 1
+N, T = 3, 2  # 2-of-3: T is the quorum
 NUM_CANDIDATES, BUDGET = 3, 3
 
 
@@ -83,7 +83,7 @@ class ConformanceBackend(ABC):
     def reader(self): ...
 
     @abstractmethod
-    def sig(self, role: str, op: str) -> bytes: ...
+    def sig(self, role: str, op: str, payload: bytes = b"") -> bytes: ...
 
     @abstractmethod
     def set_time(self, t: int) -> None: ...
@@ -120,10 +120,29 @@ class ConformanceBackend(ABC):
     def result(self) -> ResultArtifact:
         return ResultArtifact(election_id=ELECTION_ID, totals=(1, 1, 1), keyper_indices=(1, 2), bsgs_bound=6)
 
+    def result_sig(self, role: str, result: ResultArtifact | None = None) -> bytes:
+        """Result-publisher credential, bound to the totals it publishes.
+        Chain ignores it — there `publishResult` is gated on RESULT_PUBLISHER_ROLE."""
+        return self.sig(role, "result", write_auth.result_digest(ELECTION_ID, result or self.result()))
+
     def register_sig(self, role: str) -> bytes:
-        """Credential for a register call. Registration binds the config, not an id
-        (assigned by the backend); signature backends override. Chain ignores it."""
+        """Credential for a register call. The signed config asserts the id it expects
+        (the replay guard); signature backends override. Chain ignores it."""
         return self.sig(role, "register")
+
+    def ballot_sig(self, role: str, ballot) -> bytes:
+        """Gateway write authorization for a ballot. Chain ignores it —
+        there the writer is the transaction sender holding VOTE_PROXY_ROLE."""
+        return b""
+
+    def write_ballot(self, role: str, ballot):
+        """Submit ``ballot`` as ``role``, carrying that role's write authorization."""
+        return self.dl(role).submit_ballot(ELECTION_ID, ballot, self.ballot_sig(role, ballot))
+
+    def register_sig_for(self, role: str, config) -> bytes:
+        """Credential for registering ``config`` — which may assert a different id than
+        ``self.config`` (used when registering a second election)."""
+        return self.register_sig(role)
 
     def register(self) -> None:
         self.dl("admin").register_election(self.config, self.register_sig("admin"))
@@ -179,11 +198,17 @@ class SignatureBackend(ConformanceBackend):
     def reader(self):
         return self._adapter
 
-    def sig(self, role: str, op: str) -> bytes:
-        return self._signers[role].sign(op, ELECTION_ID)
+    def sig(self, role: str, op: str, payload: bytes = b"") -> bytes:
+        return self._signers[role].sign(op, ELECTION_ID, payload)
 
     def register_sig(self, role: str) -> bytes:
         return self._signers[role].sign_register(self.config)
+
+    def register_sig_for(self, role: str, config) -> bytes:
+        return self._signers[role].sign_register(config)
+
+    def ballot_sig(self, role: str, ballot) -> bytes:
+        return write_auth.sign_ballot(self._signers[role].private_key, ELECTION_ID, ballot)
 
     def dkg_sig(self, role: str, pk: bytes, committee: list[bytes]) -> bytes:
         return write_auth.sign_dkg_result(self._signers[role].private_key, ELECTION_ID, pk, committee)
@@ -221,11 +246,25 @@ class DataLayerConformance:
             backend.dl("result_publisher").register_election(backend.config, backend.register_sig("result_publisher"))
 
     def test_register_assigns_sequential_ids(self, backend):
-        # Ids are backend-assigned (registry-style), so each call yields a new id.
+        # Ids are backend-assigned (registry-style), so each call yields a new id — but the
+        # signed config asserts the id it expects, so a second election must be signed for
+        # the NEXT id rather than reusing the first body.
+        from dataclasses import replace
+
         eid1 = backend.dl("admin").register_election(backend.config, backend.register_sig("admin"))
-        eid2 = backend.dl("admin").register_election(backend.config, backend.register_sig("admin"))
+        cfg2 = replace(backend.config, election_id=(2).to_bytes(32, "big"))
+        eid2 = backend.dl("admin").register_election(cfg2, backend.register_sig_for("admin", cfg2))
         assert eid1 == (1).to_bytes(32, "big")
         assert eid2 == (2).to_bytes(32, "big")
+
+    def test_register_body_cannot_be_replayed(self, backend):
+        """A captured registration is single-use. Once it lands the sequence moves on,
+        so re-sending the identical (validly signed) body can never register again — no
+        duplicate-election spam, and on chain no gas spent replaying it."""
+        backend.register()
+        with pytest.raises(ImmutabilityError):
+            backend.dl("admin").register_election(backend.config, backend.register_sig("admin"))
+        assert backend.reader().list_elections() == [ELECTION_ID]
 
     def test_list_elections_and_filter(self, backend):
         from geg.ports.data_layer import ElectionFilter
@@ -272,7 +311,7 @@ class DataLayerConformance:
     def test_ballot_ordering_and_monotonic_sequence(self, backend):
         backend.register()
         self._open_voting(backend)
-        seqs = [backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([i]) * 32)) for i in range(5)]
+        seqs = [backend.write_ballot("gateway", backend.ballot(bytes([i]) * 32)) for i in range(5)]
         assert seqs == [0, 1, 2, 3, 4]
         assert backend.reader().count_ballots(ELECTION_ID) == 5
         listed = backend.reader().list_ballots(ELECTION_ID, 0, 5)
@@ -283,10 +322,42 @@ class DataLayerConformance:
         backend.register()
         self._open_voting(backend)
         for i in range(5):
-            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([i]) * 32))
+            backend.write_ballot("gateway", backend.ballot(bytes([i]) * 32))
         page = backend.reader().list_ballots(ELECTION_ID, 2, 2)
         assert [sb.envelope.pseudonym for sb in page] == [bytes([2]) * 32, bytes([3]) * 32]
         assert [sb.sequence_number for sb in page] == [2, 3]
+
+    def test_ballot_write_requires_an_authorized_gateway(self, backend):
+        """With a non-empty ``gateway_keys`` the writer set is a real restriction.
+
+        Previously the port carried no signature at all, so a deployer could configure
+        ``gateway_keys`` and have it silently ignored on this backend while the chain
+        enforced it — anyone reaching the data layer could write ballots directly,
+        bypassing the ingress filter (and its replay check).
+        """
+        backend.register()
+        self._open_voting(backend)
+        b = backend.ballot(bytes([9]) * 32)
+
+        # An unauthorized signer is refused ...
+        with pytest.raises(WriteAuthorizationError):
+            backend.dl("gateway").submit_ballot(ELECTION_ID, b, backend.ballot_sig("outsider", b))
+        # ... as is a missing signature ...
+        with pytest.raises(WriteAuthorizationError):
+            backend.dl("gateway").submit_ballot(ELECTION_ID, b, b"")
+        assert backend.reader().count_ballots(ELECTION_ID) == 0
+        # ... while the registered gateway key is accepted.
+        assert backend.write_ballot("gateway", b) == 0
+
+    def test_gateway_signature_is_bound_to_the_ballot(self, backend):
+        """The signature authorizes *these bytes*, so a relayed write cannot have its
+        ballot swapped in flight for another one the gateway never saw."""
+        backend.register()
+        self._open_voting(backend)
+        signed = backend.ballot(bytes([1]) * 32)
+        other = backend.ballot(bytes([2]) * 32)
+        with pytest.raises(WriteAuthorizationError):
+            backend.dl("gateway").submit_ballot(ELECTION_ID, other, backend.ballot_sig("gateway", signed))
 
     # -- ballots: the voting-window gate (parity with the chain contract) --- #
 
@@ -294,26 +365,26 @@ class DataLayerConformance:
         backend.register()
         self._open_voting(backend, now=999)  # key finalized, but window not yet open
         with pytest.raises(VotingWindowError):
-            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+            backend.write_ballot("gateway", backend.ballot(bytes([1]) * 32))
 
     def test_ballot_after_voting_end_rejected(self, backend):
         backend.register()
         self._open_voting(backend, now=2_000)  # half-open: voting_end itself is closed
         with pytest.raises(VotingWindowError):
-            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+            backend.write_ballot("gateway", backend.ballot(bytes([1]) * 32))
 
     def test_ballot_before_dkg_finalized_rejected(self, backend):
         backend.register()
         backend.set_time(1_500)  # inside the window, but no finalized key
         with pytest.raises(VotingWindowError):
-            backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+            backend.write_ballot("gateway", backend.ballot(bytes([1]) * 32))
 
     def test_stored_ballot_carries_receive_time(self, backend):
         """The adapter records its authoritative receive time, so the tally-time
         OUT_OF_WINDOW check has something to verify against."""
         backend.register()
         self._open_voting(backend, now=1_500)
-        backend.dl("gateway").submit_ballot(ELECTION_ID, backend.ballot(bytes([1]) * 32))
+        backend.write_ballot("gateway", backend.ballot(bytes([1]) * 32))
         [sb] = backend.reader().list_ballots(ELECTION_ID, 0, 1)
         assert sb.submitted_at is not None
         assert backend.config.voting_start <= sb.submitted_at < backend.config.voting_end
@@ -501,9 +572,30 @@ class DataLayerConformance:
         backend.register()
         assert backend.reader().get_result(ELECTION_ID) is None
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("admin").publish_result(ELECTION_ID, backend.result(), backend.sig("admin", "result"))
-        backend.dl("result_publisher").publish_result(ELECTION_ID, backend.result(), backend.sig("result_publisher", "result"))
+            backend.dl("admin").publish_result(ELECTION_ID, backend.result(), backend.result_sig("admin"))
+        backend.dl("result_publisher").publish_result(ELECTION_ID, backend.result(), backend.result_sig("result_publisher"))
         assert backend.reader().get_result(ELECTION_ID) == backend.result()
+
+    def test_result_signature_is_bound_to_the_totals(self, backend):
+        """A result credential must not carry over to *different* totals.
+
+        Before the fix the signature covered only ("result", electionId), so this forged
+        artifact — different totals, different credited keypers, different bound — was
+        accepted under a signature taken over the honest one.
+        """
+        backend.register()
+        honest = backend.result()
+        forged = ResultArtifact(
+            election_id=ELECTION_ID, totals=(6, 0, 0), keyper_indices=(1, 3), bsgs_bound=6
+        )
+        assert forged != honest
+        credential_for_honest = backend.result_sig("result_publisher", honest)
+        with pytest.raises(WriteAuthorizationError):
+            backend.dl("result_publisher").publish_result(ELECTION_ID, forged, credential_for_honest)
+        assert backend.reader().get_result(ELECTION_ID) is None
+        # ...and the same credential still authorizes the artifact it was taken over.
+        backend.dl("result_publisher").publish_result(ELECTION_ID, honest, credential_for_honest)
+        assert backend.reader().get_result(ELECTION_ID) == honest
 
     # -- capability --------------------------------------------------------- #
 

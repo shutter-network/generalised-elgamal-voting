@@ -20,9 +20,9 @@ from conftest import ManualClock
 def _config(admin: Signer, result_publisher: Signer | None = None) -> ElectionConfig:
     keypers = [Signer.generate() for _ in range(3)]
     return ElectionConfig(
-        election_id=b"\x00" * 32, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
+        election_id=(1).to_bytes(32, "big"), num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
         weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
-        voting_start=1_000, voting_end=2_000, threshold=Threshold(t=1, n=3),
+        voting_start=1_000, voting_end=2_000, threshold=Threshold(t=2, n=3),
         keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url=f"http://keyper{i+1}:8100")
                       for i in range(3)),
         eligibility_key=b"\xe1" * 48, result_publisher_key=(result_publisher or Signer.generate()).identity,

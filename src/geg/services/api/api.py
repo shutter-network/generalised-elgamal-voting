@@ -24,10 +24,17 @@ from __future__ import annotations
 import time
 
 from flask import Flask, jsonify, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from geg.envelopes import codecs
-from geg.ports.data_layer import ElectionDataLayer, ElectionFilter, FinalizedKey, VotingWindowError
-from geg.services.data_layer.data_layer import PORT_READ_PREFIX, port_read_blueprint
+from geg.ports.data_layer import (
+    ElectionDataLayer,
+    ElectionFilter,
+    FinalizedKey,
+    QuorumConflictError,
+    VotingWindowError,
+)
+from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH, PORT_READ_PREFIX, port_read_blueprint
 from geg.services.gateway.gateway import GatewayRejection, submit_ballot
 
 _DEFAULT_LIMIT = 50
@@ -114,6 +121,7 @@ def build_api_app(
     clock=None,
     filter_on: bool = True,
     data_store: str = "database",
+    gateway_signer=None,
 ) -> Flask:
     """Build the public API app over any ``ElectionDataLayer``.
 
@@ -123,13 +131,17 @@ def build_api_app(
     read proxy. ``clock`` (defaults to wall time) and ``filter_on`` gate the ballot.
     ``data_store`` (``"database"`` | ``"blockchain"``) is reported on ``/capability`` as
     ``dataStore`` so the frontend can show/hide chain-only options (vote-proxy, self-submit
-    fee)."""
+    fee). ``gateway_signer`` authorizes the ballot *write* when the election declares a
+    closed writer set (``config.gateway_keys``)."""
     app = Flask(__name__)
+    # Bound the body every route buffers via get_json(force=True).
+    app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
     write = write_dl if write_dl is not None else dl
     _clock = clock if clock is not None else (lambda: int(time.time()))
 
     # The port's read surface, mounted verbatim under /port (bare-hex ids, envelope
-    # JSON, ballot storage metadata, no pagination cap). This is what remote keyper
+    # JSON, ballot storage metadata; ballot pages capped at MAX_BALLOT_PAGE — consumers
+    # needing the whole list page via reads.read_all_ballots). This is what remote keyper
     # operators point GEG_DATA_LAYER_URL at: they read the data layer but write through
     # the coordinator relay, so exposing reads here keeps the data-layer service itself
     # off the public network. The browser routes below are a separate, friendlier shape;
@@ -143,6 +155,16 @@ def build_api_app(
     @app.errorhandler(ValueError)
     def _bad_request(e):
         return jsonify(error="ValueError", message=str(e)), 400
+
+    @app.errorhandler(QuorumConflictError)
+    def _quorum_conflict(e):
+        # See the data-layer service: a split committee is a 409, not a server fault.
+        return jsonify(error="QuorumConflictError", message=str(e)), 409
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def _too_large(e):
+        return jsonify(error="PAYLOAD_TOO_LARGE",
+                       message="That request body is too large."), 413
 
     @app.after_request
     def _cors(resp):
@@ -241,12 +263,18 @@ def build_api_app(
         election_id = _eid()
         try:
             ballot = codecs.dec_ballot(request.get_json(force=True)["ballot"])
+        except RequestEntityTooLarge:
+            # Distinct from MALFORMED: the body exceeded MAX_CONTENT_LENGTH and was never
+            # read, so calling it a bad ballot would send the voter looking in the wrong
+            # place. Let the app's 413 handler answer.
+            raise
         except Exception as exc:  # noqa: BLE001
             return jsonify(error="MALFORMED",
                            message="The ballot could not be read — it's malformed or missing fields.",
                            detail=str(exc)), 400
         try:
-            seq = submit_ballot(write, election_id, ballot, clock=_clock, filter_on=filter_on)
+            seq = submit_ballot(write, election_id, ballot, clock=_clock, filter_on=filter_on,
+                                gateway_signer=gateway_signer)
         except GatewayRejection as rej:
             reason = str(rej)
             return jsonify(error="REJECTED", reason=reason,
@@ -304,6 +332,7 @@ def main() -> None:
     import os
 
     from geg.adapters.db.client import HttpDataLayerClient
+    from geg.core.authz import Signer
     from geg.services.common.backend import _CHAIN_BACKENDS, data_layer_for_service
 
     logging.basicConfig(level=logging.INFO)
@@ -312,10 +341,15 @@ def main() -> None:
     # Normalize the data-store selector to the two values the frontend keys off of.
     data_store = "blockchain" if os.environ.get("GEG_DATA_LAYER", "database").lower() in _CHAIN_BACKENDS else "database"
     read_dl = HttpDataLayerClient(os.environ["GEG_DATA_LAYER_URL"])
-    write_dl = data_layer_for_service(os.environ.get("GATEWAY_SIGNING_KEY"))
+    gateway_key = os.environ.get("GATEWAY_SIGNING_KEY")
+    write_dl = data_layer_for_service(gateway_key)
+    # On chain the key is the ballot tx sender; on memory/DB it signs the ballot write so
+    # the data layer can honour config.gateway_keys. Same key, two roles.
+    gateway_signer = Signer.from_sk(int(gateway_key, 16)) if gateway_key else None
     logging.getLogger("geg.api").info("op=start service=api port=%d data_layer=%s data_store=%s filter=%s",
                                       port, os.environ["GEG_DATA_LAYER_URL"], data_store, "on" if filter_on else "off")
-    app = build_api_app(read_dl, write_dl=write_dl, clock=lambda: int(time.time()), filter_on=filter_on, data_store=data_store)
+    app = build_api_app(read_dl, write_dl=write_dl, clock=lambda: int(time.time()), filter_on=filter_on,
+                        data_store=data_store, gateway_signer=gateway_signer)
     app.run(host=os.environ.get("API_HOST", "0.0.0.0"), port=port)
 
 

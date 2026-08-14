@@ -14,7 +14,7 @@
     "votingStart": 1000,
     "votingEnd": 2000,
     "threshold": {
-      "t": 1,
+      "t": 2,
       "n": 3
     },
     "keypers": [

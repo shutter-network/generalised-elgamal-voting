@@ -20,7 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 # Database data-layer adapter (microservice + HTTP client) over Postgres.
-db = ["psycopg[binary]>=3.1", "flask>=3.0", "requests>=2.31"]
+db = ["psycopg[binary]>=3.1", "psycopg_pool>=3.2", "flask>=3.0", "requests>=2.31"]
 # Blockchain data-layer adapter (web3 against the bulletin-board contracts).
 chain = ["web3>=7.0"]
 # Keyper backend service (Flask HTTP server, bootstrap sealing, encrypted state).

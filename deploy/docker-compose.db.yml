@@ -76,8 +76,8 @@ services:
 
   # Public API (frontend / external integrators): reads + ballot ingest on :8500.
   # Reads are backend-blind (through the data-layer service, identical on db and chain).
-  # The ballot POST (formerly the standalone gateway) is keyless on db — the data-layer
-  # service verifies the relayed signature. CORS-enabled.
+  # The ballot POST (formerly the standalone gateway) is signed with GATEWAY_SIGNING_KEY on
+  # db too — the data-layer service verifies it against config.gatewayKeys. CORS-enabled.
   api:
     <<: *image
     command: ["python", "-m", "geg.services.api"]
@@ -87,6 +87,10 @@ services:
       GEG_DATA_LAYER_URL: http://data-layer:8000
       API_PORT: "8500"
       GATEWAY_FILTER: "1"   # ballot admission filter (UX + spam); 0 to disable
+      # Signs each ballot WRITE so the data layer can honour config.gatewayKeys.
+      # On chain this same key is the ballot tx sender; on db it is the gateway
+      # identity. Required whenever an election registers a non-empty gatewayKeys.
+      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
     ports:
       - "8500:8500"
     depends_on: [data-layer]

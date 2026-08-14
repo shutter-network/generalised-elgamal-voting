@@ -24,6 +24,8 @@
 #   KEYPER_STATE_DIR_HOST  host path for encrypted state (default ../keyper-state, i.e.
 #                          repo root). Give each local instance its own path.
 #   KEYPER_SECRET_TTL_S    seconds past voting_end to retain per-election secret
+#                          (default 7776000 = 90 days, also the code default;
+#                           `never` opts in explicitly to indefinite retention)
 #                          shares before pruning. Default 90 days (7776000).
 #
 # Quick start (one real operator):

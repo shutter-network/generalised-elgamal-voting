@@ -18,7 +18,7 @@ import type {
 import { CopyTextButton, Hex } from "./ui/Hex";
 import { formatUnixUtc } from "./ui/formatUnixUtc";
 import { ResultPie2D } from "./ui/ResultPie2D";
-import { computeElectionOutcome, formatOutcomeOverviewTitle, formatOutcomeStageTitle } from "./ui/electionOutcome";
+import { computeElectionOutcome, formatOutcomeOverviewTitle, formatOutcomeStageTitle, formatVotes } from "./ui/electionOutcome";
 import { BallotDetail } from "./ui/BallotDetail";
 import { VerifyBallotPanel } from "./ui/VerifyBallotPanel";
 import { VerifyAggregatePanel } from "./ui/VerifyAggregatePanel";
@@ -76,6 +76,25 @@ type OverviewDisplay = {
   rightLabel: "WHAT COMES NEXT" | "WHAT YOU CAN DO NOW"; rightDesc: string;
 };
 
+/** "5,100 points · 51 voting power · 51 ballots counted".
+ *
+ * One word ("votes") used to stand for three different quantities, which is unreadable as
+ * soon as weighting is on: points are budget x weight, voting power is the sum of the
+ * admitted ballots' weights, and ballots are people. Falls back to points alone before the
+ * aggregate has loaded. */
+function formatTallySummary(totalPoints: bigint, agg: EncryptedTally | null, t: TFunction): string {
+  const points = t("Total: {{n}} points", { n: totalPoints.toLocaleString() });
+  if (!agg) return points;
+  // Votes here is the total voting power, which equals totalPoints/budget in exact mode
+  // (every voter spends the whole budget). Read from the aggregate rather than divided, so
+  // it stays correct if at-most mode ever ships and the two stop being equal.
+  return [
+    points,
+    t("{{n}} votes", { n: agg.totalAdmittedWeight.toLocaleString() }),
+    t("{{n}} ballots counted", { n: agg.admittedCount.toLocaleString() }),
+  ].join(" · ");
+}
+
 function computeOverviewDisplay(p: {
   overview: Overview; result: ElectionResult | null; aggregate: EncryptedTally | null;
   shares: DecryptionShare[] | null; ballotTotal: bigint; ballotCounted: number; ballotSuperseded: number; t: TFunction;
@@ -100,8 +119,8 @@ function computeOverviewDisplay(p: {
     const outcome = computeElectionOutcome(result.tally);
     return {
       leftLabel: "ELECTION FINALIZED", showCurrentlyDot: false,
-      mainTitle: formatOutcomeOverviewTitle(outcome, t),
-      mainSub: t("{{n}} total votes counted", { n: outcome.totalVotes.toString() }),
+      mainTitle: formatOutcomeOverviewTitle(outcome, t, Number(overview.config.budget)),
+      mainSub: formatTallySummary(outcome.totalVotes, aggregate, t),
       footerDesc: t("Every stage has completed. The result is published and fully verifiable."),
       rightLabel: "WHAT YOU CAN DO NOW",
       rightDesc: t("Open any stage below to inspect what happened, then use the right column to re-run that step yourself."),
@@ -299,7 +318,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
         : { title: t("{{n}} ballots accepted", { n: overviewBallotTotal.toString() }), sub: t("Voting closed") };
       case 3: return aggregate ? { title: t("{{n}} ballots summed", { n: countedBallots.toString() }), sub: t("Into {{n}} encrypted candidate totals", { n: aggregate.aggregates.length }) } : null;
       case 4: return shares ? { title: t("{{count}} of {{total}} keyper shares received", { count: shares.length, total: overview.config.thresholdN.toString() }), sub: t("Threshold met · tally decrypted") } : null;
-      case 5: { if (!result) return null; const o = computeElectionOutcome(result.tally); return { title: formatOutcomeStageTitle(o, t), sub: t("{{n}} total votes counted", { n: o.totalVotes.toString() }) }; }
+      case 5: { if (!result) return null; const o = computeElectionOutcome(result.tally); return { title: formatOutcomeStageTitle(o, t, Number(overview!.config.budget)), sub: formatTallySummary(o.totalVotes, aggregate, t) }; }
       default: return null;
     }
   }
@@ -714,7 +733,7 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
                     {stageLifecycle(5) === "pending" ? (<>{renderStageLocked(5)}{renderVerifySection(5)}</>) : !result ? (<><p className="stageAwaitingData dim">{t("No result published yet. Once enough keyper shares are combined, the decrypted tally will appear here.")}</p>{renderVerifySection(5)}</>) : (<>
                       {!isTriple && (
                         <div className="dataCardList">
-                          <div className="dataCard tallySection"><div className="tallySectionHdr"><span className="tallySectionTitle">{t("TALLY")}</span><span className="dim">{t("{{n}} candidates · {{votes}} votes", { n: result.tally.length, votes: result.tally.reduce((s, c) => s + c, 0n).toString() })}</span></div><ResultPie2D tally={result.tally} /></div>
+                          <div className="dataCard tallySection"><div className="tallySectionHdr"><span className="tallySectionTitle">{t("TALLY")}</span><span className="dim">{t("{{n}} candidates · {{votes}} votes", { n: result.tally.length, votes: formatVotes(result.tally.reduce((s, c) => s + c, 0n), Number(overview.config.budget)) })}</span></div><ResultPie2D tally={result.tally} budget={Number(overview.config.budget)} /></div>
                           {result.keyperIndices.length > 0 && (<div className="dataCard keypersCard"><div className="tallySectionTitle">{t("KEYPERS USED")}</div><div className="keypersIndicesList"><span className="keypersIndicesPill">{t("Indices: {{list}}", { list: result.keyperIndices.join(", ") })}</span></div></div>)}
                         </div>
                       )}

@@ -18,8 +18,11 @@ self-bound on ``/status`` as ``encryptionPubkey`` / ``encryptionPubkeySig`` so a
 key is verified against the member address before anyone seals to it. A Feldman-VSS
 complaint at ``/dkg/round2`` returns recipient-signed ``DKG-ACCUSE-v1`` accusations; the
 accused dealer's ``/dkg/reveal_share`` discloses a share **only** on such an accusation
-from that share's own recipient (so a caller can never harvest others' shares), and the
-coordinator halts the ceremony before publishing if any keyper complains.
+from that share's own recipient (so a caller can never harvest others' shares).
+A complaint is then **repaired, not fatal**: ``/dkg/reveal_share`` re-seals the disputed
+share straight to its recipient (never to the caller), the recipient accepts it only if it
+verifies against the dealer's commitments, and round 2 is re-run for that keyper. The ceremony proceeds
+as long as a quorum can publish, so no single member can veto key generation.
 
 The server never trusts a decryption trigger — `/publish_decr_share` re-checks the
 preconditions against the data layer (via :class:`KeyperService`). There is deliberately
@@ -38,21 +41,50 @@ from flask import Flask, abort, jsonify, request
 
 from geg.core import write_auth
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
+from geg.crypto.dkg import verify_share as dkg_verify_share
 from geg.crypto.points import g2_from_compressed, g2_to_compressed
 from geg.ports.data_layer import ImmutabilityError
-from geg.services.data_layer.data_layer import PORT_READ_PREFIX
+from geg.services.common.auth import tokens_equal
+from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH, PORT_READ_PREFIX
 from . import keyper_bootstrap as boot
 from . import keyper_persistence as persist
 from .keyper import KeyperService
 
 _OPEN = {"/status", "/health", "/auth/bootstrap"}
 _PEER = {"/dkg/receive_commitments", "/dkg/receive_share"}
-# Retention TTL for a keyper's per-election secrets, measured from voting_end (there is no
-# tally deadline any more — a keyper can decrypt however late, up to this bound). The default
-# is owned by the deployment (compose `KEYPER_SECRET_TTL_S`); when unset the secret is kept
-# indefinitely (expires_at=None → never pruned) rather than baking a default value in here.
-_ttl = os.environ.get("KEYPER_SECRET_TTL_S")
-_SECRET_RETENTION_S = int(_ttl) if _ttl else None
+# Retention TTL for a keyper's per-election secrets, measured from voting_end
+_DEFAULT_SECRET_RETENTION_S = 90 * 24 * 3600  # 90 days (== compose's 7776000)
+
+
+def _parse_secret_ttl(raw: str | None) -> int | None:
+    """Seconds to retain a per-election secret past ``voting_end``; ``never`` → ``None``.
+
+    Not a plain ``getenv`` default: an env file or compose var that is *set but blank* yields
+    ``""``, which ``int()`` rejects — the original code handled that too. ``never`` keeps the
+    pre-fix indefinite behaviour available, but as a stated choice rather than a fallback.
+    """
+    value = (raw or "").strip()
+    if value.lower() == "never":
+        return None
+    return int(value or _DEFAULT_SECRET_RETENTION_S)
+
+
+_SECRET_RETENTION_S = _parse_secret_ttl(os.environ.get("KEYPER_SECRET_TTL_S"))
+
+
+class _AccusationDenied(Exception):
+    """Internal: an accusation-gated request failed a check.
+
+    ``status`` is 400 for a malformed body (no state is leaked by saying "that isn't an
+    accusation") and 401 for every gate failure — uniform, so a prober cannot learn *which*
+    check failed, e.g. whether a share exists for that recipient. The reason is logged
+    server-side only.
+    """
+
+    def __init__(self, reason: str, status: int = 401):
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
 
 
 def _is_benign_write_conflict(err: Exception) -> bool:
@@ -91,6 +123,8 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     log = logger or logging.getLogger("geg.keyper")
     state_dir = pathlib.Path(state_dir)
     app = Flask(__name__)
+    # Bound the body every route buffers via get_json(force=True)
+    app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
     lock = threading.Lock()
 
     @app.after_request
@@ -116,6 +150,9 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
     completed: dict[str, persist.DkgEntry] = {}
     persist.load_dkg_secrets(fernet, completed, state_dir, log)
     dkg_states: dict[str, KeyperDKGState] = {}
+    # election_id hex -> 'running' | 'submitted'. Guards the async /aggregate so a
+    # re-trigger never starts a second computation (see the endpoint).
+    aggregate_state: dict[str, str] = {}
     inbox: dict[str, dict] = {}
     nonce_tracker = boot.NonceTracker()
 
@@ -179,7 +216,8 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             abort(503, "keyper not bootstrapped")
         tok = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
         expected = installed["peer_token"] if request.path in _PEER else installed["api_token"]
-        if not tok or tok != expected:
+        # Constant-time, and tolerant of a missing/None expected peer token.
+        if not tokens_equal(tok, expected):
             abort(401, "bad bearer token")
 
     # -- status + bootstrap ------------------------------------------------- #
@@ -230,10 +268,11 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         eid = _eid(body); eid_hex = eid.hex()
         config = _config(eid)
         idx = _my_index(config)
-        n, t = config.threshold.n, config.threshold.t
+        # threshold.t IS the quorum; round1 derives the degree from it.
+        n, quorum = config.threshold.n, config.threshold.quorum
         with lock:
             st = KeyperDKGState()
-            st.round1(idx, n, t)
+            st.round1(idx, n, quorum)
             dkg_states[eid_hex] = st
             _inbox(eid_hex)  # reset/init
             inbox[eid_hex] = {"commitments": {idx: st.commitments}, "shares": {idx: st.shares_for_others[idx]}}
@@ -278,6 +317,19 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             log.warning("op=dkg phase=receive_commitments status=rejected election=%s dealer=%s reason=bad_signature",
                         eid_hex, dealer)
             abort(401, "bad dealer commitments signature")
+        # A dealer must publish exactly t+1 commitments. A longer vector lets it deal a
+        # degree-(t+1) polynomial whose shares still pass Feldman verification, so the DKG
+        # finalizes and the decryption-share DLEQs verify — but no t+1 quorum can ever
+        # Lagrange-interpolate the secret, leaving the election permanently untalliable.
+        # Refuse at the door so a malformed vector is never stored. Unlike a bad share
+        # this is publicly checkable (commitments are broadcast and dealer-signed), so
+        # every honest keyper reaches this same verdict independently.
+        expected_len = config.threshold.quorum  # one commitment per coefficient
+        if len(incoming) != expected_len:
+            log.warning("op=dkg phase=receive_commitments status=rejected election=%s dealer=%s "
+                        "reason=bad_commitment_count got=%d want=%d",
+                        eid_hex, dealer, len(incoming), expected_len)
+            abort(400, f"dealer published {len(incoming)} commitments, expected {expected_len}")
         with lock:
             box = _inbox(eid_hex)["commitments"]
             if dealer in box:
@@ -301,27 +353,35 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             # key against the recipient's config member address, so a substituted key (via a
             # lying coordinator) can't redirect the plaintext; at worst it's a DoS. The
             # share is also signed (authenticity), verified over the unsealed scalar.
-            peer = _peer(recipient)
-            member = _members_addr(config, recipient)
-            enc_hex, enc_sig = peer.get("enc_pubkey"), peer.get("enc_pubkey_sig")
-            if member is None or not enc_hex or not enc_sig:
-                log.warning("op=dkg phase=distribute_shares status=error election=%s recipient=%s "
-                            "reason=no_verified_enc_key (re-bootstrap needed)", eid_hex, recipient)
-                abort(500, f"no verified encryption key for keyper {recipient}; re-bootstrap")
-            try:
-                enc_pub = boot.verify_encryption_pubkey(member, enc_hex, enc_sig)
-            except Exception as e:  # noqa: BLE001
-                log.warning("op=dkg phase=distribute_shares status=error election=%s recipient=%s "
-                            "reason=enc_key_verify_failed err=%s", eid_hex, recipient, e)
-                abort(500, f"peer {recipient} encryption key failed verification: {e}")
-            share_val = st.shares_for_others[recipient]
-            sealed = boot.seal_share(share_val, enc_pub)
-            sig = write_auth.sign_digest(
-                signer.private_key, write_auth.dkg_share_digest(eid, idx, recipient, share_val))
-            _post_peer(recipient, "/dkg/receive_share",
-                       {"electionId": eid_hex, "dealerIndex": idx, "recipientIndex": recipient,
-                        "sealedShare": sealed, "signature": "0x" + sig.hex()})
+            enc_pub = _verified_peer_enc_key(config, eid_hex, recipient, "distribute_shares")
+            _seal_and_send_share(eid, eid_hex, idx, recipient, st, enc_pub)
         return jsonify(ok=True)
+
+    def _seal_and_send_share(eid, eid_hex, idx, recipient, st, enc_pub):
+        """Seal this dealer's share for ``recipient`` and post it over the peer channel."""
+        share_val = st.shares_for_others[recipient]
+        sealed = boot.seal_share(share_val, enc_pub)
+        sig = write_auth.sign_digest(
+            signer.private_key, write_auth.dkg_share_digest(eid, idx, recipient, share_val))
+        _post_peer(recipient, "/dkg/receive_share",
+                   {"electionId": eid_hex, "dealerIndex": idx, "recipientIndex": recipient,
+                    "sealedShare": sealed, "signature": "0x" + sig.hex()})
+
+    def _verified_peer_enc_key(config, eid_hex, recipient, phase):
+        """The recipient's X25519 key, verified against its config member address."""
+        peer = _peer(recipient)
+        member = _members_addr(config, recipient)
+        enc_hex, enc_sig = peer.get("enc_pubkey"), peer.get("enc_pubkey_sig")
+        if member is None or not enc_hex or not enc_sig:
+            log.warning("op=dkg phase=%s status=error election=%s recipient=%s "
+                        "reason=no_verified_enc_key (re-bootstrap needed)", phase, eid_hex, recipient)
+            abort(500, f"no verified encryption key for keyper {recipient}; re-bootstrap")
+        try:
+            return boot.verify_encryption_pubkey(member, enc_hex, enc_sig)
+        except Exception as e:  # noqa: BLE001
+            log.warning("op=dkg phase=%s status=error election=%s recipient=%s "
+                        "reason=enc_key_verify_failed err=%s", phase, eid_hex, recipient, e)
+            abort(500, f"peer {recipient} encryption key failed verification: {e}")
 
     @app.post("/dkg/receive_share")
     def dkg_receive_share():
@@ -370,7 +430,14 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             box = _inbox(eid_hex)
             shares = box["shares"]
             if dealer in shares and shares[dealer] != share:
-                abort(409, "different share already received from this dealer")
+                comms = box["commitments"].get(dealer)
+                repairable = dealer in box.get("complained", set())
+                if not (repairable and comms and dkg_verify_share(comms, recipient, share)):
+                    log.warning("op=dkg phase=receive_share status=rejected election=%s dealer=%s "
+                                "reason=equivocation repairable=%s", eid_hex, dealer, repairable)
+                    abort(409, "different share already received from this dealer")
+                log.warning("op=dkg phase=receive_share status=replaced election=%s dealer=%s "
+                            "recipient=%s reason=repair_after_complaint", eid_hex, dealer, recipient)
             shares[dealer] = share
             # Retain the dealer's signed share as evidence for a complaint/reveal.
             box.setdefault("share_sigs", {})[dealer] = sig_hex
@@ -391,6 +458,11 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
             # Security-relevant: this keyper's VSS verification rejected a dealer's shares.
             log.warning("op=dkg phase=round2 status=verify_failed election=%s complaints=%s err=%s",
                         eid_hex, bad, err)
+            # Record who we complained about. `receive_share` consults this to decide whether
+            # a *replacement* share from that dealer may override the one already stored —
+            # the narrow, self-owned relaxation of the anti-equivocation guard.
+            with lock:
+                box.setdefault("complained", set()).update(int(d) for d in bad)
             # Sign one accusation per bad dealer. This recipient-signed DKG-ACCUSE-v1 is the
             # evidence the accused dealer's gated /dkg/reveal_share requires before disclosing
             # a share, and that the coordinator surfaces on halt. We are the complaining
@@ -419,53 +491,82 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
 
     @app.post("/dkg/reveal_share")
     def dkg_reveal_share():
-        """Accusation-gated Feldman-VSS rebuttal: reveal the share THIS dealer dealt to a
+        """Accusation-gated Feldman-VSS rebuttal: re-deal the share THIS dealer dealt to a
         recipient, *only* on a valid recipient-signed ``DKG-ACCUSE-v1`` naming this dealer
         for the pinned election. Since only recipient ``j`` can sign as ``j``, ``j`` can
-        unlock only its own share ``f_i(j)`` — which it already holds — so the endpoint
+        unlock only its own share ``f_i(j)`` — which it is already entitled to — so this
         discloses nothing new. The gate lives here in the handler (not ``before_request``).
 
-        Returns the dealer's own ``DKG-REVEAL-v1`` signature; with the accusation it is
-        two-sided signed evidence for a resolver (adjudication is out of scope — see
-        DKG_SECURITY_HARDENING_PLAN.md). All gate failures return a uniform 401 so a prober
-        cannot learn which check failed (e.g. whether a share exists for that recipient).
+        **The share is sealed to the recipient and posted directly to it; it is never
+        returned to the caller.** The endpoint used to hand the plaintext scalar back in the
+        response, which meant the coordinator — the party that triggers this — learned a
+        share whenever a genuine complaint existed. One share is harmless, but harvesting a
+        quorum of one dealer's reveals reconstructs that dealer's polynomial, and it broke
+        the rule that shares never traverse the coordinator. The caller now learns only
+        *that* a re-deal happened.
+
+        The recipient accepts the re-dealt share as a replacement only if it verifies
+        against this dealer's published commitments, so this cannot be used to inject a bad
+        share, and only a recipient that actually complained will accept one at all.
+
+        All gate failures return a uniform 401 so a prober cannot learn which check failed
+        (e.g. whether a share exists for that recipient).
         """
         body = request.get_json(silent=True) or {}
-        acc = body.get("accusation")
+        try:
+            eid, eid_hex, config, my_idx, recipient, st = _gate_accusation(
+                body.get("accusation"), "reveal_share")
+        except _AccusationDenied as denied:
+            return jsonify(error="unauthorized" if denied.status == 401 else denied.reason), denied.status
+
+        enc_pub = _verified_peer_enc_key(config, eid_hex, recipient, "reveal_share")
+        _seal_and_send_share(eid, eid_hex, my_idx, recipient, st, enc_pub)
+        # A genuine disclosure — significant security event; record the who/what.
+        log.warning("op=dkg phase=reveal_share status=revealed election=%s dealer=%s recipient=%s "
+                    "(recipient-accusation-gated, sealed direct to recipient)",
+                    eid_hex, my_idx, recipient)
+        return jsonify(ok=True, dealerIndex=my_idx, recipientIndex=recipient)
+
+    def _gate_accusation(acc, phase: str):
+        """Validate a recipient-signed ``DKG-ACCUSE-v1`` naming *this* keyper as dealer.
+
+        Returns ``(eid, eid_hex, config, my_idx, recipient, st)``; raises
+        :class:`_AccusationDenied` otherwise.
+        """
         if not isinstance(acc, dict):
-            log.info("op=dkg phase=reveal_share status=rejected reason=missing_accusation")
-            return jsonify(error="missing accusation"), 400
+            log.info("op=dkg phase=%s status=rejected reason=missing_accusation", phase)
+            raise _AccusationDenied("missing_accusation", 400)
         try:
             acc_eid_hex = str(acc["electionId"])
             accused_dealer = int(acc["accusedDealerIndex"])
             recipient = int(acc["recipientIndex"])
             acc_sig = bytes.fromhex(str(acc["signature"]).removeprefix("0x"))
         except (KeyError, ValueError, TypeError):
-            log.info("op=dkg phase=reveal_share status=rejected reason=bad_accusation")
-            return jsonify(error="bad accusation"), 400
+            log.info("op=dkg phase=%s status=rejected reason=bad_accusation", phase)
+            raise _AccusationDenied("bad_accusation", 400) from None
 
         def _deny(reason: str):
-            # Uniform 401 to the caller (no oracle); the specific reason is server-side only,
-            # so an operator can see *why* a reveal was refused without leaking it to a prober.
-            log.warning("op=dkg phase=reveal_share status=denied election=%s accused_dealer=%s recipient=%s reason=%s",
-                        acc_eid_hex, accused_dealer, recipient, reason)
-            return jsonify(error="unauthorized"), 401
+            # The specific reason is server-side only, so an operator can see *why* a
+            # request was refused without leaking it to a prober.
+            log.warning("op=dkg phase=%s status=denied election=%s accused_dealer=%s recipient=%s reason=%s",
+                        phase, acc_eid_hex, accused_dealer, recipient, reason)
+            return _AccusationDenied(reason)
 
         st = dkg_states.get(acc_eid_hex)
         if st is None:  # not mid-ceremony for this election
-            return _deny("not_in_ceremony")
+            raise _deny("not_in_ceremony")
         try:
             eid = bytes.fromhex(acc_eid_hex)
             config = _config(eid)
-            my_idx = _my_index(config)  # aborts if we're not in the committee
-        except Exception:  # noqa: BLE001 — uniform 401, never leak which check failed
-            return _deny("not_committee_member")
-        # Must name THIS dealer (so one accusation unlocks exactly one (dealer, recipient)
-        # share), and we must actually have dealt a share to that recipient.
+            my_idx = _my_index(config)
+        except Exception:  # noqa: BLE001
+            raise _deny("not_committee_member") from None
+        # Must name THIS dealer, and we must actually still hold a share dealt to that
+        # recipient. (`shares_for_others` survives round 2 now precisely so this works —
+        # see KeyperDKGState.zeroize_dealing.)
         if accused_dealer != my_idx or recipient not in st.shares_for_others:
-            return _deny("wrong_dealer_or_recipient")
-        # The accusation must be signed by the recipient itself → it can only ever unlock
-        # its own share, which it is already entitled to.
+            raise _deny("wrong_dealer_or_recipient")
+        # Signed by the recipient itself → it can only ever unlock its own share.
         expected = _members_addr(config, recipient)
         try:
             recovered = write_auth.recover_digest(
@@ -473,58 +574,119 @@ def build_keyper_app(signer, data_layer, trusted_identities, *, clock, state_dir
         except Exception:  # noqa: BLE001
             recovered = None
         if expected is None or recovered != expected:
-            return _deny("bad_accusation_signer")
-
-        share_val = st.shares_for_others[recipient]
-        reveal_sig = write_auth.sign_digest(
-            signer.private_key, write_auth.dkg_reveal_digest(eid, my_idx, recipient, share_val))
-        # A genuine disclosure — significant security event; record the who/what.
-        log.warning("op=dkg phase=reveal_share status=revealed election=%s dealer=%s recipient=%s "
-                    "(recipient-accusation-gated)", acc_eid_hex, my_idx, recipient)
-        return jsonify(
-            electionId=acc_eid_hex, dealerIndex=my_idx, recipientIndex=recipient,
-            share=hex(share_val), signature="0x" + reveal_sig.hex(),
-        )
+            raise _deny("bad_accusation_signer")
+        return eid, acc_eid_hex, config, my_idx, recipient, st
 
     @app.post("/dkg/publish")
     def dkg_publish():
         body = request.get_json(force=True)
         eid = _eid(body); eid_hex = eid.hex()
+        # Never trust the trigger: publish only a key this keyper actually completed
+        # round 2 for. Without this, a keyper that rejected a dealer (bad share, or a
+        # malformed commitment vector) would still derive a joint key from
+        # whatever commitments happened to be in its inbox and submit it, even though it
+        # holds no combined share for that key. If such a key reached the t+1 quorum the
+        # election would finalize with a key nobody can decrypt.
+        if eid_hex not in completed:
+            log.warning("op=dkg phase=publish status=refused election=%s reason=round2_not_completed", eid_hex)
+            abort(409, "round 2 has not completed for this election; refusing to publish a key")
         commitments = _inbox(eid_hex)["commitments"]
-        pk = derive_joint_mpk(commitments)
-        committee = [derive_mpk_share(i, commitments) for i in sorted(commitments)]
+        quorum = _config(eid).threshold.quorum
+        pk = derive_joint_mpk(commitments, quorum)
+        committee = [derive_mpk_share(i, commitments, quorum) for i in sorted(commitments)]
         pk_b = g2_to_compressed(pk)
         committee_b = [g2_to_compressed(c) for c in committee]
         sig = write_auth.sign_dkg_result(signer.private_key, eid, pk_b, committee_b)
         submitter.submit_dkg_result(eid, pk_b, committee_b, sig)  # direct or via coordinator relay
+        # Now — and not at the end of round 2 — drop the dealing material. The complaint
+        # window is closed once we are publishing, so no recipient can still need a re-deal
+        # from us. `combined_share` is untouched: decryption needs it.
+        with lock:
+            st = dkg_states.get(eid_hex)
+            if st is not None:
+                st.zeroize_dealing()
         return jsonify(ok=True)
 
     # -- aggregation (keyper-quorum; deterministic re-derivation from ballots) #
 
-    @app.post("/aggregate")
-    def aggregate():
-        body = request.get_json(force=True)
-        eid = _eid(body)
-        config = _config(eid)
-        # No persisted DKG secret needed — aggregation only reads the ordered
-        # ballot list and re-runs admission (self-guarded on votingEnd inside).
-        ks = KeyperService(_my_index(config), signer, data_layer, clock=clock)
+    def _run_aggregate(eid: bytes, eid_hex: str, ks) -> None:
+        """Compute and submit this keyper's aggregate. Runs on a worker thread."""
         try:
             produced = ks.produce_aggregate(eid)
+            if produced is not None:
+                artifact, sig = produced
+                try:
+                    submitter.submit_aggregate(eid, artifact, sig)  # direct or via the relay
+                except Exception as err:  # noqa: BLE001
+                    if not _is_benign_write_conflict(err):
+                        raise
+                    # The t+1 quorum finalized the (identical) aggregate first — canonical
+                    # already, so this keyper's contribution simply wasn't needed.
+                    log.info("op=tally phase=aggregate status=already_finalized election=%s", eid_hex)
+            with lock:
+                aggregate_state[eid_hex] = "submitted"
+            log.info("op=tally phase=aggregate status=submitted election=%s", eid_hex)
+        except Exception as err:  # noqa: BLE001
+            # Drop back to "not started" so a later trigger retries rather than the
+            # election being stuck reporting in_progress forever.
+            with lock:
+                aggregate_state.pop(eid_hex, None)
+            log.error("op=tally phase=aggregate status=error election=%s err=%s", eid_hex, err)
+
+    @app.post("/aggregate")
+    def aggregate():
+        """Trigger this keyper's aggregate. **Asynchronous** — returns immediately.
+
+        Aggregation re-verifies every ballot (~3 ms per proof branch, so minutes for a
+        large election). Doing that inline blocked the coordinator's 30 s trigger, which
+        it then read as a failed attempt and, after five polls, as a stalled tally — on a
+        keyper that was working perfectly. It also blocked every *other* election, because
+        the coordinator scans sequentially.
+
+        So: preconditions are checked synchronously (cheap, and a real refusal should still
+        be a 409), then the work moves to a background thread. The status tells the
+        coordinator whether to keep waiting:
+
+        * ``200 submitted``   — this keyper has already contributed
+        * ``202 started``     — accepted, now computing
+        * ``202 in_progress`` — already computing; **no second worker is started**
+        * ``409 refused``     — a precondition failed (not tallying, no key)
+
+        ``{"recompute": true}`` discards a previous ``submitted`` and re-derives. That is
+        the committee's convergence path: a keyper's aggregate is **overridable until the
+        quorum finalizes** precisely so honest keypers can re-converge after a transient
+        divergence (one keyper read the ballot list a moment earlier than another — common
+        on chain while a late vote is still confirming). Only the coordinator can see "all
+        submitted, still no quorum", so only it asks; a keyper re-deriving on its own every
+        poll would burn minutes of CPU merely waiting for slower peers. Work already in
+        flight is never interrupted.
+        """
+        body = request.get_json(force=True)
+        eid = _eid(body); eid_hex = eid.hex()
+        config = _config(eid)
+        # No persisted DKG secret needed — aggregation only reads the ordered ballot list.
+        ks = KeyperService(_my_index(config), signer, data_layer, clock=clock)
+        try:
+            ks.check_can_aggregate(eid)
         except Exception as err:  # noqa: BLE001 — refusal / precondition failure
-            log.debug("op=tally phase=aggregate status=refused election=%s reason=%s", eid.hex(), err)
-            return jsonify(ok=False, reason=str(err)), 409
-        if produced is not None:  # None = already submitted (idempotent)
-            artifact, sig = produced
-            try:
-                submitter.submit_aggregate(eid, artifact, sig)  # direct or via coordinator relay
-            except Exception as err:  # noqa: BLE001
-                if not _is_benign_write_conflict(err):
-                    raise
-                # The t+1 quorum finalized the (identical) aggregate before this
-                # submission landed — canonical already; this keyper wasn't needed.
-                return jsonify(ok=True, note="aggregate already finalized by quorum"), 200
-        return jsonify(ok=True)
+            log.debug("op=tally phase=aggregate status=refused election=%s reason=%s", eid_hex, err)
+            return jsonify(ok=False, status="refused", reason=str(err)), 409
+
+        recompute = bool(body.get("recompute"))
+        with lock:
+            state = aggregate_state.get(eid_hex)
+            if state == "submitted" and not recompute:
+                return jsonify(ok=True, status="submitted"), 200
+            if state == "running":
+                # Critical: the coordinator re-triggers every poll. Without this guard each
+                # poll would spawn another worker re-verifying every ballot, and the keyper
+                # would collapse under its own retries long before finishing one pass.
+                return jsonify(ok=True, status="in_progress"), 202
+            aggregate_state[eid_hex] = "running"
+
+        threading.Thread(target=_run_aggregate, args=(eid, eid_hex, ks), daemon=True).start()
+        log.info("op=tally phase=aggregate status=started election=%s recompute=%s", eid_hex, recompute)
+        return jsonify(ok=True, status="started"), 202
 
     # -- partial decryption -- #
 

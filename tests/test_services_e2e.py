@@ -12,6 +12,7 @@ from dataclasses import replace
 
 import pytest
 
+from geg.core import write_auth
 from geg.envelopes.types import ExclusionReason, StoredBallot
 from geg.ports.data_layer import VotingWindowError
 from geg.services import admin, auditor
@@ -46,7 +47,7 @@ def test_full_single_choice_election(full_env):
     fe.clock.set(1_500)
     votes = [[3, 0, 0], [0, 3, 0], [0, 3, 0], [0, 0, 3]]
     for i, v in enumerate(votes):
-        submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot(v, bytes([i + 1]) * 32), clock=fe.clock)
+        submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot(v, bytes([i + 1]) * 32), clock=fe.clock, gateway_signer=fe.gateway)
     assert fe.dl.count_ballots(fe.config.election_id) == 4
 
     # Tally.
@@ -65,8 +66,8 @@ def test_full_weighted_election(full_env):
     fe = full_env
     _register_and_dkg(fe)
     fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32, weight=2), clock=fe.clock)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([0, 3, 0], b"\x02" * 32, weight=5), clock=fe.clock)
+    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32, weight=2), clock=fe.clock, gateway_signer=fe.gateway)
+    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([0, 3, 0], b"\x02" * 32, weight=5), clock=fe.clock, gateway_signer=fe.gateway)
     fe.clock.set(2_500)
     result = agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
     # [2*3, 5*3, 0] = [6, 15, 0]
@@ -95,7 +96,7 @@ def test_gateway_rejects_outside_voting_window(full_env):
     _register_and_dkg(fe)
     fe.clock.set(500)  # before voting_start → not Voting
     with pytest.raises(GatewayRejection, match="voting is not open"):
-        submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock)
+        submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock, gateway_signer=fe.gateway)
 
 
 def test_gateway_filter_rejects_malformed_ballot(full_env):
@@ -106,7 +107,7 @@ def test_gateway_filter_rejects_malformed_ballot(full_env):
     bad_sig = bytearray(b.voter_signature); bad_sig[-1] ^= 1
     b = replace(b, voter_signature=bytes(bad_sig))
     with pytest.raises(GatewayRejection):
-        submit_ballot(fe.dl, fe.config.election_id, b, clock=fe.clock)
+        submit_ballot(fe.dl, fe.config.election_id, b, clock=fe.clock, gateway_signer=fe.gateway)
 
 
 def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
@@ -119,8 +120,8 @@ def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
     bad = fe.voter_ballot([0, 3, 0], b"\x02" * 32)
     bad_sig = bytearray(bad.voter_signature); bad_sig[-1] ^= 1
     bad = replace(bad, voter_signature=bytes(bad_sig))
-    submit_ballot(fe.dl, fe.config.election_id, good, clock=fe.clock)
-    submit_ballot(fe.dl, fe.config.election_id, bad, clock=fe.clock, filter_on=False)  # injected
+    submit_ballot(fe.dl, fe.config.election_id, good, clock=fe.clock, gateway_signer=fe.gateway)
+    submit_ballot(fe.dl, fe.config.election_id, bad, clock=fe.clock, gateway_signer=fe.gateway, filter_on=False)  # injected
     assert fe.dl.count_ballots(fe.config.election_id) == 2
 
     fe.clock.set(2_500)
@@ -133,26 +134,29 @@ def test_gateway_filter_off_admits_but_tally_still_excludes(full_env):
 
 
 def test_data_layer_rejects_ballot_outside_voting_window(full_env):
-    """H-3, prevention half: the storage layer itself refuses an out-of-window ballot,
+    """Prevention half: the storage layer itself refuses an out-of-window ballot,
     so the bypassable gateway is no longer the only thing standing between a late
     submission and the tally. Parity with the chain contract's VotingClosed revert."""
     fe = full_env
     _register_and_dkg(fe)
     late = fe.voter_ballot([0, 3, 0], b"\x02" * 32)
+    # Authorized as the registered gateway, so what is under test is the WINDOW gate and
+    # not the gateway writer check that now precedes it.
+    sig = write_auth.sign_ballot(fe.gateway.private_key, fe.config.election_id, late)
 
     fe.clock.set(2_500)  # past voting_end
     with pytest.raises(VotingWindowError):
-        fe.dl.submit_ballot(fe.config.election_id, late)
+        fe.dl.submit_ballot(fe.config.election_id, late, sig)
 
     fe.clock.set(500)  # before voting_start
     with pytest.raises(VotingWindowError):
-        fe.dl.submit_ballot(fe.config.election_id, late)
+        fe.dl.submit_ballot(fe.config.election_id, late, sig)
 
     assert fe.dl.count_ballots(fe.config.election_id) == 0
 
 
 def test_out_of_band_out_of_window_ballot_is_excluded_at_tally(full_env):
-    """H-3, auditability half: a row that reaches storage *bypassing* the write gate
+    """Auditability half: a row that reaches storage *bypassing* the write gate
     (direct SQL, a second writer, a restored backup) is still excluded at tally time,
     because admission re-derives the window from the adapter's recorded receive time.
     Before this fix the row carried no receive time, so the check was skipped and the
@@ -161,7 +165,7 @@ def test_out_of_band_out_of_window_ballot_is_excluded_at_tally(full_env):
     _register_and_dkg(fe)
     fe.clock.set(1_500)
     good = fe.voter_ballot([3, 0, 0], b"\x01" * 32)
-    submit_ballot(fe.dl, fe.config.election_id, good, clock=fe.clock)
+    submit_ballot(fe.dl, fe.config.election_id, good, clock=fe.clock, gateway_signer=fe.gateway)
 
     # Inject the way a bypass would: straight into storage, stamped after voting_end.
     late = fe.voter_ballot([0, 3, 0], b"\x02" * 32)
@@ -206,7 +210,7 @@ def test_keyper_decryption_is_idempotent(full_env):
     fe = full_env
     _register_and_dkg(fe)
     fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)
+    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock, gateway_signer=fe.gateway)
     fe.clock.set(2_500)
     agg.trigger_aggregate(fe.keypers, fe.config.election_id)
     fe.keypers[0].decrypt_and_submit(fe.config.election_id)
@@ -223,7 +227,7 @@ def test_auditor_detects_tampered_result(full_env):
     fe = full_env
     _register_and_dkg(fe)
     fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock)
+    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32), clock=fe.clock, gateway_signer=fe.gateway)
     fe.clock.set(2_500)
     agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
 
@@ -239,7 +243,7 @@ def test_auditor_detects_tampered_aggregate(full_env):
     fe = full_env
     _register_and_dkg(fe)
     fe.clock.set(1_500)
-    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock)
+    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([3, 0, 0], b"\x01" * 32), clock=fe.clock, gateway_signer=fe.gateway)
     fe.clock.set(2_500)
     agg.trigger_aggregate(fe.keypers, fe.config.election_id)
 

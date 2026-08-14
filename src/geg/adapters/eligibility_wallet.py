@@ -60,12 +60,29 @@ class WalletAttestationRequest:
 
 
 class WalletEligibilityService(EligibilityService):
+    """Snapshot-X style issuer: wallet signature → address → voting power → attestation.
+
+    ``max_weight`` is the election's weight ceiling. It accepts either a plain ``int``
+    (fine when this instance serves exactly one election) **or a callable**
+    ``election_id -> int`` for the multi-election case, because the ceiling is a property
+    of the *election*, not of the issuer: the same voter legitimately gets different
+    weights in different elections (power 79 → 50 under a cap of 50, → 79 under a cap of
+    100). A fixed int reused across elections is wrong in both directions — too low
+    silently under-counts the voter, and too high issues a credential
+    ``verify_attestation`` rejects at tally, disenfranchising them.
+
+    This adapter is **reference code**: it has no deployable, and demonstrates that the
+    eligibility port accommodates token-weighted (Snapshot X style) issuance. The shipped
+    HTTP issuer wraps :class:`~geg.adapters.eligibility_stub.StubEligibilityService` and
+    resolves the cap per election from the registered config.
+    """
+
     def __init__(
         self,
         elig_sk: int,
         voting_power: VotingPowerSource,
         *,
-        max_weight: int,
+        max_weight: int | Callable[[bytes], int],
         chain_id: int,
         domain_name: str = "GEG Eligibility",
         domain_version: str = "1",
@@ -133,7 +150,10 @@ class WalletEligibilityService(EligibilityService):
         if self._prevent_reissue and (election_id, address) in self._issued:
             raise EligibilityError("attestation already issued for this address in this election")
 
-        weight = min(vp, self._max_weight)  # clamp — the maxWeight BSGS guard
+        # Resolve the ceiling for THIS election (see the class docstring): a callable is
+        # the multi-election form, a plain int the single-election one.
+        cap = int(self._max_weight(election_id)) if callable(self._max_weight) else int(self._max_weight)
+        weight = min(vp, cap)  # clamp — the maxWeight BSGS guard
         pseudonym = self.pseudonym_for(address, election_id)
         # This adapter issues at most once per (election, address) (see _prevent_reissue), so
         # it has no re-vote sequence: nonce is fixed at 1. A re-vote-capable issuer allocates

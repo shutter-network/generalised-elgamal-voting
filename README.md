@@ -22,9 +22,9 @@ configuration change, not a code change.
 - **Private ballots.** Votes are exponential-ElGamal ciphertexts under an election
   public key; individual votes are never decrypted — only the homomorphic
   aggregate is.
-- **Threshold decryption.** A `(t+1)`-of-`n` keyper committee is generated per
+- **Threshold decryption.** A `t`-of-`n` keyper committee is generated per
   election by a distributed key generation (DKG) ceremony; no single party ever
-  holds the decryption key. Any `t+1` keypers can jointly decrypt the tally; up to
+  holds the decryption key. Any `t` keypers can jointly decrypt the tally (`t` IS the quorum: `(2,3)` is 2-of-3, and `t` must be a strict majority); up to
   `t` compromised keypers learn nothing.
 - **Weighted voting.** The **eligibility service assigns each voter's weight** and binds
   it into the signed `ATTESTATION_V1` credential — the voter and the config never set it
@@ -54,7 +54,7 @@ Register ──▶ DKG ──▶ Vote ──▶ Tally ──▶ Decrypt ──�
    committee over authenticated HTTP, with **confidential round-2 shares travelling
    directly keyper→keyper** (no single process ever sees all shares). Only the
    public result — the election public key + per-member committee keys — reaches
-   the data layer. A finalized key exists iff `≥ t+1` keypers submit a
+   the data layer. A finalized key exists iff `≥ t` keypers submit a
    byte-identical result.
 3. **Vote.** Voters build ballots in-browser (plaintext and proof randomness never
    leave the client) and submit them through the public API's ballot ingest during
@@ -68,7 +68,7 @@ Register ──▶ DKG ──▶ Vote ──▶ Tally ──▶ Decrypt ──�
 5. **Decrypt.** The aggregator triggers the keypers; each keyper re-checks the
    decryption preconditions against the data layer, produces its partial decryption
    share with a DLEQ proof, and submits it.
-6. **Result.** Given `t+1` verified shares, the aggregator Lagrange-combines them
+6. **Result.** Given `t` verified shares, the aggregator Lagrange-combines them
    and recovers the per-candidate totals by baby-step/giant-step within a bound
    derived from the admitted weights, then publishes the result. The election
    becomes immutable.
@@ -224,7 +224,7 @@ Every actor is a deployable service (`python -m geg.services.<name>`):
   format, subgroup-checked on deserialize.
 - **Encryption:** exponential ElGamal `C1 = r·P2`, `C2 = r·mpk + m·P2`; homomorphic
   by point addition.
-- **Threshold:** `(t+1)`-of-`n` Feldman VSS DKG; partial decrypt `σ_k = msk_k·C1`
+- **Threshold:** `t`-of-`n` Feldman VSS DKG; partial decrypt `σ_k = msk_k·C1`
   with a DLEQ proof; Lagrange interpolation at zero; baby-step/giant-step recovery.
 - **Proofs:** Fiat-Shamir over a Merlin-style transcript; **keccak256** throughout
   (fixed for cross-language vector compatibility).

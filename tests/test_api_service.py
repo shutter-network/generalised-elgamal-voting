@@ -26,7 +26,12 @@ def api():
 
 
 def _register(env, dl) -> bytes:
-    return dl.register_election(env.config, env.admin.sign_register(env.config))
+    # The signed config asserts the id it expects, so read the sequence head first —
+    # the same read-then-sign a real admin client does.
+    from dataclasses import replace
+
+    cfg = replace(env.config, election_id=(len(dl.list_elections()) + 1).to_bytes(32, "big"))
+    return dl.register_election(cfg, env.admin.sign_register(cfg))
 
 
 def test_health_and_cors(api):

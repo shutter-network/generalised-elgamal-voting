@@ -32,16 +32,17 @@ from geg.envelopes.types import (
 ELECTION_ID = (1).to_bytes(32, "big")
 
 
-def _run_dkg(n: int, t: int):
+def _run_dkg(n: int, quorum: int):
+    """Run a full DKG for an ``quorum``-of-``n`` committee (``quorum`` = config threshold.t)."""
     states = {i: KeyperDKGState() for i in range(1, n + 1)}
     comms, shares = {}, {}
     for i, st in states.items():
-        c, s = st.round1(i, n, t)
+        c, s = st.round1(i, n, quorum)
         comms[i], shares[i] = c, s
     for i, st in states.items():
         st.round2(comms, {d: shares[d][i] for d in states})
-    mpk = derive_joint_mpk(comms)
-    committee = {i: derive_mpk_share(i, comms) for i in states}
+    mpk = derive_joint_mpk(comms, quorum)
+    committee = {i: derive_mpk_share(i, comms, quorum) for i in states}
     return mpk, committee, states
 
 
@@ -135,7 +136,7 @@ class Env:
 
 @pytest.fixture
 def env() -> Env:
-    n, t = 3, 1
+    n, t = 3, 2  # 2-of-3: t IS the quorum
     mpk, committee, states = _run_dkg(n, t)
     elig_sk, elig_vk = schnorr.keygen()
     return Env(
@@ -206,7 +207,7 @@ def build_full_env(dl, clock) -> FullEnv:
     from geg.core.authz import Signer
     from geg.services.keyper import KeyperService
 
-    n, t = 3, 1
+    n, t = 3, 2  # 2-of-3: t IS the quorum
     admin = Signer.generate()
     result_publisher = Signer.generate()
     gateway = Signer.generate()

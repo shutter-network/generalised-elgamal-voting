@@ -34,7 +34,10 @@ contract KeyperSet is IKeyperSet {
             members.push(member);
         }
 
-        if (initialThreshold == 0 || initialThreshold > members.length) {
+        if (
+            initialThreshold == 0 || initialThreshold > members.length
+                || initialThreshold * 2 <= members.length
+        ) {
             revert InvalidThreshold(initialThreshold, members.length);
         }
         threshold = initialThreshold;
@@ -63,6 +66,8 @@ contract KeyperSet is IKeyperSet {
         return indexPlusOne - 1;
     }
 
+    /// @notice The decryption quorum: how many of the `n` members must act together.
+    /// @dev Not the corruption threshold — a return of 2 with 3 members means 2-of-3.
     function getThreshold() external view returns (uint64) {
         return threshold;
     }

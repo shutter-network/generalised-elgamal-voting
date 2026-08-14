@@ -51,6 +51,72 @@ def decryption_share_digest(election_id: bytes, shares: list[bytes], proofs: lis
     return keccak(packed)
 
 
+# --- ballot write authorization (off-chain backends only) ------------------- #
+#
+# The chain authorizes ballot writes by `msg.sender` holding VOTE_PROXY_ROLE, so this
+# digest exists for the memory/DB backends, which previously had **no** way to honour
+# `config.gateway_keys` at all. Content-binding rather than op-only, so a
+# relayed write cannot have its ballot swapped in flight — the same property the
+# dkg-result / aggregate / decrypt-share digests above already have — and the one
+# `authz.request_digest`'s empty payload lacked until `result_digest` below.
+
+BALLOT_WRITE_DST = b"GEG-BALLOT-WRITE-v1"
+
+
+def ballot_digest(election_id: bytes, ballot) -> bytes:
+    """Digest a gateway signs to authorize writing ``ballot`` to ``election_id``.
+
+    Binds the **whole** envelope via its canonical JSON encoding — including the
+    attestation, which the voter's own Schnorr signature does not cover — so a gateway
+    signature authorizes exactly the bytes it saw.
+    """
+    import json
+
+    from geg.envelopes import codecs
+
+    canonical = json.dumps(codecs.enc_ballot(ballot), sort_keys=True, separators=(",", ":"))
+    return keccak(BALLOT_WRITE_DST + bytes(election_id) + canonical.encode("utf-8"))
+
+
+def sign_ballot(private_key: int, election_id: bytes, ballot) -> bytes:
+    """Sign a ballot write as an authorized gateway."""
+    return sign_digest(private_key, ballot_digest(election_id, ballot))
+
+
+# --- result write authorization (off-chain backends only) ------------------- #
+#
+# authz.request_digest` defaults `payload=b""`, so a result-publisher signature used to authorize the pair
+# ("result", electionId) and nothing more — the totals it was taken over were not bound,
+# and any holder of one such signature could pair it with *different* totals. The other
+# request-signed ops are fully described by (op, electionId) and so need no payload:
+# `cancel` has no body, and `tally_stall` / `tally_resume` encode their direction in the
+# op string itself. On chain this is moot — `publishResult` is gated on msg.sender holding
+# RESULT_PUBLISHER_ROLE, with no signature to bind.
+
+RESULT_DST = b"GEG-RESULT-v1"
+
+
+def result_digest(election_id: bytes, result) -> bytes:
+    """Payload binding a result-publisher signature to the totals it publishes.
+
+    Covers every field the artifact carries: the per-candidate totals, the t+1 keyper
+    indices credited with decrypting them, and the BSGS bound they were recovered under.
+    """
+    packed = (
+        RESULT_DST
+        + bytes(election_id)
+        + abi_encode(
+            ["uint256[]", "uint256[]", "uint256"],
+            [
+                [int(t) for t in result.totals],
+                [int(i) for i in result.keyper_indices],
+                int(result.bsgs_bound),
+            ],
+        )
+    )
+    return keccak(packed)
+
+
 # --- sign / recover -------------------------------------------------------- #
 
 def sign_digest(private_key: int, digest: bytes) -> bytes:

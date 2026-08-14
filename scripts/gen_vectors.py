@@ -109,20 +109,26 @@ def gen_attestation():
 #  Full-election flow fixture (conformance level 1: variant A / exact / weighted)
 # --------------------------------------------------------------------------- #
 
-def _run_dkg(n, t):
+def _run_dkg(n, quorum):
     states = {i: KeyperDKGState() for i in range(1, n + 1)}
     comms, shares = {}, {}
     for i, st in states.items():
-        comms[i], shares[i] = st.round1(i, n, t)
+        comms[i], shares[i] = st.round1(i, n, quorum)
     for i, st in states.items():
         st.round2(comms, {d: shares[d][i] for d in states})
-    mpk = derive_joint_mpk(comms)
-    committee = {i: derive_mpk_share(i, comms) for i in states}
+    # Both helpers require the quorum explicitly — inferring the expected commitment
+    # count from the vectors would accept a committee that all agreed on a wrong degree.
+    # (This call site was stale: it predates the commitment-length guard that made the
+    # argument mandatory, so the script raised TypeError before it could emit the flow
+    # vector. Note the generator is NOT seeded — running it rewrites the flow vector's
+    # crypto material, so regenerate deliberately, not casually.)
+    mpk = derive_joint_mpk(comms, quorum)
+    committee = {i: derive_mpk_share(i, comms, quorum) for i in states}
     return mpk, committee, states
 
 
 def gen_flow():
-    n, t, budget, num_candidates = 3, 1, 3, 3
+    n, t, budget, num_candidates = 3, 2, 3, 3  # t IS the quorum: 2-of-3
     mpk, committee, states = _run_dkg(n, t)
     mpk_bytes = g2_to_compressed(mpk)
     committee_pks = tuple(g2_to_compressed(committee[i]) for i in range(1, n + 1))

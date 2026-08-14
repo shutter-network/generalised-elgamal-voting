@@ -24,7 +24,7 @@ from geg.services.keyper import build_keyper_app
 from conftest import ManualClock
 
 TOKEN = "coord-token"
-N, T, NC = 3, 1, 3
+N, T, NC = 3, 2, 3  # T is the quorum
 
 
 def _world():
@@ -33,7 +33,7 @@ def _world():
     admin = Signer.generate()
     keypers = [Signer.generate() for _ in range(N)]
     cfg = ElectionConfig(
-        election_id=b"\x00" * 32, num_candidates=NC, budget=3, mode=Mode.EXACT, variant=Variant.A,
+        election_id=(1).to_bytes(32, "big"), num_candidates=NC, budget=3, mode=Mode.EXACT, variant=Variant.A,
         weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000, voting_end=2_000, threshold=Threshold(t=T, n=N),
         keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url="") for i in range(N)),
@@ -85,13 +85,13 @@ def test_relay_dkg_result_reaches_quorum():
 
 
 def _publish_aggregate(dl, eid, keypers):
-    """Publish a canonical (t+1) aggregate so decryption shares are accepted."""
+    """Publish a canonical aggregate (a quorum of keypers) so decryption shares land."""
     agg = AggregateArtifact(
         election_id=eid,
         aggregates=tuple(Ciphertext(c1=bytes([7]) * 96, c2=bytes([8]) * 96) for _ in range(NC)),
         admitted=(), exclusions=(), total_admitted_weight=0,
     )
-    for k in keypers[:T + 1]:  # t+1 keypers → canonical
+    for k in keypers[:T]:  # T keypers → canonical (T IS the quorum)
         dl.submit_aggregate(eid, agg, write_auth.sign_aggregate(k.private_key, eid, agg))
     assert dl.get_aggregate(eid) is not None
 
@@ -151,7 +151,7 @@ def test_keypers_write_dkg_through_coordinator_relay(tmp_path):
     coordinator = Signer.generate()
     keypers = [Signer.generate() for _ in range(N)]
     cfg = ElectionConfig(
-        election_id=b"\x00" * 32, num_candidates=NC, budget=3, mode=Mode.EXACT, variant=Variant.A,
+        election_id=(1).to_bytes(32, "big"), num_candidates=NC, budget=3, mode=Mode.EXACT, variant=Variant.A,
         weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000, voting_end=2_000, threshold=Threshold(t=T, n=N),
         keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url="") for i in range(N)),

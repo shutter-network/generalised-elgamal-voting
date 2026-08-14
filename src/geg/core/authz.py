@@ -21,9 +21,31 @@ from eth_account.messages import encode_defunct
 from eth_utils import keccak
 
 
+REQUEST_DST = b"GEG-REQUEST-v1"
+
+
 def request_digest(op: str, election_id: bytes, payload: bytes = b"") -> bytes:
-    """32-byte digest a write signature is taken over."""
-    return keccak(op.encode("utf-8") + b"|" + election_id + b"|" + payload)
+    """32-byte digest a write signature is taken over.
+
+    Each field is **length-framed** (4-byte big-endian length, then the bytes) under a
+    domain-separation tag, matching the DKG digests in :mod:`geg.core.write_auth`.
+
+    The previous encoding joined the three fields with a ``b"|"`` separator and no
+    framing, which is ambiguous whenever a field can contain the separator:
+    ``("a", b"b", b"c|d")`` and ``("a", b"b|c", b"d")`` both produced ``keccak(b"a|b|c|d")``
+    and so shared one signature. It was not reachable in practice — the ops are fixed
+    constants with no ``|``, and election ids are 32 bytes by convention — but nothing
+    *enforced* the id length (this function accepted any), so the safety rested on
+    convention rather than construction. Framing removes the ambiguity by construction:
+    with explicit lengths no field can impersonate a boundary regardless of content.
+    """
+    op_b = op.encode("utf-8")
+    return keccak(
+        REQUEST_DST
+        + len(op_b).to_bytes(4, "big") + op_b
+        + len(election_id).to_bytes(4, "big") + bytes(election_id)
+        + len(payload).to_bytes(4, "big") + bytes(payload)
+    )
 
 
 def sign_request(private_key: int, op: str, election_id: bytes, payload: bytes = b"") -> bytes:
@@ -38,18 +60,25 @@ def sign_request(private_key: int, op: str, election_id: bytes, payload: bytes =
 
 
 def register_digest(config) -> bytes:
-    """Digest a register signature is taken over: the canonical config with
-    ``election_id`` zeroed (the backend assigns the next sequential id, so the admin
-    authorizes the rest of the *config content*; both signer and verifier zero the id
-    placeholder so whatever the caller supplies for it is irrelevant to the signature).
+    """Digest a register signature is taken over: the canonical config, **including**
+    ``election_id``.
+
+    ``election_id`` carries the id the admin *expects* this registration to be assigned
+    — the current sequence head plus one. The backend still assigns the id itself
+    (``++electionCount`` / ``nextval``); it just refuses when its own next id disagrees
+    with the signed one. So this is an assertion, not a caller-chosen id.
+
+    Signing it is what makes a registration **single-use**: the moment the real
+    registration lands, the next id moves on, so every replay of that exact body is
+    permanently dead. It is the same construction as an Ethereum account nonce — the
+    monotonic sequence *is* the replay guard, which is why no nonce table or expiry
+    window is needed anywhere.
     """
     import json
 
     from geg.envelopes import codecs
 
-    # Zero the placeholder electionId in the *encoded dict* (the backend assigns the id).
     d = codecs.enc_config(config)
-    d["electionId"] = codecs.enc_bytes(b"\x00" * 32)
     return keccak(json.dumps(d, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 

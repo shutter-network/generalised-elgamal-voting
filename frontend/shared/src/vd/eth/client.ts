@@ -74,6 +74,7 @@ export async function fetchBallotsPage(
     // directed verifier needs into it: scheme(1) ‖ weight(32 BE) ‖ nonce(32 BE) ‖ signature(80).
     wrAttestation: packWrAttestation(b.attestation?.scheme, b.attestation?.weight, b.attestation?.nonce, b.attestation?.signature),
     nonce: Number(b.attestation?.nonce ?? 1),
+    weight: Number(b.attestation?.weight ?? 1),
   }));
   return { total: BigInt(resp.total), ballots };
 }
@@ -92,7 +93,11 @@ function packWrAttestation(scheme: string | undefined, weight: number | undefine
 export async function fetchAggregate(electionId: number): Promise<EncryptedTally | null> {
   const { aggregate } = await api.getAggregate(electionId);
   if (!aggregate) return null;
-  return { aggregates: aggregate.aggregates.map((ct) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })) };
+  return {
+    aggregates: aggregate.aggregates.map((ct: any) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })),
+    totalAdmittedWeight: BigInt(aggregate.totalAdmittedWeight ?? 0),
+    admittedCount: (aggregate.admitted ?? []).length,
+  };
 }
 
 export async function fetchDecryptionShares(electionId: number): Promise<DecryptionShare[]> {

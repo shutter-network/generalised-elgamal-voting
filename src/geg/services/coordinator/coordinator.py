@@ -30,6 +30,8 @@ from __future__ import annotations
 import logging
 import time
 
+from geg.services.common.auth import tokens_equal
+from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH
 from geg.ports.data_layer import ElectionDataLayer
 from . import dkg_coordinator as coord
 from geg.services import tally_aggregator as tally  # finalize (recover + publish result)
@@ -48,6 +50,7 @@ class AutoDKG:
     def __init__(self, data_layer: ElectionDataLayer, coordinator, *, clock,
                  poll_interval_s: float = 2.0, backoff_base_s: float = 10.0,
                  backoff_cap_s: float = 300.0, max_tally_attempts: int = 5,
+                 max_tally_phase_s: float = 6 * 3600.0,
                  url_overrides: dict[str, str] | None = None,
                  token_store=None, relay_token: str | None = None,
                  logger: logging.Logger | None = None):
@@ -58,6 +61,7 @@ class AutoDKG:
         self.backoff_base_s = backoff_base_s
         self.backoff_cap_s = backoff_cap_s
         self.max_tally_attempts = max_tally_attempts
+        self.max_tally_phase_s = max_tally_phase_s
         # Address-keyed URL override for backends that don't store keyper URLs
         # — see geg.services.dkg_coordinator.keyper_urls_from. Normally empty.
         self.url_overrides = url_overrides or {}
@@ -183,6 +187,20 @@ class AutoDKG:
         except Exception as err:  # noqa: BLE001
             self.log.warning("op=tally status=mark_stalled_error election=%s err=%s", election_id.hex(), err)
 
+    def _past_tally_deadline(self, rec) -> bool:
+        """Has the tally had long enough? Measured from ``voting_end``.
+
+        Anchoring on ``voting_end`` rather than a stored "tally started" timestamp keeps
+        this **derived**, so it survives a coordinator restart and needs no new state — the
+        same rule the rest of the system follows.
+
+        This is the backstop for the case no other detector catches: keypers reachable and
+        claiming to work, but no canonical aggregate ever appearing. It has to be generous,
+        because a legitimate aggregate on a large election runs for many minutes — the
+        attempt budget bounds *unreachable* keypers, and divergence is detected directly.
+        """
+        return self.clock() - rec.config.voting_end > self.max_tally_phase_s
+
     def _drive_dkg(self, election_id: bytes, rec, now: int) -> str:
         eid_hex = election_id.hex()
         # Back-off gate so we don't hammer between polls.
@@ -250,13 +268,13 @@ class AutoDKG:
             self.log.info("op=tally status=retrying election=%s (admin cleared the stall — fresh budget)", eid_hex)
             att = self._tally_attempts[eid_hex] = {"agg": 0, "dec": 0}
 
-        def _abandon(phase: str, n: int) -> str:
+        def _abandon(phase: str, n: int, reason: str) -> str:
             # Mark the persisted flag (result-publisher auth). The coordinator skips the
             # election hereafter (state → TallyStalled); only the admin's retry clears it.
             self._mark_tally_stalled(election_id)
-            self.log.error("op=tally status=abandoned phase=%s election=%s attempts=%d — "
+            self.log.error("op=tally status=abandoned phase=%s reason=%s election=%s attempts=%d — "
                            "stalled; admin 'retry' (clearTallyStalled) required to resume",
-                           phase, eid_hex, n)
+                           phase, reason, eid_hex, n)
             return "tally_abandoned"
 
         # 1. Aggregate phase — trigger + gate on the canonical (t+1) quorum aggregate.
@@ -264,11 +282,40 @@ class AutoDKG:
         #    never triggered before voting closes.
         if self.dl.get_aggregate(election_id) is None:
             self._tally_transition(eid_hex, "aggregating")
-            coord.trigger_aggregate_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
+            statuses = coord.trigger_aggregate_http(election_id, urls, api_tokens, rebootstrap=rebootstrap)
             if self.dl.get_aggregate(election_id) is None:  # still no quorum this poll
+                # Three distinct failures, each with its own detector. Counting polls alone
+                # conflated them, and — now that aggregation runs for minutes on a large
+                # election — would abandon a keyper that is simply still working.
+                if self._past_tally_deadline(rec):
+                    return _abandon("aggregate", att["agg"], "deadline")
+                if any(st in ("started", "in_progress") for st in statuses.values()):
+                    # At least one keyper is computing. Not a failed attempt: wait.
+                    return "collecting_aggregate"
+                if statuses and all(st == "submitted" for st in statuses.values()):
+                    # Every keyper contributed and still no t+1 byte-identical quorum: they
+                    # disagree. Bounded by the attempt budget, but each attempt must really
+                    # re-derive — a keyper's aggregate stays overridable until the quorum
+                    # freezes exactly so honest keypers can re-converge. Divergence is often
+                    # transient (one keyper read the ballot list a moment before another,
+                    # common on chain while a late vote confirms); only a buggy keyper or an
+                    # equivocating data layer diverges permanently, which is what the bound
+                    # is for.
+                    att["agg"] += 1
+                    if att["agg"] >= self.max_tally_attempts:
+                        return _abandon("aggregate", att["agg"], "divergent")
+                    self.log.warning(
+                        "op=tally status=divergent election=%s attempt=%d — all %d keypers submitted "
+                        "but no t+1 quorum; asking them to re-derive",
+                        eid_hex, att["agg"], len(statuses))
+                    coord.trigger_aggregate_http(election_id, urls, api_tokens,
+                                                 rebootstrap=rebootstrap, recompute=True)
+                    return "collecting_aggregate"
+                # Otherwise some keyper is unreachable or refusing: the original meaning of
+                # the attempt budget.
                 att["agg"] += 1
-                return _abandon("aggregate", att["agg"]) if att["agg"] >= self.max_tally_attempts \
-                    else "collecting_aggregate"
+                return _abandon("aggregate", att["agg"], "unreachable") \
+                    if att["agg"] >= self.max_tally_attempts else "collecting_aggregate"
 
         # 2. Decrypt phase — a canonical aggregate exists; trigger decrypt, then finalize.
         self._tally_transition(eid_hex, "decrypting")
@@ -278,9 +325,11 @@ class AutoDKG:
             self._done.add(eid_hex)
             self.log.info("op=tally status=finalized election=%s", eid_hex)
             return "tallied"
+        if self._past_tally_deadline(rec):
+            return _abandon("decrypt", att["dec"], "deadline")
         att["dec"] += 1
-        return _abandon("decrypt", att["dec"]) if att["dec"] >= self.max_tally_attempts \
-            else "collecting_shares"
+        return _abandon("decrypt", att["dec"], "unreachable") \
+            if att["dec"] >= self.max_tally_attempts else "collecting_shares"
 
     def scan_once(self) -> dict[str, str]:
         """One pass over the data layer; returns {election_id_hex: outcome}.
@@ -345,6 +394,8 @@ def build_coordinator_app(dl: ElectionDataLayer, *, api_token: str | None):
 
     log = logging.getLogger("geg.coordinator")
     app = Flask(__name__)
+    # Bound the body every route buffers via get_json(force=True).
+    app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
     def _reject(status: int, kind: str, e, *, level: int = logging.WARNING):
         # Log every data-layer rejection of a relayed keyper write at the service
@@ -386,7 +437,8 @@ def build_coordinator_app(dl: ElectionDataLayer, *, api_token: str | None):
             return jsonify(error="Unauthorized", message="coordinator relay not configured"), 503
         header = request.headers.get("Authorization", "")
         presented = header[7:] if header.startswith("Bearer ") else ""
-        if presented != api_token:
+        # Constant-time: see the keyper's bearer check.
+        if not tokens_equal(presented, api_token):
             return jsonify(error="Unauthorized", message="bad or missing coordinator token"), 401
         return None
 

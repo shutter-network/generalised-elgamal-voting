@@ -84,7 +84,7 @@ class ChainWorld:
         self.registry = deploy_registry(w3, signers["admin"].account)
         self.base = chain_now(w3)
         self.clock = lambda: chain_now(w3)
-        self.n, self.t = 3, 1
+        self.n, self.t = 3, 2  # 2-of-3: t IS the quorum, and must be a majority
 
         elig_sk, _ = schnorr.keygen()
         self.elig = StubEligibilityService(elig_sk)

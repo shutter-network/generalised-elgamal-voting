@@ -59,9 +59,9 @@ def env():
     admin = Signer.generate()
     keypers = [Signer.generate() for _ in range(3)]
     config = ElectionConfig(
-        election_id=b"\x00" * 32, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
+        election_id=(1).to_bytes(32, "big"), num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
         weighted=False, max_weight=1, duplicate_policy=DuplicatePolicy.LAST_WINS,
-        voting_start=VOTING_START, voting_end=VOTING_END, threshold=Threshold(t=1, n=3),
+        voting_start=VOTING_START, voting_end=VOTING_END, threshold=Threshold(t=2, n=3),
         keypers=tuple(KeyperIdentity(signing_key=k.identity, url=f"http://k{i}") for i, k in enumerate(keypers)),
         eligibility_key=b"\x66" * 48, result_publisher_key=Signer.generate().identity,
         gateway_keys=(), admin_key=admin.identity, protocol_version="SHUTTER-VOTE-v1",
@@ -110,22 +110,65 @@ def test_port_surface_returns_storage_metadata(env):
     assert sb.envelope.pseudonym == b"\x01" * 32
 
 
-def test_port_surface_is_not_capped_at_the_browser_page_limit(env):
-    """The landmine: api's browser route caps at 200. A truncated ballot list would make
-    each keyper aggregate a subset, so the committee could never reach a byte-identical
-    quorum. The port surface must return everything asked for."""
+def test_port_surface_caps_a_single_page_but_paging_recovers_everything(env):
+    """No single request may stream a whole election — this surface is public.
+
+    But a cap alone would be a *worse* bug than the DoS: the keyper reads every ballot to
+    recompute admission, so a silently short list would make each keyper aggregate a
+    different subset and the t+1 byte-identical quorum would never form. So the route caps
+    and `read_all_ballots` pages, verifying it recovered a complete contiguous read.
+    """
+    import requests
+
+    from geg.services.common.reads import read_all_ballots
+    from geg.services.data_layer.data_layer import MAX_BALLOT_PAGE
+
     dl, eid, base, _ = env
-    for i in range(250):
+    total = 1200                                     # deliberately over MAX_BALLOT_PAGE
+    for i in range(total):
         dl.submit_ballot(eid, _ballot(eid, i))
-    total = dl.count_ballots(eid)
-    assert total == 250
+
+    # One request cannot drain the election, however large a count it asks for.
+    raw = requests.get(f"{base}/port/elections/{eid.hex()}/ballots?start=0&count=999999").json()
+    assert len(raw["ballots"]) == MAX_BALLOT_PAGE
+
+    # Paging still recovers all of it, in order, with no gaps.
+    client = HttpDataLayerClient(f"{base}/port")
+    everything = read_all_ballots(client, eid)
+    assert len(everything) == total
+    assert [sb.sequence_number for sb in everything] == list(range(total))
+
+
+def test_read_all_ballots_raises_rather_than_returning_short(env):
+    """A truncated read must fail loudly. Silently returning fewer ballots is the failure
+    that makes keypers diverge, and it would look like 'the committee disagreed'."""
+    import pytest as _pytest
+
+    from geg.services.common.reads import IncompleteBallotRead, read_all_ballots
+
+    dl, eid, base, _ = env
+    for i in range(5):
+        dl.submit_ballot(eid, _ballot(eid, i))
 
     client = HttpDataLayerClient(f"{base}/port")
-    assert len(client.list_ballots(eid, 0, total)) == 250
-    # ... whereas the browser route does cap, which is why the keyper must not use it.
+    # A data layer that under-reports rows while count_ballots still says 5.
+    client.list_ballots = lambda *_a, **_k: []
+    with _pytest.raises(IncompleteBallotRead):
+        read_all_ballots(client, eid)
+
+
+def test_oversized_request_body_is_refused(env):
+    """`get_json(force=True)` would otherwise buffer an arbitrary body before any
+    validation — and the ballot POST is public and unauthenticated."""
     import requests
-    browser = requests.get(f"{base}/elections/{int.from_bytes(eid, 'big')}/ballots?offset=0&limit=250").json()
-    assert len(browser["ballots"]) == 200
+
+    from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH
+
+    _, eid, base, _ = env
+    oversized = b'{"ballot":"' + b"a" * (MAX_CONTENT_LENGTH + 1024) + b'"}'
+    r = requests.post(f"{base}/elections/{int.from_bytes(eid, 'big')}/ballots",
+                      data=oversized, headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
 
 
 def test_port_surface_exposes_no_write_routes(env):

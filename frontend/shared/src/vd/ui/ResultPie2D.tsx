@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as echarts from "echarts";
-import { computeElectionOutcome } from "./electionOutcome";
+import { computeElectionOutcome, formatVotes } from "./electionOutcome";
 
 export const SLICE_COLORS = [
   "#0044a4",
@@ -13,7 +13,7 @@ export const SLICE_COLORS = [
   "#4f46e5",
 ];
 
-type Props = { tally: readonly bigint[] };
+type Props = { tally: readonly bigint[]; budget?: number };
 
 export type TallyBreakdownRow = {
   candidateIndex: number;
@@ -47,7 +47,7 @@ export function buildTallyBreakdown(tally: readonly bigint[]): TallyBreakdownRow
   }));
 }
 
-export function ResultPie2D({ tally }: Props) {
+export function ResultPie2D({ tally, budget = 0 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const breakdown = useMemo(() => buildTallyBreakdown(tally), [tally]);
 
@@ -64,7 +64,9 @@ export function ResultPie2D({ tally }: Props) {
 
     const chart = echarts.init(el);
 
-    const totalVotesStr = totalVotes.toString();
+    // Votes, not raw points — matches the breakdown rows and the headline, and the slice
+    // percentages are unchanged either way (they are ratios).
+    const totalVotesStr = formatVotes(totalVotes, budget);
     const sliceTotal = chartSlices.reduce((sum, row) => sum + row.votes, 0);
 
     chart.setOption({
@@ -156,7 +158,9 @@ export function ResultPie2D({ tally }: Props) {
       ro.disconnect();
       chart.dispose();
     };
-  }, [tally, totalVotes]);
+    // budget is a dep: the config can load after first paint, so it goes 0 -> N and the
+    // centre label must redraw as votes rather than stay on raw points.
+  }, [tally, totalVotes, budget]);
 
   if (totalVotes === 0n) {
     return <div className="dim">No votes to chart.</div>;
@@ -204,7 +208,7 @@ export function ResultPie2D({ tally }: Props) {
                     <span className="winnerBadge">WINNER</span>
                   ))}
               </span>
-              <span className="resultPieBreakdownNum mono">{row.votes}</span>
+              <span className="resultPieBreakdownNum mono">{formatVotes(row.votes, budget)}</span>
               <span className="resultPieBreakdownNum mono">{row.percentLabel}%</span>
             </div>
             );

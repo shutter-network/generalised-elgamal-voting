@@ -203,3 +203,73 @@ def test_challenge_message_fixture():
     recovered = Account.recover_message(
         encode_defunct(text=challenge_message(eid, vk)), signature=sig)
     assert recovered == "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+
+# --------------------------------------------------------------------------- #
+#  max_weight clamp
+# --------------------------------------------------------------------------- #
+
+EID_2 = (2).to_bytes(32, "big")
+
+
+def _clamping_client(weight, caps: dict):
+    """An issuer whose cap comes from a per-election lookup, as `main()` wires it."""
+    svc = StubEligibilityService(ELIG_SK)
+    return build_eligibility_app(
+        svc, pseudonym_secret=SECRET, weight=weight,
+        max_weight_for=lambda eid: caps[bytes(eid)],
+    ).test_client()
+
+
+def _issued_weight(resp) -> int:
+    return codecs.dec_attestation(resp.get_json()["attestation"]).weight
+
+
+def test_weight_is_clamped_to_the_election_max():
+    """Over-weight credentials are unusable: verify_attestation rejects weight > max_weight
+    at tally, so issuing one hands the voter something the ingest filter turns away as
+    INVALID_ATTESTATION (or, with the filter off, is dropped silently at the tally)."""
+    c = _clamping_client(weight=79, caps={EID: 50})
+    r = _post(c, Account.create(), EID, _vk())
+    assert r.status_code == 200
+    assert _issued_weight(r) == 50
+
+
+def test_weight_below_the_cap_is_untouched():
+    c = _clamping_client(weight=79, caps={EID: 100})
+    r = _post(c, Account.create(), EID, _vk())
+    assert _issued_weight(r) == 79
+
+
+def test_the_cap_is_per_election_not_global():
+    """The same voter legitimately gets different weights in different elections: power 79
+    is clamped to 50 under an election capped at 50, but stands at 79 under one capped at
+    100. A single global cap (an env var, or an adapter-constructor value) would be wrong."""
+    c = _clamping_client(weight=79, caps={EID: 50, EID_2: 100})
+    acct = Account.create()
+    assert _issued_weight(_post(c, acct, EID, _vk())) == 50
+    assert _issued_weight(_post(c, acct, EID_2, _vk())) == 79
+
+
+def test_unavailable_max_weight_fails_closed():
+    """If the election's cap cannot be read, refuse to issue. An unclamped credential is
+    unusable at tally anyway, so issuing one only moves the failure somewhere confusing."""
+    def _boom(_eid):
+        raise RuntimeError("api unreachable")
+
+    svc = StubEligibilityService(ELIG_SK)
+    c = build_eligibility_app(svc, pseudonym_secret=SECRET, weight=5, max_weight_for=_boom).test_client()
+    r = _post(c, Account.create(), EID, _vk())
+    assert r.status_code == 503
+    assert "weight limit" in r.get_json()["message"]
+
+
+def test_allowlist_weight_is_clamped_too(tmp_path):
+    """The allowlist is the other unbounded source: `load_allowlist` does int(w) with no
+    upper bound, so a mis-set entry would otherwise mint an unusable credential."""
+    acct = Account.create()
+    p = tmp_path / "allow.json"
+    p.write_text(json.dumps({acct.address: 999}))
+    svc = StubEligibilityService(ELIG_SK)
+    c = build_eligibility_app(svc, pseudonym_secret=SECRET, weight=1, allowlist_path=str(p),
+                              max_weight_for=lambda _eid: 10).test_client()
+    assert _issued_weight(_post(c, acct, EID, _vk())) == 10

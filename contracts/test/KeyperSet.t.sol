@@ -72,6 +72,29 @@ contract KeyperSetTest is Test {
         new KeyperSet(_members(), new string[](_members().length), 4);
     }
 
+    /// @notice The quorum must be a strict majority (t > n/2), matching the off-chain
+    /// `Threshold.__post_init__`. A non-majority lets two disjoint groups each reach
+    /// `getThreshold()`, so DKG/aggregate agreement would have no unique winner.
+    function test_constructorRejectsNonMajorityThreshold() external {
+        // 1-of-3 is not a majority.
+        vm.expectRevert(abi.encodeWithSelector(InvalidThreshold.selector, 1, 3));
+        new KeyperSet(_members(), new string[](3), 1);
+
+        // 2-of-4 is not a majority either (two disjoint groups of 2 fit in 4).
+        address[] memory four = new address[](4);
+        four[0] = keyper1;
+        four[1] = keyper2;
+        four[2] = keyper3;
+        four[3] = address(0xBEEF);
+        vm.expectRevert(abi.encodeWithSelector(InvalidThreshold.selector, 2, 4));
+        new KeyperSet(four, new string[](4), 2);
+
+        // ...while the minimum majority for each size is accepted.
+        assertEq(new KeyperSet(_members(), new string[](3), 2).getThreshold(), 2);   // 2-of-3
+        assertEq(new KeyperSet(four, new string[](4), 3).getThreshold(), 3);         // 3-of-4
+        assertEq(new KeyperSet(_members(), new string[](3), 3).getThreshold(), 3);   // unanimous
+    }
+
     function _members() private view returns (address[] memory members) {
         members = new address[](3);
         members[0] = keyper1;

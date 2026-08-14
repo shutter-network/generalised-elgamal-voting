@@ -45,6 +45,14 @@ export function BallotDetail({ ballot, globalIndex, verifyState, onBack, onVerif
         <Hex value={ballot.pseudonym} trim={20} />
       </div>
 
+      <div className="bdPseudonymRow">
+        <span className="dim">counted at weight</span>
+        <span className="mono">
+          {ballot.weight.toLocaleString()}
+          {ballot.weight === 1 ? "" : t(" (each point counts {{n}}x)", { n: ballot.weight })}
+        </span>
+      </div>
+
       <div className="bdTxRow">
         <span className="dim">transaction</span>
         {explorerTxUrl ? (

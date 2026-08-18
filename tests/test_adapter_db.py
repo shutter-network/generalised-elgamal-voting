@@ -1,11 +1,11 @@
 """Run the shared conformance suite against the database adapter (HTTP + Postgres).
 
 Spins the Flask microservice in a background thread against the dedicated
-Postgres (docker compose up), and drives it through ``HttpDataLayerClient`` — the
-exact object services hold when the database backend is selected. Skips if no
-Postgres is reachable (e.g. CI without the container).
+Postgres (see tests/docker-compose.yml), and drives it through
+``HttpDataLayerClient`` — the exact object services hold when the database backend
+is selected. Skips if no Postgres is reachable (e.g. CI without the container).
 
-    docker compose up -d      # start the dedicated Postgres first
+    docker compose -f tests/docker-compose.yml up -d   # start the dedicated Postgres first
 """
 
 from __future__ import annotations

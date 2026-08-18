@@ -1,7 +1,10 @@
-# Dedicated Postgres for the geg database data-layer adapter.
+# Test-only Postgres for the geg database data-layer adapter (test_adapter_db.py,
+# test_services_db_e2e.py). NOT a deployment stack — those live in deploy/.
 # Isolated from any other local Postgres: non-default port 5433, throwaway creds.
-#   docker compose up -d      # start
-#   docker compose down -v    # stop + wipe
+#   docker compose -f tests/docker-compose.yml up -d      # start
+#   docker compose -f tests/docker-compose.yml down -v    # stop + wipe
+name: geg-test-db
+
 services:
   geg-postgres:
     image: postgres:16-alpine

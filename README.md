@@ -296,8 +296,8 @@ pytest
 The Python test suite (**308 passing, 27 skipped**) is the integration test across
 all three backends — in-memory, Postgres-over-HTTP, and blockchain-over-Anvil —
 including the multi-operator HTTP keyper path. The Postgres tests use a dockerized
-database (`docker compose up -d`) and the chain tests use Anvil (Foundry); both
-skip cleanly if those aren't available.
+database (`docker compose -f tests/docker-compose.yml up -d`) and the chain tests
+use Anvil (Foundry); both skip cleanly if those aren't available.
 
 The contracts have their own Foundry suite (**55 tests**):
 

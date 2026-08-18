@@ -1,0 +1,68 @@
+# Standalone coordinator, attached to a data layer someone else runs.
+#
+# The backend stacks (db / chain / chain-devnet) bundle their own data layer: the
+# coordinator in those files points at `http://data-layer:8000` on the stack's own
+# network. This file is for the other case — the data layer is **external**, run by
+# whoever owns the election data, and reached over HTTP at a URL you supply. The
+# coordinator itself is unchanged: `GEG_DATA_LAYER=database` already means "speak the
+# port contract over HTTP to GEG_DATA_LAYER_URL", so nothing here is a special build.
+#
+# It runs the coordinator and nothing else. No postgres, no data-layer service, no api,
+# no admin — the external data layer provides the read surface, and elections are
+# registered by whatever system owns it.
+#
+# What the external data layer must serve
+# ---------------------------------------
+#   * the full port contract at the URL below — this process reads it AND writes to it
+#     (it is the sole writer: keypers relay their signed DKG results and decryption
+#     shares through this coordinator rather than writing themselves);
+#   * the read-only port surface under `/port`, for the keypers. They are configured
+#     with GEG_API_URL and append `/port` themselves (see services/keyper — it is the
+#     same prefix `api` mounts, so a keyper cannot tell the difference).
+#
+# Keep the root surface reachable only by this coordinator. In geg's own data-layer
+# service the ballot write path is unauthenticated, which is exactly why keypers are
+# given `/port` instead; an external implementation should hold the same line.
+#
+#   docker compose -f deploy/docker-compose.coordinator.yml \
+#     --env-file deploy/.env.coordinator up -d --build
+#
+# Reachability. The keypers must be able to reach :8400 (published below), and this
+# process must be able to reach each keyper at the endpoint recorded in the election
+# config — a real host in production, `http://host.docker.internal:810N` when the
+# keyper stacks run locally on the same machine.
+
+name: geg-coordinator
+
+services:
+  coordinator:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: geg-app
+    command: ['python', '-m', 'geg.services.coordinator']
+    restart: unless-stopped
+    environment:
+      GEG_DATA_LAYER: database
+      # The external data layer's base URL, serving the port contract. No trailing
+      # path — this is the root surface, not the /port read mount the keypers use.
+      GEG_DATA_LAYER_URL: ${GEG_DATA_LAYER_URL:?set GEG_DATA_LAYER_URL (the external data layer serving the port contract)}
+      # Also the result-publisher identity: this key signs the published result, so its
+      # address must equal each election config's result_publisher_key.
+      COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY:?set COORDINATOR_SIGNING_KEY (secp256k1 key; its address is the result publisher)}
+      # Bearer token for the write relay. Fail-closed: unset means no keyper can write.
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN:?set COORDINATOR_API_TOKEN (relay bearer token)}
+      COORDINATOR_PORT: '8400'
+      COORDINATOR_POLL_S: ${COORDINATOR_POLL_S:-2.0}
+      # The keyper bearer tokens this process mints live here, so a restart reuses them
+      # instead of re-bootstrapping the whole committee.
+      COORDINATOR_STATE_DIR: /coordinator-state
+    ports:
+      - '${COORDINATOR_PORT:-8400}:8400'
+    volumes:
+      # Same project-root bind-mount convention as postgres-data / keyper-state.
+      - ../coordinator-state:/coordinator-state
+    extra_hosts:
+      # Lets the config's keyper endpoints resolve to host-published ports when the
+      # keyper stacks run locally. Harmless with real public URLs.
+      - 'host.docker.internal:host-gateway'

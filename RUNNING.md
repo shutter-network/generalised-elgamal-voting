@@ -9,6 +9,17 @@ backend** and every service is unchanged. Three compose stacks:
 | **Blockchain** (Anvil devnet) | `deploy/docker-compose.chain-devnet.yml` | Validated: `tests/test_services_chain_daemon_e2e.py` runs this exact topology (coordinator relay + keyper HTTP servers writing to it + read-only data-layer service + coordinator DKG-over-HTTP + chain-direct admin + API ballot ingest) over Anvil to a correct on-chain tally; also driven by hand through a full election |
 | **Blockchain** (real chain) | `deploy/docker-compose.chain.yml` | Same topology, external RPC + pre-deployed registry, no devnet tools. Config-only difference from the devnet stack |
 
+**Attaching to an external data layer.** Those three stacks each run their own data
+layer. When the data layer belongs to someone else — another system storing the
+artifacts and serving the port contract over HTTP — run
+`deploy/docker-compose.coordinator.yml` instead: the coordinator alone, pointed at that
+URL with `GEG_DATA_LAYER_URL`, with no postgres, data-layer, api or admin service. The
+keypers are unchanged (`deploy/docker-compose.keyper.yml`); they read the external data
+layer's `/port` mount via `GEG_API_URL` and relay their writes through the coordinator
+exactly as they do on the bundled stacks. Nothing in the code is aware of the
+difference: `GEG_DATA_LAYER=database` has always meant "speak the port contract over
+HTTP", and this only packages that configuration.
+
 The automated test suite (`pytest`) is the integration test across all three
 backends — in-memory, Postgres-over-HTTP, and blockchain-over-Anvil — including
 the multi-operator HTTP keyper path. These composes are for **operating** the

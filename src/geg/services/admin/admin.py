@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 
+from geg.core import authz
 from geg.core.authz import Signer, verify_register, verify_request
 from geg.core.config import ElectionConfig
 from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH
@@ -106,7 +107,8 @@ def cancel_election(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes,
     _LOG.info("op=cancel status=ok election=%s", election_id.hex())
 
 
-def retry_tally(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes, *, admin_identity: bytes) -> None:
+def retry_tally(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes, *, admin_identity: bytes,
+                issued_at: int) -> None:
     """Clear a stalled tally (the admin **retry**), authorized by a relayed admin signature.
 
     Verifies ``admin_sig`` (op ``"tally_resume"``) recovers to this election's admin and that
@@ -117,11 +119,14 @@ def retry_tally(dl: ElectionDataLayer, election_id: bytes, admin_sig: bytes, *, 
     if admin_key != admin_identity:
         raise WriteAuthorizationError(
             "This wallet is not the admin wallet, so it cannot retry this election's tally.")
-    if not verify_request(admin_key, admin_sig, "tally_resume", election_id):
+    # The signature binds when it was made, so a captured retry cannot be replayed to
+    # un-stall a tally the coordinator has since legitimately stalled again.
+    if not verify_request(admin_key, admin_sig, "tally_resume", election_id,
+                          authz.request_nonce_payload(issued_at)):
         raise WriteAuthorizationError(
             "Could not verify that you are this election's administrator. Connect the admin wallet that "
             "registered it and sign again.")
-    dl.set_tally_stalled(election_id, False, admin_sig)
+    dl.set_tally_stalled(election_id, False, admin_sig, issued_at)
     _LOG.info("op=retry_tally status=ok election=%s", election_id.hex())
 
 
@@ -208,7 +213,8 @@ def build_admin_app(dl: ElectionDataLayer, admin_identity: bytes, *, clock):
     def retry_tally_route(eid):
         body = request.get_json(force=True)
         admin_sig = codecs.dec_bytes(body["signature"], name="signature")
-        retry_tally(dl, bytes.fromhex(eid), admin_sig, admin_identity=admin_identity)
+        retry_tally(dl, bytes.fromhex(eid), admin_sig, admin_identity=admin_identity,
+                    issued_at=int(body["issuedAt"]))
         return "", 204
 
     return app

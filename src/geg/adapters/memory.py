@@ -59,6 +59,8 @@ class InMemoryDataLayer(ElectionDataLayer):
         self._elections: dict[bytes, _Stored] = {}
         self._next_id = 0  # registry-style sequential election ids (1, 2, …)
         self._clock = clock or (lambda: 0)
+        # (election_id, op, issued_at) already spent; see set_tally_stalled.
+        self._used_request_nonces: set[tuple[bytes, str, int]] = set()
 
     # -- helpers ------------------------------------------------------------ #
 
@@ -310,20 +312,34 @@ class InMemoryDataLayer(ElectionDataLayer):
     def get_result(self, election_id) -> ResultArtifact | None:
         return self._get(election_id).result
 
-    def set_tally_stalled(self, election_id, stalled: bool, sig) -> None:
+    def set_tally_stalled(self, election_id, stalled: bool, sig, issued_at: int) -> None:
         st = self._get(election_id)
+        op = "tally_stall" if stalled else "tally_resume"
+        # The signature binds no content -- this write only toggles a flag -- so
+        # without a freshness term one valid signature authorises the toggle forever.
+        # See authz.request_nonce_payload for why deduplicating the signature bytes
+        # is not an alternative.
+        if not authz.request_is_fresh(issued_at, self._clock()):
+            raise WriteAuthorizationError(
+                f"{op}: issued_at {issued_at} is outside the "
+                f"+/-{authz.REQUEST_FRESHNESS_S}s acceptance window"
+            )
+        if (election_id, op, int(issued_at)) in self._used_request_nonces:
+            raise WriteAuthorizationError(f"{op}: this request has already been used")
+        payload = authz.request_nonce_payload(issued_at)
         if stalled:
             # MARK — result publisher (coordinator) only; post-voting_end, no result yet.
             if self._clock() < st.config.voting_end:
                 raise VotingWindowError("cannot mark stalled: voting has not ended")
             if st.result is not None:
                 raise ImmutabilityError("result already published; tally cannot be marked stalled")
-            if not authz.verify_request(st.config.result_publisher_key, sig, "tally_stall", election_id):
+            if not authz.verify_request(st.config.result_publisher_key, sig, op, election_id, payload):
                 raise WriteAuthorizationError("mark tally stalled: bad result-publisher signature")
         else:
             # CLEAR (retry) — election admin only.
-            if not authz.verify_request(st.config.admin_key, sig, "tally_resume", election_id):
+            if not authz.verify_request(st.config.admin_key, sig, op, election_id, payload):
                 raise WriteAuthorizationError("clear tally stalled: bad admin signature")
+        self._used_request_nonces.add((election_id, op, int(issued_at)))
         st.tally_stalled = bool(stalled)
 
     # -- capability --------------------------------------------------------- #

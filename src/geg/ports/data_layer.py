@@ -266,7 +266,7 @@ class ElectionDataLayer(ABC):
         """Return the published result, or ``None``. Public read."""
 
     @abstractmethod
-    def set_tally_stalled(self, election_id: bytes, stalled: bool, sig: bytes) -> None:
+    def set_tally_stalled(self, election_id: bytes, stalled: bool, sig: bytes, issued_at: int) -> None:
         """Set/clear the advisory *tally stalled* flag (surfaced in ``get_election`` and the
         derived state). **Direction-split, one-directional per party:**
 

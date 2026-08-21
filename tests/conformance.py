@@ -26,6 +26,8 @@ from abc import ABC, abstractmethod
 
 import pytest
 
+from geg.core import authz
+
 from geg.core import write_auth
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 from geg.envelopes.types import (
@@ -539,34 +541,80 @@ class DataLayerConformance:
         assert backend.reader().get_aggregate(ELECTION_ID) == agg
 
     # -- tally-stalled advisory flag (recoverable) -------------------------- #
+    #
+    # These writes bind no content -- they toggle a flag -- so the signature carries a
+    # timestamp and the backend spends it once.  keeps the signed value and
+    # the passed value the same; they are two halves of one claim and a test that let
+    # them drift would be asserting nothing.
+
+    @staticmethod
+    def _stall(backend, role: str, op: str, stalled: bool, at: int) -> None:
+        payload = authz.request_nonce_payload(at)
+        backend.dl(role).set_tally_stalled(ELECTION_ID, stalled, backend.sig(role, op, payload), at)
 
     def test_tally_stalled_marked_by_publisher_cleared_by_admin(self, backend):
         backend.register()
         backend.set_time(2_001)  # past voting_end
         assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
         # MARK — result publisher (the coordinator) only.
-        backend.dl("result_publisher").set_tally_stalled(ELECTION_ID, True, backend.sig("result_publisher", "tally_stall"))
+        self._stall(backend, "result_publisher", "tally_stall", True, 2_001)
         assert backend.reader().get_election(ELECTION_ID).tally_stalled is True
         # CLEAR (retry) — the election admin only.
-        backend.dl("admin").set_tally_stalled(ELECTION_ID, False, backend.sig("admin", "tally_resume"))
+        self._stall(backend, "admin", "tally_resume", False, 2_001)
         assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
 
     def test_tally_mark_requires_result_publisher(self, backend):
         backend.register()
         backend.set_time(2_001)
         with pytest.raises(WriteAuthorizationError):  # admin cannot mark
-            backend.dl("admin").set_tally_stalled(ELECTION_ID, True, backend.sig("admin", "tally_stall"))
+            self._stall(backend, "admin", "tally_stall", True, 2_001)
         with pytest.raises(WriteAuthorizationError):  # a keyper cannot mark
-            backend.dl("keyper1").set_tally_stalled(ELECTION_ID, True, backend.sig("keyper1", "tally_stall"))
+            self._stall(backend, "keyper1", "tally_stall", True, 2_001)
 
     def test_tally_clear_requires_admin(self, backend):
         backend.register()
         backend.set_time(2_001)
-        backend.dl("result_publisher").set_tally_stalled(ELECTION_ID, True, backend.sig("result_publisher", "tally_stall"))
+        self._stall(backend, "result_publisher", "tally_stall", True, 2_001)
         # The result publisher (coordinator) cannot clear — clearing is admin-only.
         with pytest.raises(WriteAuthorizationError):
-            backend.dl("result_publisher").set_tally_stalled(ELECTION_ID, False, backend.sig("result_publisher", "tally_resume"))
+            self._stall(backend, "result_publisher", "tally_resume", False, 2_001)
         assert backend.reader().get_election(ELECTION_ID).tally_stalled is True  # still stalled
+
+    # -- replay rejection (M-1) --------------------------------------------- #
+
+    def test_tally_stall_signature_cannot_be_replayed(self, backend):
+        """The whole point of the timestamp: one signature, one use.
+
+        Signing is RFC 6979 deterministic, so a re-signed stall at the same timestamp is
+        byte-identical to a captured one — which is exactly what an attacker replays after
+        an admin retry. Rejecting it is what stops a confidential tally being denied forever.
+        """
+        backend.register()
+        backend.set_time(2_001)
+        self._stall(backend, "result_publisher", "tally_stall", True, 2_001)
+        self._stall(backend, "admin", "tally_resume", False, 2_001)
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
+
+        # Replay of the stall, still inside the freshness window.
+        with pytest.raises(WriteAuthorizationError):
+            self._stall(backend, "result_publisher", "tally_stall", True, 2_001)
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
+
+        # A genuine re-stall at a new timestamp is still accepted.
+        backend.set_time(2_050)
+        self._stall(backend, "result_publisher", "tally_stall", True, 2_050)
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is True
+
+    def test_tally_stall_rejects_a_stale_timestamp(self, backend):
+        """Freshness is what makes a captured signature useless later — the replay that
+        matters happens after an admin retry, long after the signature was made."""
+        backend.register()
+        backend.set_time(10_000)
+        with pytest.raises(WriteAuthorizationError):
+            self._stall(backend, "result_publisher", "tally_stall", True, 10_000 - 3_600)
+        with pytest.raises(WriteAuthorizationError):
+            self._stall(backend, "result_publisher", "tally_stall", True, 10_000 + 3_600)
+        assert backend.reader().get_election(ELECTION_ID).tally_stalled is False
 
     def test_result_publish_authz_and_read(self, backend):
         backend.register()

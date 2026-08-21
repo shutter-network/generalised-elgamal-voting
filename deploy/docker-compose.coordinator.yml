@@ -53,7 +53,7 @@ services:
       # Bearer token for the write relay. Fail-closed: unset means no keyper can write.
       COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN:?set COORDINATOR_API_TOKEN (relay bearer token)}
       COORDINATOR_PORT: '8400'
-      COORDINATOR_POLL_S: ${COORDINATOR_POLL_S:-2.0}
+      COORDINATOR_POLL_S: ${COORDINATOR_POLL_S:-30.0}
       # The keyper bearer tokens this process mints live here, so a restart reuses them
       # instead of re-bootstrapping the whole committee.
       COORDINATOR_STATE_DIR: /coordinator-state

@@ -63,7 +63,22 @@ CREATE TABLE IF NOT EXISTS results (
     election_id   BYTEA PRIMARY KEY REFERENCES elections(election_id),
     result        JSONB NOT NULL    -- ResultArtifact
 );
+
+-- Spent stall/resume request nonces.
+--
+-- These two ops are the only writes whose digest binds no content -- they toggle a
+-- flag -- so without a freshness term one valid signature authorises the toggle
+-- forever, and a captured stall replayed after each admin retry keeps a tally from
+-- ever completing. Deduplicating the signature bytes is not an alternative: signing
+-- is RFC 6979 deterministic, so a genuine second stall is byte-identical to a replay.
+-- The signer binds a timestamp instead, and the primary key here spends it once.
+CREATE TABLE IF NOT EXISTS request_nonces (
+    election_id   BYTEA NOT NULL REFERENCES elections(election_id),
+    op            TEXT NOT NULL,
+    issued_at     BIGINT NOT NULL,
+    PRIMARY KEY (election_id, op, issued_at)
+);
 """
 
 # Tables in dependency order (children before parent) for test truncation.
-TABLES = ["dkg_submissions", "ballots", "decryption_shares", "aggregates", "results", "elections"]
+TABLES = ["dkg_submissions", "ballots", "decryption_shares", "aggregates", "results", "request_nonces", "elections"]

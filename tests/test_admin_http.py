@@ -7,6 +7,7 @@ Driven over the in-memory data layer via the Flask test client.
 """
 
 from __future__ import annotations
+from geg.core import authz
 
 from geg.adapters.memory import InMemoryDataLayer
 from geg.core.authz import Signer
@@ -15,6 +16,17 @@ from geg.envelopes import codecs
 from geg.services.admin import build_admin_app
 
 from conftest import ManualClock
+
+
+def stall(dl, eid, publisher, at: int) -> None:
+    """Mark a tally stalled the way the coordinator does: signature bound to a timestamp,
+    which the data layer checks for freshness and then spends."""
+    dl.set_tally_stalled(
+        eid, True,
+        publisher.sign("tally_stall", eid, authz.request_nonce_payload(at)),
+        at,
+    )
+
 
 
 def _config(admin: Signer, result_publisher: Signer | None = None) -> ElectionConfig:
@@ -120,18 +132,22 @@ def test_retry_tally_clears_stalled_flag_admin_only():
     c = build_admin_app(dl, admin.identity, clock=lambda: 0).test_client()
 
     clock.set(2_500)  # past voting_end
-    dl.set_tally_stalled(eid, True, publisher.sign("tally_stall", eid))  # coordinator marks it
+    stall(dl, eid, publisher, 2_500)  # coordinator marks it
     assert dl.get_election(eid).tally_stalled is True
 
     # Valid admin signature → cleared (retry).
     r = c.post(f"/elections/{eid.hex()}/tally/retry",
-               json={"signature": codecs.enc_bytes(admin.sign("tally_resume", eid))})
+               json={"signature": codecs.enc_bytes(
+                         admin.sign("tally_resume", eid, authz.request_nonce_payload(2_500))),
+                     "issuedAt": 2_500})
     assert r.status_code == 204
     assert dl.get_election(eid).tally_stalled is False
 
     # Re-mark; a non-admin signature is rejected (401) and the flag stays set.
-    dl.set_tally_stalled(eid, True, publisher.sign("tally_stall", eid))
+    stall(dl, eid, publisher, 2_501)
     r = c.post(f"/elections/{eid.hex()}/tally/retry",
-               json={"signature": codecs.enc_bytes(Signer.generate().sign("tally_resume", eid))})
+               json={"signature": codecs.enc_bytes(
+                         Signer.generate().sign("tally_resume", eid, authz.request_nonce_payload(2_502))),
+                     "issuedAt": 2_502})
     assert r.status_code == 401
     assert dl.get_election(eid).tally_stalled is True

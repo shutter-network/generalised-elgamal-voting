@@ -294,6 +294,7 @@ def build_app(dl: ElectionDataLayer) -> Flask:
         dl.set_tally_stalled(
             _eid(), bool(body["stalled"]),
             codecs.dec_bytes(body["resultPublisherSig"], name="resultPublisherSig"),
+            int(body["issuedAt"]),
         )
         return "", 204
 

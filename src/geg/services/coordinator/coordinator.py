@@ -35,6 +35,7 @@ from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH
 from geg.ports.data_layer import ElectionDataLayer
 from . import dkg_coordinator as coord
 from geg.services import tally_aggregator as tally  # finalize (recover + publish result)
+from geg.core import authz
 from geg.core.state import ElectionState, StateFacts, derive_state
 
 
@@ -182,8 +183,22 @@ class AutoDKG:
         """Persist the stalled flag (result-publisher auth). The coordinator only ever
         *marks* — clearing is the admin's retry. Best-effort: a write failure must never
         break the tally loop (the mark is retried next poll)."""
+        # The signature carries when it was made. Without it the digest binds only the
+        # op and the election, so one mark stays valid forever and an observer could
+        # replay it after each admin retry until the tally never completed. Re-signed
+        # on every attempt rather than cached: a stale timestamp is refused, and the
+        # verifier spends each one once.
+        # self.clock, not wall-clock: the service takes its notion of time from one
+        # injected source, and the verifier checks freshness against its own.
+        issued_at = int(self.clock())
+        payload = authz.request_nonce_payload(issued_at)
         try:
-            self.dl.set_tally_stalled(election_id, True, self.coordinator.sign("tally_stall", election_id))
+            self.dl.set_tally_stalled(
+                election_id,
+                True,
+                self.coordinator.sign("tally_stall", election_id, payload),
+                issued_at,
+            )
         except Exception as err:  # noqa: BLE001
             self.log.warning("op=tally status=mark_stalled_error election=%s err=%s", election_id.hex(), err)
 
@@ -570,7 +585,7 @@ def main() -> None:
     relay_token = os.environ.get("COORDINATOR_API_TOKEN")  # pushed to keypers via bootstrap
     watcher = AutoDKG(
         dl, coordinator, clock=lambda: int(_time.time()),
-        poll_interval_s=float(os.environ.get("COORDINATOR_POLL_S", "2.0")),
+        poll_interval_s=float(os.environ.get("COORDINATOR_POLL_S", "30.0")),
         token_store=TokenStore(store_dir) if store_dir else None,
         relay_token=relay_token,
     )

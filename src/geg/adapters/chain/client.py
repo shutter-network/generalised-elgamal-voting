@@ -381,7 +381,7 @@ class BlockchainDataLayer(ElectionDataLayer):
         from geg.envelopes.types import ResultArtifact
         return ResultArtifact(election_id=election_id, totals=totals, keyper_indices=keyper_indices, bsgs_bound=bound)
 
-    def set_tally_stalled(self, election_id, stalled: bool, sig) -> None:
+    def set_tally_stalled(self, election_id, stalled: bool, sig, issued_at: int) -> None:
         # Direction-split, tx-sender-authorized (the relayed sig is unused on chain):
         #   mark (true)  → sent by the coordinator's account (RESULT_PUBLISHER_ROLE),
         #   clear (false)→ sent by the admin's account (DEFAULT_ADMIN_ROLE).

@@ -60,7 +60,7 @@ services:
       COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
       COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
       COORDINATOR_PORT: "8400"
-      COORDINATOR_POLL_S: "2.0"
+      COORDINATOR_POLL_S: "30.0"
       COORDINATOR_STATE_DIR: /coordinator-state   # private token persistence (restart-safe)
     ports:
       - "8400:8400"

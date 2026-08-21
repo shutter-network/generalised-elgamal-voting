@@ -176,10 +176,13 @@ class HttpDataLayerClient(ElectionDataLayer):
         d = self._get(f"/elections/{self._eid(election_id)}/result")
         return codecs.dec_result(d["result"]) if d["result"] else None
 
-    def set_tally_stalled(self, election_id, stalled: bool, result_publisher_sig) -> None:
+    def set_tally_stalled(self, election_id, stalled: bool, result_publisher_sig, issued_at: int) -> None:
         self._post(f"/elections/{self._eid(election_id)}/tally-stalled", {
             "stalled": bool(stalled),
             "resultPublisherSig": codecs.enc_bytes(result_publisher_sig),
+            # The freshness term the signature was taken over. The verifier rebuilds the
+            # digest from it, so it travels with the signature rather than being re-derived.
+            "issuedAt": int(issued_at),
         })
 
     # -- capability --------------------------------------------------------- #

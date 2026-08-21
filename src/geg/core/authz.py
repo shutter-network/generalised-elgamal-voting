@@ -48,6 +48,42 @@ def request_digest(op: str, election_id: bytes, payload: bytes = b"") -> bytes:
     )
 
 
+def request_nonce_payload(issued_at: int) -> bytes:
+    """The freshness term a stall/resume request carries as its payload.
+
+    request_digest binds the operation and the election, which stops a stall
+    signature being presented as a resume or against another election -- but it binds
+    nothing that changes, so one valid signature stayed valid forever. An observer who
+    captured a legitimate tally_stall could replay it after every admin retry and
+    keep a confidential tally from ever completing.
+
+    Deduplicating the signature bytes instead does not work: Account.sign_message
+    is RFC 6979 deterministic, so a genuine second stall of the same election is
+    byte-identical to a replay. Rejecting duplicates would make re-stalling impossible.
+
+    Eight bytes, big-endian, unsigned seconds. Byte-exact with the hub's
+    requestNoncePayload and the browser's copy in helpers/gegRequest.ts; a
+    verifier rejects a timestamp outside its window and accepts each one once.
+    """
+    if not isinstance(issued_at, int) or isinstance(issued_at, bool) or issued_at < 0:
+        raise ValueError(f"issued_at must be a non-negative int, got {issued_at!r}")
+    return int(issued_at).to_bytes(8, "big")
+
+
+# How far a stall/resume request's issued_at may sit from the verifier's clock.
+#
+# Wide enough that ordinary clock skew between the coordinator, an admin's browser and
+# the data layer never rejects an honest request; narrow enough that a captured
+# signature stops being useful long before the next admin retry, which is the replay
+# this bounds. Mirrors REQUEST_FRESHNESS_S in the hub.
+REQUEST_FRESHNESS_S = 300
+
+
+def request_is_fresh(issued_at: int, now: int) -> bool:
+    """Is issued_at inside the acceptance window? Callers raise their own error."""
+    return abs(int(now) - int(issued_at)) <= REQUEST_FRESHNESS_S
+
+
 def sign_request(private_key: int, op: str, election_id: bytes, payload: bytes = b"") -> bytes:
     """Sign a write request (EIP-191 over the digest); returns the 65-byte signature.
 

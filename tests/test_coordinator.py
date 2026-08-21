@@ -7,6 +7,7 @@ from __future__ import annotations
 import threading
 
 import pytest
+from geg.core import authz
 import requests
 from werkzeug.serving import make_server
 
@@ -201,7 +202,10 @@ def test_stall_survives_restart_and_resumes_only_on_admin_clear(kw, monkeypatch)
     assert kw.dl.get_election(eid).tally_stalled is True    # still stalled after restart
 
     # The admin clears it (the retry) → coordinator resumes with a fresh budget.
-    kw.dl.set_tally_stalled(eid, False, kw.admin.sign("tally_resume", eid))
+    kw.dl.set_tally_stalled(
+        eid, False,
+        kw.admin.sign("tally_resume", eid, authz.request_nonce_payload(int(kw.clock()))),
+        int(kw.clock()))
     assert w2.scan_once()[eid.hex()] == "collecting_aggregate"  # resumed, retrying
 
 

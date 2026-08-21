@@ -428,21 +428,41 @@ class PostgresStore(ElectionDataLayer):
                 (election_id, Jsonb(codecs.enc_result(result))),
             )
 
-    def set_tally_stalled(self, election_id, stalled: bool, sig) -> None:
+    def set_tally_stalled(self, election_id, stalled: bool, sig, issued_at: int) -> None:
         with self._conn() as conn:
             config = self._config(conn, election_id)
+            op = "tally_stall" if stalled else "tally_resume"
+            # This write toggles a flag, so the digest has no content to bind and one
+            # valid signature would otherwise authorise the toggle forever. The signer
+            # binds a timestamp; it must be recent, and it is spent on use.
+            if not authz.request_is_fresh(issued_at, self._clock()):
+                raise WriteAuthorizationError(
+                    f"{op}: issued_at {issued_at} is outside the "
+                    f"+/-{authz.REQUEST_FRESHNESS_S}s acceptance window"
+                )
+            payload = authz.request_nonce_payload(issued_at)
             if stalled:
                 # MARK — result publisher (coordinator) only; post-voting_end, no result yet.
                 if self._clock() < config.voting_end:
                     raise VotingWindowError("cannot mark stalled: voting has not ended")
                 if conn.execute("SELECT 1 FROM results WHERE election_id = %s", (election_id,)).fetchone() is not None:
                     raise ImmutabilityError("result already published; tally cannot be marked stalled")
-                if not authz.verify_request(config.result_publisher_key, sig, "tally_stall", election_id):
+                if not authz.verify_request(config.result_publisher_key, sig, op, election_id, payload):
                     raise WriteAuthorizationError("mark tally stalled: bad result-publisher signature")
             else:
                 # CLEAR (retry) — election admin only.
-                if not authz.verify_request(config.admin_key, sig, "tally_resume", election_id):
+                if not authz.verify_request(config.admin_key, sig, op, election_id, payload):
                     raise WriteAuthorizationError("clear tally stalled: bad admin signature")
+            # The primary key is the check: a concurrent replay loses the insert rather
+            # than racing a read. Spent after authorisation so an unauthenticated caller
+            # cannot fill the table.
+            spent = conn.execute(
+                "INSERT INTO request_nonces (election_id, op, issued_at) VALUES (%s, %s, %s)"
+                " ON CONFLICT DO NOTHING",
+                (election_id, op, int(issued_at)),
+            ).rowcount
+            if not spent:
+                raise WriteAuthorizationError(f"{op}: this request has already been used")
             conn.execute(
                 "UPDATE elections SET tally_stalled = %s WHERE election_id = %s", (bool(stalled), election_id)
             )

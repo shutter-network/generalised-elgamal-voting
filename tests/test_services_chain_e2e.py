@@ -18,7 +18,7 @@ import time
 import pytest
 
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import ballot as ballot_crypto
+from geg.crypto import ballot as ballot_crypto, binding
 from geg.crypto import schnorr
 from geg.crypto.points import g1_to_compressed, g2_from_compressed
 from geg.envelopes.types import BallotEnvelope, Ciphertext
@@ -135,6 +135,10 @@ class ChainWorld:
             election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk_bytes,
             ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
             zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
+            voter_attestation_signature=binding.sign_ballot_binding(
+                voter_sk=sk, voter_vk=vk, election_id=ELECTION_ID, pseudonym=att.pseudonym,
+                vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
+                zk_proof=built.zk_proof, attestation=att),
         )
 
 

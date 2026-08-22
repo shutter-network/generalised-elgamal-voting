@@ -25,6 +25,10 @@ from geg.adapters.memory import InMemoryDataLayer
 from geg.core.authz import Signer
 from geg.services.coordinator import dkg_coordinator as coord
 from geg.services.common.token_store import TokenStore
+
+# Any fixed key: the store derives its encryption key from it, and these
+# tests care about token scoping rather than about which key was used.
+_SK = 0x1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF
 from geg.services.keyper import build_keyper_app
 
 from conftest import ManualClock
@@ -79,7 +83,7 @@ def pool(tmp_path):
 
 def test_overlapping_committee_does_not_churn_shared_keyper(pool, tmp_path):
     """committee1={k1,k2,k3}, then committee2={k2,k3,k4}: k2's token must survive."""
-    store = TokenStore(tmp_path / "coord-state")
+    store = TokenStore(tmp_path / "coord-state", _SK)
 
     c1 = {1: pool.urls[1], 2: pool.urls[2], 3: pool.urls[3]}
     api1, _ = coord.bootstrap_keypers(pool.coordinator, c1, member_addrs=pool.member_addrs(c1), token_store=store)
@@ -98,7 +102,7 @@ def test_401_triggers_rebootstrap_and_retry(pool, tmp_path):
     """The coordinator presents a token the keyper doesn't hold (store divergence: the
     keyper holds token A, the coordinator re-minted B). The trigger path re-installs
     the coordinator's stable token and retries, so the call ends up accepted."""
-    store = TokenStore(tmp_path / "coord-state")
+    store = TokenStore(tmp_path / "coord-state", _SK)
     url = pool.urls[1]
     urls = {1: url}
 

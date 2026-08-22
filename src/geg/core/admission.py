@@ -24,6 +24,11 @@ from geg.core.config import DuplicatePolicy, ElectionConfig
 from geg.crypto.ballot import verify_ballot_crypto
 from geg.crypto.points import g2_from_compressed
 from geg.envelopes.types import BallotEnvelope, Exclusion, ExclusionReason, StoredBallot
+from geg.crypto.binding import (
+    ballot_message_digest,
+    envelope_binding_message,
+    verify_binding_sig,
+)
 from geg.ports.eligibility import verify_attestation
 from geg.core.state import is_voting_open
 
@@ -89,6 +94,26 @@ def validate_ballot(sb: StoredBallot, config: ElectionConfig, mpk) -> ExclusionR
     )
     if not ok:
         return ExclusionReason(reason)  # "MALFORMED" | "INVALID_PROOF" | "INVALID_SIGNATURE"
+
+    # The voter's binding of *this* ballot to *this* credential.
+    #
+    # Everything above proves the credential was issued to this voter and that the
+    # ballot is well-formed — not that the voter cast this ballot *with this
+    # credential*. `weight` and `nonce` are covered by nothing the voter signs, and
+    # `nonce` orders re-votes, so without this an assembler holding two of the
+    # voter's own credentials picks which of their ballots wins.
+    #
+    # Deliberately last. The binding message covers the ballot digest, so a
+    # tampered ciphertext breaks it too — checking it earlier would report every
+    # mangled ballot as INVALID_ATTESTATION and bury the real reason. Here it can
+    # only fire when the ballot and the credential are each sound on their own and
+    # it is the *pairing* that is not.
+    if not verify_binding_sig(
+        env.vk,
+        envelope_binding_message(env, ballot_message_digest(env)),
+        env.voter_attestation_signature,
+    ):
+        return ExclusionReason.INVALID_ATTESTATION
     return None
 
 

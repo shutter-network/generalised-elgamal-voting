@@ -157,6 +157,7 @@ def enc_ballot(b: BallotEnvelope) -> dict:
         "zkProof": enc_bytes(b.zk_proof),
         "voterSignature": enc_bytes(b.voter_signature),
         "attestation": enc_attestation(b.attestation),
+        "voterAttestationSignature": enc_bytes(b.voter_attestation_signature),
     }
 
 
@@ -174,6 +175,14 @@ def dec_ballot(d: Any) -> BallotEnvelope:
             _req(d, "voterSignature"), name="voterSignature", size=SCHNORR_BYTES
         ),
         attestation=dec_attestation(_req(d, "attestation")),
+        # Required, not optional. Nothing is deployed, so there is no ballot in
+        # existence without one — and an optional binding is no binding at all:
+        # an assembler would simply omit it.
+        voter_attestation_signature=dec_bytes(
+            _req(d, "voterAttestationSignature"),
+            name="voterAttestationSignature",
+            size=SCHNORR_BYTES,
+        ),
     )
 
 

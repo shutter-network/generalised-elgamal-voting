@@ -17,7 +17,7 @@ from geg.adapters.eligibility_stub import StubEligibilityService
 from geg.adapters.memory import InMemoryDataLayer
 from geg.core.authz import Signer
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import ballot as ballot_crypto, schnorr
+from geg.crypto import ballot as ballot_crypto, binding, schnorr
 from geg.crypto.points import g1_to_compressed, g2_from_compressed
 from geg.envelopes.types import BallotEnvelope, Ciphertext
 from geg.ports.eligibility import AttestationRequest
@@ -78,7 +78,11 @@ class World:
         att = self.elig.issue_attestation(AttestationRequest(eid, pseudonym, vkb, weight))
         return BallotEnvelope(election_id=eid, pseudonym=pseudonym, vk=vkb,
                               ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
-                              zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att)
+                              zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
+                              voter_attestation_signature=binding.sign_ballot_binding(
+                                  voter_sk=sk, voter_vk=vk, election_id=eid, pseudonym=pseudonym,
+                                  vk_bytes=vkb, ciphertexts=built.ciphertexts,
+                                  zk_proof=built.zk_proof, attestation=att))
 
 
 @pytest.fixture

@@ -586,7 +586,11 @@ def main() -> None:
     watcher = AutoDKG(
         dl, coordinator, clock=lambda: int(_time.time()),
         poll_interval_s=float(os.environ.get("COORDINATOR_POLL_S", "30.0")),
-        token_store=TokenStore(store_dir) if store_dir else None,
+        # Keyed on the coordinator's own signing key, so the store is unreadable
+        # without it — see services/common/token_store.
+        token_store=(
+            TokenStore(store_dir, int(coordinator_key, 16)) if store_dir else None
+        ),
         relay_token=relay_token,
     )
     logging.getLogger("geg.coordinator").info("op=start coordinator_identity=%s", coordinator.identity.hex())

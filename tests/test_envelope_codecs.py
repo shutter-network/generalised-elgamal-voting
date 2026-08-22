@@ -63,6 +63,7 @@ def make_ballot() -> BallotEnvelope:
         zk_proof=bytes(range(20)),  # variable length
         voter_signature=_b(SCHNORR_BYTES, 0x55),
         attestation=make_attestation(),
+        voter_attestation_signature=_b(SCHNORR_BYTES, 0x66),
     )
 
 

@@ -9,17 +9,26 @@
  * Attestation note: the SDK's `wrAttestation` is opaque bytes NOT covered by the signed
  * `canonicalBallotMessage`, whereas the geg wire ballot carries a structured attestation
  * the gateway/tally verify. So we pass an empty placeholder to `buildBallot` and attach
- * the real structured attestation when assembling the wire envelope. */
+ * the real structured attestation when assembling the wire envelope.
+ *
+ * Because the SDK's ballot signature cannot be extended to cover that attestation, the
+ * envelope carries a second signature under the same voter key — `voterAttestationSignature`
+ * — over the ballot digest and the credential together. Without it the voter commits to no
+ * particular `weight` or `nonce`, and `nonce` is what orders their re-votes. */
 
 import {
   G2Point,
   buildBallot,
+  canonicalBallotMessage,
+  encodeSchnorr,
   initCurves,
   schnorrKeygen,
+  schnorrSign,
   type BallotInputs,
 } from "@shutter-network/urban-verified-crypto";
 import {
   attest,
+  bindingMessage,
   bytesToHex,
   eidToBareHex,
   eidToHex,
@@ -28,6 +37,7 @@ import {
   type BallotJson,
   type ElectionConfig,
 } from "@geg/shared";
+import { keccak256 } from "viem";
 import type { Hex } from "viem";
 
 /** The chain-free EIP-191 challenge the wallet signs — byte-identical to the eligibility
@@ -88,6 +98,41 @@ export async function castVote(args: CastVoteArgs): Promise<{ sequenceNumber: nu
     wrAttestation: new Uint8Array(0), // placeholder; not signed, not read by geg
   });
 
+  // Bind the ballot to the credential it was cast with.
+  //
+  // `voterSignature` covers (electionId, pseudonym, ciphertexts, zkProof) and
+  // says nothing about `weight` or `nonce`. Since `nonce` decides which of a
+  // voter's re-votes counts, a signature over the ballot alone leaves whoever
+  // pairs the two free to choose. This second signature — same key, both digests
+  // — is what makes the pairing the voter's, and admission rejects a ballot
+  // whose binding does not verify.
+  onStage?.("Signing ballot + attestation");
+  const ballotDigest = hexToBytes(
+    keccak256(
+      canonicalBallotMessage({
+        electionId: eidBytes,
+        pseudonym: inputs.pseudonym,
+        ciphertexts: inputs.ciphertexts,
+        zkProof: inputs.zkProof,
+      }),
+    ),
+  );
+  const voterAttestationSignature = bytesToHex(
+    encodeSchnorr(
+      schnorrSign(
+        sk,
+        vk,
+        bindingMessage({
+          electionId: eidBytes,
+          pseudonym: inputs.pseudonym,
+          vk: inputs.vk,
+          ballotDigest,
+          attestation,
+        }),
+      ),
+    ),
+  );
+
   const ballot: BallotJson = {
     electionId: eidHex,
     pseudonym: bytesToHex(inputs.pseudonym),
@@ -96,6 +141,7 @@ export async function castVote(args: CastVoteArgs): Promise<{ sequenceNumber: nu
     zkProof: bytesToHex(inputs.zkProof),
     voterSignature: bytesToHex(inputs.voterSignature),
     attestation,
+    voterAttestationSignature,
   };
 
   return submitBallot(eidToBareHex(config.electionId), ballot);

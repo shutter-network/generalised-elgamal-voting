@@ -71,6 +71,10 @@ export interface AttestationJson {
   pseudonym: Hex;
   vk: Hex;
   weight: number;
+  /** Monotonic per (election, pseudonym): the re-vote arbiter. The issuer always
+   * emits it; it was missing from this type while nothing here read it, and the
+   * binding message does. */
+  nonce?: number;
   signature: Hex;
 }
 
@@ -83,6 +87,10 @@ export interface BallotJson {
   zkProof: Hex;
   voterSignature: Hex;
   attestation: AttestationJson;
+  /** Schnorr under the same voter key as `voterSignature`, over the ballot digest
+   * *and* the credential together — see `binding.ts`. Required: an optional
+   * binding is no binding, since an assembler would simply omit it. */
+  voterAttestationSignature: Hex;
 }
 
 export interface ExclusionJson {

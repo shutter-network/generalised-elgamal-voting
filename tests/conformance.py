@@ -104,6 +104,7 @@ class ConformanceBackend(ABC):
             election_id=ELECTION_ID, pseudonym=pseudonym, vk=_b(48, 0x33),
             ciphertexts=tuple(Ciphertext(c1=_b(96, 1), c2=_b(96, 2)) for _ in range(NUM_CANDIDATES)),
             zk_proof=b"\x01\x02\x03", voter_signature=_b(80, 0x55), attestation=att,
+            voter_attestation_signature=_b(80, 0x66),
         )
 
     def aggregate(self, fill: int = 7) -> AggregateArtifact:

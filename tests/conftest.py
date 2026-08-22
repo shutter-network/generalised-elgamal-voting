@@ -15,7 +15,7 @@ import pytest
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 from geg.crypto import attestation as att_crypto
 from geg.crypto import ballot as ballot_crypto
-from geg.crypto import proofs, schnorr
+from geg.crypto import binding, proofs, schnorr
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
 from geg.crypto.points import g1_to_compressed, g2_from_compressed, g2_to_compressed
 from geg.envelopes.types import (
@@ -112,6 +112,11 @@ class Env:
             election_id=election_id, pseudonym=pseudonym, vk=vk_bytes,
             ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
             zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
+            voter_attestation_signature=binding.sign_ballot_binding(
+                voter_sk=sk, voter_vk=vk, election_id=election_id, pseudonym=pseudonym,
+                vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
+                zk_proof=built.zk_proof, attestation=att,
+            ),
         )
 
     def shares_for(self, aggregate, keyper_indices) -> list[DecryptionShareEnvelope]:
@@ -198,6 +203,11 @@ class FullEnv:
             election_id=self.config.election_id, pseudonym=pseudonym, vk=vk_bytes,
             ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
             zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
+            voter_attestation_signature=binding.sign_ballot_binding(
+                voter_sk=sk, voter_vk=vk, election_id=self.config.election_id,
+                pseudonym=pseudonym, vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
+                zk_proof=built.zk_proof, attestation=att,
+            ),
         )
 
 

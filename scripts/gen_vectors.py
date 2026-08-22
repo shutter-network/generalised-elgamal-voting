@@ -20,7 +20,7 @@ from pathlib import Path
 from geg.core.admission import StoredBallot, admit
 from geg.core.aggregation import build_aggregate_artifact, recover_result
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import attestation as att, ballot as ballot_crypto, proofs, schnorr
+from geg.crypto import attestation as att, ballot as ballot_crypto, binding, proofs, schnorr
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
 from geg.crypto.points import g1_to_compressed, g2_from_compressed, g2_to_compressed
 from geg.envelopes import codecs
@@ -158,7 +158,16 @@ def gen_flow():
                               signature=a, scheme=AttestationScheme.V1, nonce=nonce)
         return BallotEnvelope(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk_b,
                               ciphertexts=tuple(Ciphertext(c1=c[0], c2=c[1]) for c in built.ciphertexts),
-                              zk_proof=built.zk_proof, voter_signature=sig, attestation=att_obj)
+                              zk_proof=built.zk_proof, voter_signature=sig, attestation=att_obj,
+                              # Signed over the *untampered* ballot digest even when
+                              # `tamper_sig` is set: that case exists to exercise
+                              # INVALID_SIGNATURE, and a binding that failed alongside it
+                              # would stop the fixture distinguishing the two rejections.
+                              voter_attestation_signature=binding.sign_ballot_binding(
+                                  voter_sk=sk, voter_vk=vk, election_id=ELECTION_ID,
+                                  pseudonym=pseudonym, vk_bytes=vk_b,
+                                  ciphertexts=built.ciphertexts, zk_proof=built.zk_proof,
+                                  attestation=att_obj))
 
     P1, P2, P3, P4 = (bytes([x]) * 32 for x in (0xA1, 0xA2, 0xA3, 0xA4))
     stored = [
@@ -201,6 +210,81 @@ def gen_flow():
     _write("flow", "full_election_level1", fixture)
 
 
+# --------------------------------------------------------------------------- #
+#  Binding vectors (voter's ballot<->credential binding; cross-language)
+# --------------------------------------------------------------------------- #
+
+def gen_binding():
+    """Vectors for `crypto/binding.py`, so the browser can prove it agrees.
+
+    Seeded throughout — unlike the flow fixture, these must not move when
+    regenerated, because a silent change here is a change to what every voter
+    signs. Deterministic keys and a fixed nonce `k` make the whole file a pure
+    function of the code that emits it.
+    """
+    elig_sk, elig_vk = schnorr.keygen(0x1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF)
+    voter_sk, voter_vk = schnorr.keygen(0x0FEDCBA0987654321FEDCBA0987654321FEDCBA0987654321FEDCBA098765432)
+    vk = g1_to_compressed(voter_vk)
+    pseudonym = bytes.fromhex("22" * 32)
+    ballot_digest = bytes.fromhex("33" * 32)
+    k = 0x1111222233334444555566667777888899990000AAAABBBBCCCCDDDDEEEEFFFF
+
+    cases = []
+    for name, scheme, weight, nonce in [
+        ("v1_weight1_nonce1", AttestationScheme.V1, 1, 1),
+        ("v1_weighted", AttestationScheme.V1, 7, 3),
+        ("v1_timestamp_nonce", AttestationScheme.V1, 2, 1_700_000_000),  # sx uses a unix timestamp
+        # Past 2^32, so a truncating scalar encoding cannot pass: a timestamp alone
+        # still fits in 32 bits and would leave that bug invisible until much later.
+        ("v1_nonce_beyond_32_bits", AttestationScheme.V1, 5, 2**40 + 12345),
+        ("legacy", AttestationScheme.LEGACY, 1, 1),
+    ]:
+        if scheme is AttestationScheme.V1:
+            sig = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, weight, nonce, k=k)
+        else:
+            sig = att.sign_attestation_legacy(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, k=k)
+        att_obj = Attestation(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk, weight=weight,
+                              signature=sig, scheme=scheme, nonce=nonce)
+        msg = binding.binding_message(
+            election_id=ELECTION_ID, pseudonym=pseudonym, vk_bytes=vk,
+            ballot_digest=ballot_digest, attestation_scheme=scheme,
+            attestation_digest=binding.attestation_digest_for(att_obj),
+            eligibility_signature=sig,
+        )
+        cases.append({
+            "name": name,
+            "attestation": codecs.enc_attestation(att_obj),
+            "ballotDigest": "0x" + ballot_digest.hex(),
+            "attestationDigest": "0x" + binding.attestation_digest_for(att_obj).hex(),
+            "bindingMessage": "0x" + msg.hex(),
+            "voterAttestationSignature": "0x" + binding.sign_binding(voter_sk, voter_vk, msg, k=k).hex(),
+        })
+
+    _write("binding", "binding_message", {
+        "name": "binding_message",
+        "description": (
+            "Voter ballot<->credential binding message and signature. The browser "
+            "rebuilds the transcript itself (the SDK keeps Transcript.preimage private), "
+            "so these vectors are what hold the two languages together: a disagreement "
+            "of one byte excludes every ballot as INVALID_ATTESTATION."
+        ),
+        "version": 1,
+        "inputs": {
+            "electionId": "0x" + ELECTION_ID.hex(),
+            "pseudonym": "0x" + pseudonym.hex(),
+            "vk": "0x" + vk.hex(),
+            "eligibilityKey": "0x" + g1_to_compressed(elig_vk).hex(),
+        },
+        "cases": cases,
+    })
+
+
 if __name__ == "__main__":
-    gen_attestation()
-    gen_flow()
+    import sys
+
+    # Named targets, because the generator is unseeded: regenerating a category
+    # rewrites its crypto material, so a schema change to one fixture must not
+    # churn the others as a side effect.
+    targets = sys.argv[1:] or ["attestation", "binding", "flow"]
+    for name in targets:
+        {"attestation": gen_attestation, "binding": gen_binding, "flow": gen_flow}[name]()

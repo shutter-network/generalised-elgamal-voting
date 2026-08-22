@@ -103,6 +103,12 @@ class BallotEnvelope:
     zk_proof: bytes  # versioned BallotValidityProof encoding (variable length)
     voter_signature: bytes  # Schnorr, 80 bytes, over canonical ballot message
     attestation: Attestation
+    # Schnorr, 80 bytes, under the same voter key as ``voter_signature`` but over
+    # `crypto.binding`'s message: the ballot digest *and* the credential together.
+    # Without it the voter commits to no particular `weight`/`nonce`, and whoever
+    # pairs a ballot with a credential picks which of the voter's ballots wins the
+    # re-vote ordering. See crypto/binding.py.
+    voter_attestation_signature: bytes
 
 
 @dataclass(frozen=True)

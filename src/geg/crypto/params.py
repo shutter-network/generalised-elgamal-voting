@@ -30,6 +30,9 @@ DST_SCHNORR = b"SHUTTER-VOTE-SCHNORR-v1"
 BALLOT_LABEL = "SHUTTER-VOTE-BALLOT-v1"
 ONCHAIN_DECRYPT_LABEL = "SHUTTER-VOTE-DECRYPT-v1"
 ATTESTATION_LABEL = "SHUTTER-VOTE-ATTEST-v1"  # ATTESTATION_V1 (weighted)
+# The voter's ballot<->credential binding (crypto/binding.py). A label of its
+# own so a binding signature can never be replayed as a ballot or attestation one.
+BINDING_LABEL = "SHUTTER-VOTE-BINDING-v1"
 
 # Ballot-validity-proof codec constants.
 BVP_VERSION = 0x01

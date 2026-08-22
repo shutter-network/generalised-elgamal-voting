@@ -45,6 +45,7 @@ def _ballot(eid: bytes, fill: int) -> BallotEnvelope:
         election_id=eid, pseudonym=pseudonym, vk=b"\x33" * 48,
         ciphertexts=tuple(Ciphertext(c1=b"\x01" * 96, c2=b"\x02" * 96) for _ in range(3)),
         zk_proof=b"\x01\x02\x03", voter_signature=b"\x55" * 80, attestation=att,
+        voter_attestation_signature=b"\x66" * 80,
     )
 
 

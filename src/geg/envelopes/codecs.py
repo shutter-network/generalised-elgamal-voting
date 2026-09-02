@@ -254,6 +254,7 @@ def enc_aggregate(a: AggregateArtifact) -> dict:
             for x in a.exclusions
         ],
         "totalAdmittedWeight": a.total_admitted_weight,
+        "totalScaledWeight": a.total_scaled_weight,
     }
 
 
@@ -286,6 +287,16 @@ def dec_aggregate(d: Any) -> AggregateArtifact:
         ),
         total_admitted_weight=_int(
             _req(d, "totalAdmittedWeight"), name="totalAdmittedWeight", minimum=0
+        ),
+        # Absent means a pre-scale artifact, produced before scaling existed. Those
+        # were necessarily unscaled, so the scaled total equals the raw one and this
+        # decodes them faithfully rather than rejecting them. See H10: the arity
+        # check that distinguishes the two lives in `write_auth`, where a digest
+        # mismatch would otherwise read as a bad signature.
+        total_scaled_weight=_int(
+            d.get("totalScaledWeight", _req(d, "totalAdmittedWeight")),
+            name="totalScaledWeight",
+            minimum=0,
         ),
     )
 
@@ -328,7 +339,7 @@ def enc_config(c: ElectionConfig) -> dict:
         "mode": c.mode.value,
         "variant": c.variant.value,
         "weighted": c.weighted,
-        "maxWeight": c.max_weight,
+        "scale": c.scale,
         "duplicatePolicy": c.duplicate_policy.value,
         "votingStart": c.voting_start,
         "votingEnd": c.voting_end,
@@ -365,7 +376,9 @@ def dec_config(d: Any) -> ElectionConfig:
             mode=_enum(Mode, _req(d, "mode"), name="mode"),
             variant=_enum(Variant, _req(d, "variant"), name="variant"),
             weighted=bool(_req(d, "weighted")),
-            max_weight=_int(_req(d, "maxWeight"), name="maxWeight", minimum=1),
+            # Optional on the wire: a config written before scaling existed is an
+            # unscaled one, and `1` is exactly that.
+            scale=_int(d.get("scale", 1), name="scale", minimum=1),
             duplicate_policy=_enum(DuplicatePolicy, _req(d, "duplicatePolicy"), name="duplicatePolicy"),
             voting_start=_int(_req(d, "votingStart"), name="votingStart"),
             voting_end=_int(_req(d, "votingEnd"), name="votingEnd"),

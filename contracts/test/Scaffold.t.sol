@@ -19,7 +19,7 @@ contract ScaffoldTest is Test {
 
     function _params() private pure returns (VotingTypes.ElectionParams memory) {
         return VotingTypes.ElectionParams({
-            mode: 0, variant: 0, weighted: false, maxWeight: 1, duplicatePolicy: 1, protocolVersion: "v1",
+            mode: 0, variant: 0, weighted: false, scale: 1, duplicatePolicy: 1, protocolVersion: "v1",
             votingStart: 100,
             votingEnd: 200,
             selfSubmitFee: 0.01 ether,

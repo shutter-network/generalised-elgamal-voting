@@ -113,6 +113,15 @@ export function VoteForm({ electionId }: { electionId: number }) {
           Enter a vote per candidate ({cfg.mode === "exact" ? `must sum to ${cfg.budget}` : `sum ≤ ${cfg.budget}`}).
           {cfg.weighted && " Your voting weight is set by the eligibility service."}
         </p>
+        {cfg.scale > 1 && (
+          <div className="notice notice--info" style={{ marginBottom: 12 }}>
+            This election counts in units of <b>{cfg.scale.toLocaleString()}</b> — every
+            voter's weight is divided by that amount, so ratios are preserved but the
+            unit is coarser. A weight below <b>{(cfg.scale / 2).toLocaleString()}</b>{" "}
+            rounds to zero: the ballot is still accepted and recorded, but it adds
+            nothing to the tally.
+          </div>
+        )}
         <div className="stack" style={{ gap: 8 }}>
           {votes.map((v, i) => (
             <label className="field" key={i} style={{ gridTemplateColumns: "120px 1fr" }}>

@@ -49,7 +49,7 @@ class KeyperWorld:
             # Assert the next id (the register replay guard); this env registers several.
             election_id=(len(self.dl.list_elections()) + 1).to_bytes(32, "big"),
             num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
-            weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
+            weighted=True, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=voting_start, voting_end=voting_end,
             threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self.keyper_signers[i].identity, url=self.urls[i + 1])

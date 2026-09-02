@@ -33,7 +33,7 @@ def _config(admin: Signer, result_publisher: Signer | None = None) -> ElectionCo
     keypers = [Signer.generate() for _ in range(3)]
     return ElectionConfig(
         election_id=(1).to_bytes(32, "big"), num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
-        weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
+        weighted=True, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000, voting_end=2_000, threshold=Threshold(t=2, n=3),
         keypers=tuple(KeyperIdentity(signing_key=keypers[i].identity, url=f"http://keyper{i+1}:8100")
                       for i in range(3)),

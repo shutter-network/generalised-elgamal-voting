@@ -9,6 +9,7 @@ giant-step. BSGS cost is ``O(√bound)``; the bound is derived at tally time as
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from geg.crypto.params import CURVE_ORDER
 from geg.crypto.points import G2, Z2, add, is_identity, mul, neg
@@ -35,34 +36,78 @@ def combine_shares(shares) -> object:
     return result
 
 
-def baby_step_giant_step(target, max_val: int):
-    """Return ``m`` in ``[0, max_val]`` with ``m·P2 == target``, or ``None``."""
-    if max_val == 0:
-        return 0 if is_identity(target) else None
-    if is_identity(target):
-        return 0
+def _key(P) -> bytes:
+    return b"\x00" if is_identity(P) else bytes(P.to_compressed_bytes())
 
-    n = int(math.isqrt(max_val)) + 2
 
-    def _key(P):
-        return b"\x00" if is_identity(P) else bytes(P.to_compressed_bytes())
+@dataclass(frozen=True)
+class BabyStepTable:
+    """Pre-computed baby steps for one bound, reusable across candidates.
 
+    The table depends only on the generator and ``n = ⌈√max_val⌉``, never on the
+    ciphertext being solved, so an election with ``ℓ`` candidates needs exactly one
+    — building it per candidate is ``ℓ`` times the work for an identical result.
+    """
+
+    max_val: int
+    n: int
+    neg_step: object  # −n·P2, the giant step
+    table: dict  # compressed-bytes → j
+
+
+def build_baby_step_table(max_val: int) -> BabyStepTable:
+    """Build the baby-step table for ``max_val``: ``O(√max_val)`` time and memory.
+
+    Hoist this out of any loop over candidates and pass it to
+    :func:`baby_step_giant_step_with_table`. At the sizes a real election reaches
+    the build dominates — roughly 11 µs and 218 bytes per entry, so a bound of 1e12
+    is ~11 s and ~218 MB — and repeating it per candidate is the single most
+    expensive thing a tally can do for no gain. See ``docs/COORDINATOR_SIZING.md``.
+    """
+    n = int(math.isqrt(max_val)) + 2 if max_val > 0 else 1
     table = {}
     power = Z2
     for j in range(n):
         table[_key(power)] = j
         power = add(power, G2)
+    return BabyStepTable(max_val=max_val, n=n, neg_step=neg(mul(G2, n)), table=table)
 
-    neg_step = neg(mul(G2, n))
+
+def baby_step_giant_step_with_table(target, table: BabyStepTable):
+    """Look ``target`` up in a pre-built table. Returns ``m`` or ``None``.
+
+    Only the giant-step walk, which is the cheap half: in ``exact`` mode the
+    per-candidate totals sum to the bound, so the walks across every candidate
+    share one budget of ``≈ n`` steps in total rather than costing ``n`` each.
+    """
+    if table.max_val == 0:
+        return 0 if is_identity(target) else None
+    if is_identity(target):
+        return 0
+
     gamma = target
-    for i in range(n + 1):
-        key = _key(gamma)
-        if key in table:
-            m = i * n + table[key]
-            if m <= max_val:
+    for i in range(table.n + 1):
+        j = table.table.get(_key(gamma))
+        if j is not None:
+            m = i * table.n + j
+            if m <= table.max_val:
                 return m
-        gamma = add(gamma, neg_step)
+        gamma = add(gamma, table.neg_step)
     return None
+
+
+def baby_step_giant_step(target, max_val: int):
+    """Return ``m`` in ``[0, max_val]`` with ``m·P2 == target``, or ``None``.
+
+    Builds a throwaway table. Fine for a single lookup; for more than one against
+    the same bound use :func:`build_baby_step_table` and
+    :func:`baby_step_giant_step_with_table` instead.
+    """
+    if max_val == 0:
+        return 0 if is_identity(target) else None
+    if is_identity(target):
+        return 0
+    return baby_step_giant_step_with_table(target, build_baby_step_table(max_val))
 
 
 def threshold_decrypt(C1, C2, shares, max_val: int):

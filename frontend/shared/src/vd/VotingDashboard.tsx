@@ -4,7 +4,7 @@
  * topbar + election dropdown). Live crypto verification is deferred: automatic ballot
  * verification and per-share DLEQ verify are disabled; the "Verify yourself" guide panels
  * (instructional + fixture download) stay. */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import "./i18n";
@@ -85,14 +85,29 @@ type OverviewDisplay = {
 function formatTallySummary(totalPoints: bigint, agg: EncryptedTally | null, t: TFunction): string {
   const points = t("Total: {{n}} points", { n: totalPoints.toLocaleString() });
   if (!agg) return points;
-  // Votes here is the total voting power, which equals totalPoints/budget in exact mode
-  // (every voter spends the whole budget). Read from the aggregate rather than divided, so
-  // it stays correct if at-most mode ever ships and the two stop being equal.
-  return [
+  // "Votes" must be the *scaled* weight, not the raw one: it is what the points
+  // reconcile against (points = budget x scaled weight in exact mode), and reading
+  // it from the aggregate keeps that true if at-most mode ever ships.
+  //
+  // This used to read `totalAdmittedWeight`, which is the weight as *held*. At scale 1
+  // the two are equal and nothing showed. Above it they diverge by the scale factor and
+  // the line contradicted itself — election 3 of the chain run displayed
+  // "Total: 1 points · 80 votes" at budget 1, where 80 votes should mean 80 points.
+  const parts = [
     points,
-    t("{{n}} votes", { n: agg.totalAdmittedWeight.toLocaleString() }),
+    t("{{n}} votes", { n: agg.totalScaledWeight.toLocaleString() }),
     t("{{n}} ballots counted", { n: agg.admittedCount.toLocaleString() }),
-  ].join(" · ");
+  ];
+  // Only when scaling actually moved the number. Showing "80 held" beside "80 votes"
+  // would be noise; showing it beside "1 vote" is the whole explanation.
+  if (agg.totalScaledWeight !== agg.totalAdmittedWeight) {
+    parts.push(
+      t("from {{n}} voting power held", {
+        n: agg.totalAdmittedWeight.toLocaleString(),
+      }),
+    );
+  }
+  return parts.join(" · ");
 }
 
 function computeOverviewDisplay(p: {
@@ -491,11 +506,35 @@ export function VotingDashboard({ electionId, elections, onSelectElection, heade
               {headerAction && <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>{headerAction}</div>}
             </div>
           </div>
-          <div className="elecHeaderStats">
+          {/* Drives the column count, so the row stays a single row whether or not the
+              scale stat is present. */}
+          <div
+            className="elecHeaderStats"
+            style={
+              {
+                "--elec-stat-cols": overview.config.scale > 1 ? 6 : 5,
+              } as CSSProperties
+            }
+          >
             <div className="elecHeaderStat"><div className="elecHeaderStatLabel">{t("Voting Opens")}</div><div className="elecHeaderStatValue">{formatUnixUtc(overview.config.votingStart)} <span className="elecHeaderStatDesc">UTC</span></div></div>
             <div className="elecHeaderStat"><div className="elecHeaderStatLabel">{t("Voting Closes")}</div><div className="elecHeaderStatValue">{formatUnixUtc(overview.config.votingEnd)} <span className="elecHeaderStatDesc">UTC</span></div></div>
             <div className="elecHeaderStat"><div className="elecHeaderStatLabel">{t("Candidates on the Ballot")}</div><div className="elecHeaderStatValue">{overview.config.numCandidates} <span className="elecHeaderStatDesc">{t("people running")}</span></div></div>
             <div className="elecHeaderStat"><div className="elecHeaderStatLabel">{t("Vote Points per Voter")}</div><div className="elecHeaderStatValue">{overview.config.budget} <span className="elecHeaderStatDesc">{t("point(s) each")}</span></div><div className="elecHeaderStatDesc">{t("Each voter gets {{budget}} points to distribute across the {{candidates}} candidates.", { budget: overview.config.budget, candidates: overview.config.numCandidates })}</div></div>
+            {/* Only above 1. At scale 1 every weight counts as held, so a stat reading
+                "counts in units of 1" is noise; above it, every number on this page is
+                in those units and the reader needs to know before reading any of them. */}
+            {overview.config.scale > 1 && (
+              <div className="elecHeaderStat">
+                <div className="elecHeaderStatLabel">{t("Counted in Units of")}</div>
+                <div className="elecHeaderStatValue">
+                  {overview.config.scale.toLocaleString()}{" "}
+                  <span className="elecHeaderStatDesc">{t("per vote")}</span>
+                </div>
+                <div className="elecHeaderStatDesc">
+                  {t("Every voter's power is divided by {{scale}} before counting, so ratios are kept but the unit is coarser. A voter holding less than {{floor}} is recorded and counts as nothing.", { scale: overview.config.scale.toLocaleString(), floor: (overview.config.scale / 2).toLocaleString() })}
+                </div>
+              </div>
+            )}
             <div className="elecHeaderStat"><div className="elecHeaderStatLabel">{t("Key Guardians")}</div><div className="elecHeaderStatValue">{t("{{t}} of {{n}}", { t: overview.config.thresholdT.toString(), n: overview.config.thresholdN.toString() })} <span className="elecHeaderStatDesc">{t("must agree")}</span></div><div className="elecHeaderStatDesc">{t("An independent committee. Only when {{t}} of them combine their keys can the result be decrypted · no single guardian can ever see the votes alone.", { t: overview.config.thresholdT.toString() })}</div></div>
           </div>
         </div>

@@ -26,7 +26,7 @@ export interface ElectionConfig {
   mode: Mode;
   variant: Variant;
   weighted: boolean;
-  maxWeight: number;
+  scale: number;
   duplicatePolicy: DuplicatePolicy;
   votingStart: number;
   votingEnd: number;
@@ -102,7 +102,18 @@ export interface AggregateJson {
   aggregates: CiphertextJson[];
   admitted: number[];
   exclusions: ExclusionJson[];
+  /** Sum of the admitted ballots' weights as held. */
   totalAdmittedWeight: number;
+  /**
+   * The same sum after each weight was divided by the election's scale — what the
+   * tally actually counted, and what the published totals reconcile against
+   * (`totals` sum to `budget x totalScaledWeight` in exact mode).
+   *
+   * Optional because an aggregate written before scaling existed does not carry it;
+   * such an election was necessarily unscaled, so callers should fall back to
+   * `totalAdmittedWeight` rather than to 0.
+   */
+  totalScaledWeight?: number;
 }
 
 export interface DecryptionShareJson {

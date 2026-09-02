@@ -2,10 +2,18 @@
 
 Anyone can audit an election from public reads alone: recompute DKG finalization
 from the stored submissions, independently re-derive the admitted set and the
-weighted aggregate, re-verify every decryption share's DLEQ, and recombine +
-re-run BSGS to check the published result. Any mismatch is publishable evidence.
+weighted aggregate, re-verify every decryption share's DLEQ, and recombine to
+check the published result. Any mismatch is publishable evidence.
 Detection is guaranteed even against a malicious data layer / gateway /
 coordinator (v1 has no in-protocol challenge).
+
+The result is **checked, not re-solved**: each published total is multiplied by the
+generator and compared to the ``τ`` this audit derives itself. That is exactly as
+conclusive as re-running BSGS — the discrete log is unique, so only the true total
+satisfies the equality — and it costs one scalar multiplication per candidate
+instead of an ``O(√bound)`` search holding a √bound-entry table. An auditor obliged
+to re-solve could not audit a large election at all; see
+``docs/COORDINATOR_SIZING.md``.
 """
 
 from __future__ import annotations
@@ -15,7 +23,7 @@ from dataclasses import dataclass, field
 from geg.core import write_auth
 from geg.core.admission import admit
 from geg.services.common.reads import read_all_ballots
-from geg.core.aggregation import build_aggregate_artifact, recover_result
+from geg.core.aggregation import bsgs_bound, build_aggregate_artifact, check_result
 from geg.ports.data_layer import ElectionDataLayer
 
 
@@ -96,22 +104,42 @@ def audit(dl: ElectionDataLayer, election_id: bytes) -> AuditReport:
         if recomputed_agg.total_admitted_weight != published_agg.total_admitted_weight:
             report.discrepancies.append("aggregate: total admitted weight differs")
 
-    # 3 + 4. Re-verify shares' DLEQs and recover; compare to the published result.
+    # 3 + 4. Re-verify shares' DLEQs and check the published result against them.
     shares = dl.list_decryption_shares(election_id)
-    recovered = recover_result(cfg, published_agg, shares, published_key.committee_pks, cfg.threshold.t)
     published_result = dl.get_result(election_id)
-    if recovered is None:
-        report.discrepancies.append("shares: fewer than t+1 valid shares (cannot recover)")
-        return report
-    report.shares_ok = True  # recover_result verified every used share's DLEQ
-
     if published_result is None:
+        # Nothing to check against. Deliberately *not* an occasion to solve it here:
+        # recovering a withheld result is an escalation someone chooses, with
+        # `recover_result` and a machine sized for it, not a side effect of auditing.
         report.discrepancies.append("result: none published")
-    elif tuple(recovered.totals) != tuple(published_result.totals):
-        report.discrepancies.append("result: published totals disagree with recomputation")
-    elif recovered.bsgs_bound != published_result.bsgs_bound:
-        report.discrepancies.append("result: derived BSGS bound differs")
-    else:
-        report.result_ok = True
+        return report
 
+    ok, reason = check_result(
+        cfg,
+        published_agg,
+        shares,
+        published_key.committee_pks,
+        cfg.threshold.t,
+        tuple(published_result.totals),
+    )
+    # A `shares:` reason means the committee never produced a verifiable quorum;
+    # any other reason means the shares were fine and the totals were not.
+    report.shares_ok = ok or not reason.startswith("shares:")
+    if not ok:
+        report.discrepancies.append(reason)
+        return report
+
+    # Advisory, not load-bearing: the check above already establishes the totals.
+    # The bound is derivable from the aggregate, so a mismatch here narrows a
+    # discrepancy to "published against a different admitted set" instead of leaving
+    # it as a bare disagreement.
+    expected_bound = bsgs_bound(cfg, published_agg.total_admitted_weight)
+    if published_result.bsgs_bound != expected_bound:
+        report.discrepancies.append(
+            f"result: published BSGS bound {published_result.bsgs_bound} "
+            f"!= derived {expected_bound}"
+        )
+        return report
+
+    report.result_ok = True
     return report

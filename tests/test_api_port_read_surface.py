@@ -61,7 +61,7 @@ def env():
     keypers = [Signer.generate() for _ in range(3)]
     config = ElectionConfig(
         election_id=(1).to_bytes(32, "big"), num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
-        weighted=False, max_weight=1, duplicate_policy=DuplicatePolicy.LAST_WINS,
+        weighted=False, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=VOTING_START, voting_end=VOTING_END, threshold=Threshold(t=2, n=3),
         keypers=tuple(KeyperIdentity(signing_key=k.identity, url=f"http://k{i}") for i, k in enumerate(keypers)),
         eligibility_key=b"\x66" * 48, result_publisher_key=Signer.generate().identity,

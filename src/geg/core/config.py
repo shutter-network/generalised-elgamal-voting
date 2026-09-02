@@ -116,7 +116,7 @@ class ElectionConfig:
     """Full immutable election configuration.
 
     Superset of the on-chain ``ElectionConfigView``: this generalised config
-    adds ``mode``, ``variant``, ``weighted``, ``max_weight``, ``duplicate_policy``,
+    adds ``mode``, ``variant``, ``weighted``, ``scale``, ``duplicate_policy``,
     per-keyper URLs, and the explicit authorization
     identities (``eligibility_key``, ``result_publisher_key``, ``gateway_keys``,
     ``admin_key``) plus ``protocol_version``.
@@ -128,7 +128,6 @@ class ElectionConfig:
     mode: Mode
     variant: Variant
     weighted: bool  # whether attested weights other than 1 are permitted
-    max_weight: int  # upper bound the eligibility service may attest per ballot
     duplicate_policy: DuplicatePolicy
     voting_start: int  # absolute unix timestamp (seconds)
     voting_end: int  # absolute unix timestamp (seconds)
@@ -139,6 +138,21 @@ class ElectionConfig:
     gateway_keys: tuple[bytes, ...]  # authorized ballot writers (empty = open writes)
     admin_key: bytes  # identity authorized to register/cancel
     protocol_version: str  # crypto suite + wire format version
+    # Divisor applied to every attested weight at aggregation: the tally counts in
+    # units of `scale` rather than in single tokens.
+    #
+    # Exists because the recovery bound is `budget × Σ(admitted weights)` and BSGS
+    # cost grows as its square root, so a token with a very large supply could
+    # otherwise put a tally out of reach. Dividing everyone preserves every ratio in
+    # the cap table; the alternative — capping the largest holders — silently
+    # flattens the top of it and changes outcomes.
+    #
+    # `1` means no scaling and is the expected value for essentially every election:
+    # a deployment only needs `scale > 1` when `budget × total supply` exceeds what
+    # its coordinator can solve (see docs/COORDINATOR_SIZING.md). The value is chosen
+    # by the deployment, frozen before voting opens, and disclosed to voters — it
+    # changes what a ballot is worth, so it is not something to discover at tally.
+    scale: int = 1
     # Per-ballot fee (wei) a non-proxy self-submitter pays on the blockchain backend; part
     # of the signed config (it is on-chain contract state, unlike the ephemeral DKG lead
     # time). 0 = free. The database backend has no fees and ignores it. Defaulted so
@@ -152,11 +166,9 @@ class ElectionConfig:
             raise ValueError("Self-submit fee cannot be negative.")
         if self.budget < 1:
             raise ValueError("The budget must be at least 1.")
-        if self.max_weight < 1:
-            raise ValueError("Max weight must be at least 1.")
+        if self.scale < 1:
+            raise ValueError("Scale must be at least 1 (1 means no scaling).")
         self._check_ballot_bounds()
-        if not self.weighted and self.max_weight != 1:
-            raise ValueError("An unweighted election must have a max weight of 1 (enable weighting to allow higher weights).")
         if self.voting_end <= self.voting_start:
             raise ValueError("Voting end must be after voting start.")
         if len(self.keypers) != self.threshold.n:
@@ -202,12 +214,6 @@ class ElectionConfig:
     #: tally-phase deadline instead.
     MAX_PROOF_BRANCHES = 2500
 
-    #: Recovery ceiling. ``bsgs_bound = budget * sum(admitted weights)``, and BSGS holds a
-    #: baby-step table of sqrt(bound) points — memory is the wall, not time. Capping the
-    #: per-voter contribution at 1e6 keeps the bound near 1e12 for an electorate of a
-    #: million (~10^6 table entries, ~200 MB, ~20 s per candidate). Normal use is far
-    #: below: one-person-one-vote is 3*1, token voting at budget 1 sits exactly at the line.
-    MAX_BUDGET_TIMES_WEIGHT = 1_000_000
 
     def _check_ballot_bounds(self) -> None:
         if self.num_candidates > self.MAX_NUM_CANDIDATES:
@@ -227,12 +233,5 @@ class ElectionConfig:
                 f"(budget {self.budget} + 1) = {branches} proof branches per ballot, over the "
                 f"{self.MAX_PROOF_BRANCHES} limit. Every keyper and auditor verifies every "
                 f"ballot, at roughly 3 ms per branch. Reduce the candidates or the budget."
-            )
-        if self.budget * self.max_weight > self.MAX_BUDGET_TIMES_WEIGHT:
-            raise ValueError(
-                f"Budget x max weight = {self.budget * self.max_weight} exceeds "
-                f"{self.MAX_BUDGET_TIMES_WEIGHT}. The tally recovers each total by "
-                f"baby-step giant-step within budget x total weight, which becomes "
-                f"infeasible above that. Reduce the budget or the max weight."
             )
 

@@ -10,7 +10,7 @@ const CONFIG = {
   mode: "exact",
   variant: "A",
   weighted: true,
-  maxWeight: 10,
+  scale: 1,
   duplicatePolicy: "last-wins",
   votingStart: 1000,
   votingEnd: 2000,
@@ -30,8 +30,8 @@ const CONFIG = {
 };
 
 const EXPECTED_CANON =
-  '{"adminKey":"0xabababababababababababababababababababab","budget":3,"duplicatePolicy":"last-wins","electionId":"0x1111111111111111111111111111111111111111111111111111111111111111","eligibilityKey":"0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1","gatewayKeys":["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"keypers":[{"signingKey":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"http://k1:8101"},{"signingKey":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"http://k2:8102"},{"signingKey":"0xcccccccccccccccccccccccccccccccccccccccc","url":"http://k3:8103"}],"maxWeight":10,"mode":"exact","numCandidates":3,"protocolVersion":"v1","resultPublisherKey":"0xdddddddddddddddddddddddddddddddddddddddd","selfSubmitFee":"0","threshold":{"n":3,"t":2},"variant":"A","votingEnd":2000,"votingStart":1000,"weighted":true}';
-const EXPECTED_REGISTER = "0x67ba111b6e42c26cb4af4cc03c4b2ed569c4b6cf512126a31013a67f900406bd";
+  '{"adminKey":"0xabababababababababababababababababababab","budget":3,"duplicatePolicy":"last-wins","electionId":"0x1111111111111111111111111111111111111111111111111111111111111111","eligibilityKey":"0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1","gatewayKeys":["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"keypers":[{"signingKey":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"http://k1:8101"},{"signingKey":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"http://k2:8102"},{"signingKey":"0xcccccccccccccccccccccccccccccccccccccccc","url":"http://k3:8103"}],"mode":"exact","numCandidates":3,"protocolVersion":"v1","resultPublisherKey":"0xdddddddddddddddddddddddddddddddddddddddd","scale":1,"selfSubmitFee":"0","threshold":{"n":3,"t":2},"variant":"A","votingEnd":2000,"votingStart":1000,"weighted":true}';
+const EXPECTED_REGISTER = "0x8536550a834b1758270a909fdf80fa18a10d08ea391abfb00132d62f586e52e7";
 const EXPECTED_CANCEL = "0x565f20982cb67ac495bf11fd0bba3020cab421e17ce0e8ae697d42f8f06ecce3";
 const EID_7 = ("0x" + (7).toString(16).padStart(64, "0")) as `0x${string}`;
 

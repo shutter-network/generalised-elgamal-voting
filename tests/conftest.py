@@ -68,7 +68,7 @@ class Env:
             mode=Mode.EXACT,
             variant=Variant.A,
             weighted=True,
-            max_weight=10,
+            
             duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1_000,
             voting_end=2_000,
@@ -232,7 +232,7 @@ def build_full_env(dl, clock) -> FullEnv:
         mode=Mode.EXACT,
         variant=Variant.A,
         weighted=True,
-        max_weight=10,
+        
         duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000,
         voting_end=2_000,

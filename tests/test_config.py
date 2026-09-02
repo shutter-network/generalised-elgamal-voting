@@ -29,7 +29,6 @@ def make_config(**overrides) -> ElectionConfig:
         mode=Mode.EXACT,
         variant=Variant.A,
         weighted=False,
-        max_weight=1,
         duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1_000,
         voting_end=2_000,
@@ -53,7 +52,7 @@ def test_valid_config_constructs():
 
 def test_conformance_level_1_defaults():
     """Level 1 = variant A / exact / weighted-capable."""
-    cfg = make_config(weighted=True, max_weight=100)
+    cfg = make_config(weighted=True)
     assert (cfg.variant, cfg.mode, cfg.weighted) == (Variant.A, Mode.EXACT, True)
 
 
@@ -62,8 +61,6 @@ def test_conformance_level_1_defaults():
     [
         (dict(num_candidates=0), "at least one candidate"),
         (dict(budget=0), "budget"),
-        (dict(max_weight=0), "Max weight"),
-        (dict(weighted=False, max_weight=5), "unweighted"),
         (dict(voting_start=2_000, voting_end=2_000), "Voting end must be after"),
         (dict(threshold=Threshold(t=2, n=3), keypers=_keypers(2)), "exactly 3 keypers"),
     ],
@@ -180,17 +177,7 @@ def test_verification_cost_limit_catches_what_the_encoding_limit_misses():
         make_config(num_candidates=1, budget=at_limit)                  # one branch over
 
     # The real target shape must fit: 20 candidates at budget 100.
-    make_config(num_candidates=20, budget=100, weighted=True, max_weight=10_000)
-
-
-def test_bsgs_bound_limit_catches_what_both_others_miss():
-    """budget x max_weight drives `bsgs_bound`; BSGS holds a sqrt(bound) baby-step table,
-    so memory is the wall. This config passes both limits above."""
-    with pytest.raises(ValueError, match="Budget x max weight"):
-        make_config(num_candidates=3, budget=3, weighted=True, max_weight=10**9)
-    # Realistic shapes stay well inside it.
-    make_config(num_candidates=3, budget=3)                                   # 1-per-vote
-    make_config(num_candidates=3, budget=1, weighted=True, max_weight=10**6)  # token voting
+    make_config(num_candidates=20, budget=100, weighted=True)
 
 
 def test_ordinary_election_shapes_still_construct():

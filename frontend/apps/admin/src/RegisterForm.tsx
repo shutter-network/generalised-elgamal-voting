@@ -21,10 +21,9 @@ const ZERO_EID = "0x" + "0".repeat(64);
 const MAX_NUM_CANDIDATES = 0xffff;
 const MAX_BUDGET = 0xfffe;          // the proof encodes budget+1 as two bytes
 const MAX_PROOF_BRANCHES = 2500;    // ~3 ms each to verify, on every keyper and auditor
-const MAX_BUDGET_TIMES_WEIGHT = 1_000_000;   // keeps the BSGS recovery bound tractable
 
 /** Reject configs that would register cleanly but leave every ballot unusable. */
-function checkBallotBounds(numCandidates: number, budget: number, maxWeight: number): string | null {
+function checkBallotBounds(numCandidates: number, budget: number): string | null {
   if (numCandidates > MAX_NUM_CANDIDATES) return `At most ${MAX_NUM_CANDIDATES} candidates.`;
   if (budget > MAX_BUDGET) return `Budget must be at most ${MAX_BUDGET}.`;
   const branches = numCandidates * (budget + 1);
@@ -32,10 +31,6 @@ function checkBallotBounds(numCandidates: number, budget: number, maxWeight: num
     return `Too expensive to tally: ${numCandidates} candidates x (budget ${budget} + 1) = ` +
       `${branches} proof branches per ballot, over the ${MAX_PROOF_BRANCHES} limit. Every keyper ` +
       `and auditor verifies every ballot. Reduce the candidates or the budget.`;
-  }
-  if (budget * maxWeight > MAX_BUDGET_TIMES_WEIGHT) {
-    return `Budget x max weight = ${budget * maxWeight} exceeds ${MAX_BUDGET_TIMES_WEIGHT}; ` +
-      `the tally could not recover the totals. Reduce the budget or the max weight.`;
   }
   return null;
 }
@@ -69,7 +64,7 @@ const HINT: Record<string, Hint> = {
   mode: { title: "Mode", body: "How the per-voter points must add up. exact: the votes must sum to exactly the budget. atMost: they may sum to at most the budget (a voter can spend fewer)." },
   variant: { title: "Variant", body: "The per-candidate validity-proof construction. A: a (B+1)-branch OR proof per candidate (the standard). B: bit-decomposition proofs per candidate." },
   weighting: { title: "Weighting", body: "One per voter: every voter counts once. Weighted: the eligibility service assigns each voter a weight, and their whole ballot is multiplied by it in the tally." },
-  maxWeight: { title: "Max weight", body: "The largest weight the eligibility service may attest for a single voter. Admission rejects any attestation above it. Fixed to 1 when weighting is one-per-voter." },
+  scale: { title: "Scale", body: "The unit this tally counts in. 1 means whole tokens and is almost always right; a larger value divides every voter equally, and is only needed when a token supply would put the tally beyond what the coordinator can compute." },
   duplicate: { title: "Vote duplicate policy", body: "If one voter (pseudonym) submits more than one ballot, which counts at tally time. last-wins: the most recent. first-wins: the first." },
   votingStart: { title: "Voting start", body: "Ballots are only accepted from this moment. The DKG must finalize before it (see DKG lead time)." },
   votingEnd: { title: "Voting end", body: "When voting closes. After this the committee aggregates and decrypts." },
@@ -359,7 +354,7 @@ function Seg({
 
 function initialForm() {
   return {
-    numCandidates: 3, budget: 1, mode: "exact", variant: "A", weighted: false, maxWeight: 1,
+    numCandidates: 3, budget: 1, mode: "exact", variant: "A", weighted: false, scale: 1,
     duplicatePolicy: "last-wins", ...defaultSchedule(), dkgLeadTime: 180,
     t: 2, n: 3,  // 2-of-3: t IS the quorum
     keyperUrls: "", eligibilityKey: "", resultPublisherKey: "", gatewayKeys: "", selfSubmitFee: "0",
@@ -369,9 +364,8 @@ function initialForm() {
 function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onViewElection?: (id: number) => void }) {
   const [f, setF] = useState(initialForm);
   const set = (k: string, v: unknown) => setF((s) => ({ ...s, [k]: v }));
-  // Weighted toggles max_weight: off ⇒ 1 (backend requires it); on ⇒ default 10 if unset.
   const setWeighted = (on: boolean) =>
-    setF((s) => ({ ...s, weighted: on, maxWeight: on ? (Number(s.maxWeight) > 1 ? s.maxWeight : 10) : 1 }));
+    setF((s) => ({ ...s, weighted: on }));
   const [status, setStatus] = useState<Status>(null);
   const [step, setStep] = useState(0);
   // Decimal id of a just-registered election → drives the success dialog.
@@ -455,12 +449,12 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
           throw new Error(`Invalid self-submit fee "${f.selfSubmitFee}" — enter ETH, e.g. 0.0010 (or 0).`);
         }
       }
-      const boundsError = checkBallotBounds(Number(f.numCandidates), Number(f.budget), Number(f.maxWeight));
+      const boundsError = checkBallotBounds(Number(f.numCandidates), Number(f.budget));
       if (boundsError) throw new Error(boundsError);
       const config = {
         electionId: ZERO_EID,
         numCandidates: Number(f.numCandidates), budget: Number(f.budget), mode: f.mode, variant: f.variant,
-        weighted: f.weighted, maxWeight: Number(f.maxWeight), duplicatePolicy: f.duplicatePolicy,
+        weighted: f.weighted, scale: Number(f.scale), duplicatePolicy: f.duplicatePolicy,
         votingStart, votingEnd,
         threshold: { t: Number(f.t), n: Number(f.n) },
         keypers,
@@ -496,7 +490,7 @@ function FormRegister({ wallet, onViewElection }: { wallet: Wallet | null; onVie
         <F label="Mode" hint={HINT.mode}><Seg value={f.mode} onChange={(v) => set("mode", v)} options={[{ value: "exact", label: "exact" }, { value: "atMost", label: "atMost" }]} /></F>
         <F label="Variant" hint={HINT.variant}><Seg value={f.variant} onChange={(v) => set("variant", v)} options={[{ value: "A", label: "A" }, { value: "B", label: "B" }]} /></F>
         <F label="Weighting" hint={HINT.weighting}><Seg value={f.weighted ? "yes" : "no"} onChange={(v) => setWeighted(v === "yes")} options={[{ value: "no", label: "One per voter" }, { value: "yes", label: "Weighted" }]} /></F>
-        <F label="Max weight" hint={HINT.maxWeight}><input type="number" min={1} value={f.weighted ? f.maxWeight : 1} disabled={!f.weighted} onChange={(e) => set("maxWeight", e.target.value)} /></F>
+        <F label="Scale" hint={HINT.scale}><input type="number" min={1} value={f.scale} onChange={(e) => set("scale", e.target.value)} /></F>
         <F label="Vote Duplicate Policy" hint={HINT.duplicate} newRow><Seg value={f.duplicatePolicy} onChange={(v) => set("duplicatePolicy", v)} options={[{ value: "last-wins", label: "last-wins" }, { value: "first-wins", label: "first-wins" }]} /></F>
       </div>
     </div>

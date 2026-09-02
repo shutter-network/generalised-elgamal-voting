@@ -38,6 +38,7 @@ export async function fetchElectionOverview(electionId: number): Promise<{
     budget: cfg.budget,
     mode: cfg.mode,
     variant: cfg.variant,
+    scale: cfg.scale ?? 1,
     thresholdN: BigInt(cfg.threshold.n),
     thresholdT: BigInt(cfg.threshold.t),
     keyperAddresses: cfg.keypers.map((k) => k.signingKey),
@@ -96,6 +97,13 @@ export async function fetchAggregate(electionId: number): Promise<EncryptedTally
   return {
     aggregates: aggregate.aggregates.map((ct: any) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })),
     totalAdmittedWeight: BigInt(aggregate.totalAdmittedWeight ?? 0),
+    // Mirrors geg's decoder, which defaults the scaled total to the raw one when the
+    // field is absent: they are equal by construction at scale 1, so an artifact
+    // written before scaling existed decodes correctly. Defaulting to 0 would make
+    // an unscaled election look like it counted nothing.
+    totalScaledWeight: BigInt(
+      aggregate.totalScaledWeight ?? aggregate.totalAdmittedWeight ?? 0,
+    ),
     admittedCount: (aggregate.admitted ?? []).length,
   };
 }

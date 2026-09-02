@@ -215,7 +215,45 @@ def sign_decryption_share(private_key: int, election_id: bytes, shares: list[byt
 # One ABI-encode of the whole struct (matching Solidity ``abi.encode(aggregate)``) — this
 # keeps the Election contract under the EIP-170 code-size limit vs. four field-wise encodes.
 
-_TALLY_ABI = "((bytes,bytes)[],uint256[],(uint256,uint8)[],uint256)"
+# The trailing uint256 is `totalScaledWeight`, added when weight scaling landed. It
+# cannot be derived from the raw total — per-voter rounding does not commute with
+# summing — and `bsgs_bound` is computed from it, so a verifier missing it would
+# search the wrong range.
+#
+# `AGGREGATE_DST` deliberately stays at v1 rather than being bumped alongside. The
+# cutover is greenfield (no pre-scale signatures exist) and both sides of the
+# deployment ship together, so the only exposure is a mixed-version rollout window —
+# and `assert_aggregate_shape` below turns that case into a named condition instead
+# of an unexplained signature failure.
+_TALLY_ABI = "((bytes,bytes)[],uint256[],(uint256,uint8)[],uint256,uint256)"
+
+#: Field count of the pre-scale tally tuple, kept only to recognise one.
+_TALLY_FIELDS_PRE_SCALE = 4
+_TALLY_FIELDS = 5
+
+
+class PreScaleAggregate(ValueError):
+    """An aggregate signed under the pre-scale digest format.
+
+    Raised instead of letting the digest simply not match: a shape mismatch and a
+    forged signature are the same event to `keccak`, and telling them apart is the
+    difference between "roll the deployment forward" and "someone is attacking you".
+    """
+
+
+def assert_aggregate_shape(tally: tuple) -> None:
+    """Reject a pre-scale tally tuple by name rather than by digest mismatch."""
+    if len(tally) == _TALLY_FIELDS_PRE_SCALE:
+        raise PreScaleAggregate(
+            "aggregate is in the pre-scale digest format (4 tally fields, expected "
+            f"{_TALLY_FIELDS}): it was produced by a build from before weight scaling. "
+            "Roll the whole deployment forward — see the release order in the weight "
+            "scaling plan."
+        )
+    if len(tally) != _TALLY_FIELDS:
+        raise ValueError(
+            f"aggregate tally tuple has {len(tally)} fields, expected {_TALLY_FIELDS}"
+        )
 
 
 def aggregate_digest(
@@ -224,13 +262,16 @@ def aggregate_digest(
     admitted: list[int],
     exclusions: list[tuple[int, "ExclusionReason"]],
     total_admitted_weight: int,
+    total_scaled_weight: int,
 ) -> bytes:
     tally = (
         [(bytes(c1), bytes(c2)) for (c1, c2) in aggregates],
         [int(s) for s in admitted],
         [(int(seq), _EXCLUSION_CODE[reason]) for (seq, reason) in exclusions],
         int(total_admitted_weight),
+        int(total_scaled_weight),
     )
+    assert_aggregate_shape(tally)
     packed = AGGREGATE_DST + bytes(election_id) + abi_encode([_TALLY_ABI], [tally])
     return keccak(packed)
 
@@ -242,13 +283,14 @@ def _aggregate_fields(aggregate):
         list(aggregate.admitted),
         [(x.sequence_number, x.reason) for x in aggregate.exclusions],
         aggregate.total_admitted_weight,
+        aggregate.total_scaled_weight,
     )
 
 
 def aggregate_digest_of(election_id: bytes, aggregate) -> bytes:
     """Digest of an ``AggregateArtifact`` (used by keyper to sign, backends to verify)."""
-    aggs, admitted, exclusions, total = _aggregate_fields(aggregate)
-    return aggregate_digest(election_id, aggs, admitted, exclusions, total)
+    aggs, admitted, exclusions, total, scaled = _aggregate_fields(aggregate)
+    return aggregate_digest(election_id, aggs, admitted, exclusions, total, scaled)
 
 
 def sign_aggregate(private_key: int, election_id: bytes, aggregate) -> bytes:

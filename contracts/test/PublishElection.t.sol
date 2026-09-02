@@ -33,7 +33,7 @@ contract PublishElectionScriptTest is Test {
         vm.setEnv("MODE", "0");
         vm.setEnv("VARIANT", "0");
         vm.setEnv("WEIGHTED", "true");
-        vm.setEnv("MAX_WEIGHT", "10");
+        vm.setEnv("SCALE", "10");
         vm.setEnv("DUPLICATE_POLICY", "1");
         vm.setEnv("PROTOCOL_VERSION", "geg-v1");
         vm.setEnv("PK_WR", "0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1");
@@ -49,7 +49,7 @@ contract PublishElectionScriptTest is Test {
         assertEq(election.electionId(), 1);
         assertEq(election.budget(), 3);
         assertTrue(election.weighted());
-        assertEq(election.maxWeight(), 10);
+        assertEq(election.scale(), 10);
         assertEq(election.duplicatePolicy(), 1);
 
         (VotingTypes.ElectionConfigView memory config,) = election.getElection();

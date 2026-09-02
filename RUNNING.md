@@ -294,6 +294,12 @@ With the address-derived pseudonym (`keccak256(address ‖ electionId)`), self-p
 address on-chain and deanonymizes the ballot — **sponsored submission keeps it off-chain** and
 is the anonymity-preserving choice.
 
+**Budget is bounded on the chain backend.** `submitVote` stores the whole ballot, and Variant A's
+proof grows as `ℓ x (budget + 1)`, so at `ℓ = 3` a budget-100 ballot is ~78 KB — about **49M gas**
+of storage against a 30M block limit. Casting fails with
+`Out of gas: gas required exceeds allowance: 30000000`, which names the gas and not the cause.
+Budget **10 or below** is fine at `ℓ = 3`; budget 100 is a **database-only** configuration for now.
+
 **Timing.** You choose the voting window **in the register form** (step 5) — for a quick demo
 pick a short one (e.g. a couple of minutes out and a couple of minutes long), leaving enough
 lead time for the DKG.

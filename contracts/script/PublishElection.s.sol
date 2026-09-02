@@ -21,7 +21,7 @@ import {VotingTypes} from "../src/VotingTypes.sol";
 ///   MODE (0=exact,1=atMost)              default 0
 ///   VARIANT (0=A,1=B)                    default 0
 ///   WEIGHTED (bool)                      default false
-///   MAX_WEIGHT                           default 1
+///   SCALE                                default 1
 ///   DUPLICATE_POLICY (0=first,1=last)    default 1
 ///   PROTOCOL_VERSION (string)            default "SHUTTER-VOTE-v1"
 ///   PK_WR (bytes)                        required — eligibility public key
@@ -49,7 +49,7 @@ contract PublishElection is Script {
             mode: _toUint8("MODE", vm.envOr("MODE", uint256(0))),
             variant: _toUint8("VARIANT", vm.envOr("VARIANT", uint256(0))),
             weighted: vm.envOr("WEIGHTED", false),
-            maxWeight: _toUint32("MAX_WEIGHT", vm.envOr("MAX_WEIGHT", uint256(1))),
+            scale: _toUint32("SCALE", vm.envOr("SCALE", uint256(1))),
             duplicatePolicy: _toUint8("DUPLICATE_POLICY", vm.envOr("DUPLICATE_POLICY", uint256(1))),
             protocolVersion: vm.envOr("PROTOCOL_VERSION", string("SHUTTER-VOTE-v1")),
             pkWR: vm.envBytes("PK_WR"),

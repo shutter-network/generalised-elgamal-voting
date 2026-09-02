@@ -193,7 +193,7 @@ contract ElectionAdminTest is Test {
 
     function _params() private view returns (VotingTypes.ElectionParams memory) {
         return VotingTypes.ElectionParams({
-            mode: 0, variant: 0, weighted: false, maxWeight: 1, duplicatePolicy: 1, protocolVersion: "v1",
+            mode: 0, variant: 0, weighted: false, scale: 1, duplicatePolicy: 1, protocolVersion: "v1",
             votingStart: votingStart,
             votingEnd: votingEnd,
             selfSubmitFee: selfSubmitFee,

@@ -26,7 +26,7 @@ def test_issued_v1_attestation_verifies():
     svc = StubEligibilityService(elig_sk)
     att = svc.issue_attestation(_request(weight=5))
     assert att.scheme is AttestationScheme.V1 and att.weight == 5
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION, max_weight=10)
+    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
 def test_fixed_weight_override():
@@ -34,7 +34,7 @@ def test_fixed_weight_override():
     svc = StubEligibilityService(elig_sk, fixed_weight=1)
     att = svc.issue_attestation(_request(weight=9))  # request asks 9, stub pins 1
     assert att.weight == 1
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION, max_weight=10)
+    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
 def test_issued_legacy_attestation_verifies_at_weight_1():
@@ -42,7 +42,7 @@ def test_issued_legacy_attestation_verifies_at_weight_1():
     svc = StubEligibilityService(elig_sk, scheme=AttestationScheme.LEGACY)
     att = svc.issue_attestation(_request(weight=7))  # legacy forces weight 1
     assert att.scheme is AttestationScheme.LEGACY and att.weight == 1
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION, max_weight=1)
+    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
 def test_verification_is_adapter_independent():
@@ -53,4 +53,4 @@ def test_verification_is_adapter_independent():
     assert a.eligibility_key == b.eligibility_key
     req = _request(weight=3)
     att = a.issue_attestation(req)
-    assert verify_attestation(b.eligibility_key, att, election_id=ELECTION, max_weight=10)
+    assert verify_attestation(b.eligibility_key, att, election_id=ELECTION)

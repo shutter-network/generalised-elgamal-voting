@@ -197,7 +197,7 @@ def test_attestation_vector(name, v):
         weight=i["weight"], signature=_hx(i["signature"]), scheme=AttestationScheme(i["scheme"]),
         nonce=i.get("nonce", 1),
     )
-    ok = verify_attestation(_hx(i["eligibilityKey"]), att, election_id=_hx(i["electionId"]), max_weight=i["maxWeight"])
+    ok = verify_attestation(_hx(i["eligibilityKey"]), att, election_id=_hx(i["electionId"]))
     assert ok is v["expected"]["verify"]
 
 
@@ -207,7 +207,7 @@ def test_attestation_vector(name, v):
 
 def test_full_election_flow_replay():
     from geg.core.admission import StoredBallot, admit
-    from geg.core.aggregation import build_aggregate_artifact, recover_result
+    from geg.core.aggregation import build_aggregate_artifact, check_result, recover_result
     from geg.envelopes import codecs
 
     fx = json.loads((VECTORS / "flow" / "full_election_level1.json").read_text())
@@ -233,3 +233,82 @@ def test_full_election_flow_replay():
     assert recovered is not None
     assert tuple(recovered.totals) == tuple(published_result.totals)
     assert recovered.bsgs_bound == published_result.bsgs_bound
+
+    # 3. The same artifacts through the *checking* path rather than the solving one.
+    #
+    # This is the cross-implementation half of the guarantee: the SDK drives this
+    # very file through `verifyTallyAgainstTotals`
+    # (sx-monorepo `packages/geg-parity/tests/geg-parity.test.ts`), so the two must
+    # agree on what "this tally verifies" means against identical bytes. Tested
+    # against the vector rather than only against locally generated data, because a
+    # divergence here would surface as a committee and a browser disagreeing about
+    # a real election.
+    ok, reason = check_result(
+        config, published_agg, shares, committee, config.threshold.t,
+        tuple(published_result.totals),
+    )
+    assert ok, reason
+
+    bound = published_result.bsgs_bound
+    totals = list(published_result.totals)
+
+    # Moving a vote between candidates keeps the sum intact, so only the
+    # per-candidate group equality separates this from the truth.
+    moved = list(totals)
+    moved[0] += 1
+    moved[1] -= 1
+    ok, reason = check_result(config, published_agg, shares, committee, config.threshold.t, tuple(moved))
+    assert not ok and "does not decrypt the aggregate" in reason
+
+    # Breaks the exact-mode identity instead: every admitted ballot spends its
+    # whole budget, so the totals must sum to budget x total admitted weight.
+    inflated = list(totals)
+    inflated[0] += 1
+    ok, reason = check_result(config, published_agg, shares, committee, config.threshold.t, tuple(inflated))
+    assert not ok and reason.startswith("result:")
+
+    # Outside the bound, which is what stops a published `T + q` — the same group
+    # element as `T` — passing the equality as a nonsense 256-bit integer.
+    over = list(totals)
+    over[0] = bound + 1
+    ok, reason = check_result(config, published_agg, shares, committee, config.threshold.t, tuple(over))
+    assert not ok and "outside" in reason
+
+    # A quorum-short share set is an availability failure, not an integrity one,
+    # and the reason prefix has to say so.
+    ok, reason = check_result(
+        config, published_agg, shares[: config.threshold.t - 1], committee,
+        config.threshold.t, tuple(totals),
+    )
+    assert not ok and reason.startswith("shares:")
+
+
+# --------------------------------------------------------------------------- #
+#  scale — integer half-up weight scaling, pinned across implementations
+# --------------------------------------------------------------------------- #
+
+def test_scaled_weight_vector():
+    """The `.5` boundary, asserted against bytes the SDK asserts against too.
+
+    Python's `round` is half-to-even and JavaScript's `Math.round` is half-up, so a
+    float implementation of this agrees everywhere except at exactly `.5` — and there
+    it makes geg and the browser build different aggregates from identical ballots.
+    The failure surfaces as an honest committee appearing to publish a false
+    aggregate, with nothing in the error pointing at rounding, which is why this is
+    pinned to a shared vector rather than to each side's own arithmetic.
+
+    sx replays this same file in `packages/geg-parity`.
+    """
+    from geg.core.aggregation import scaled_weight
+
+    fx = json.loads((VECTORS / "scale" / "scaled_weight_boundary.json").read_text())
+    assert fx["cases"], "empty vector"
+    for c in fx["cases"]:
+        assert scaled_weight(c["weight"], c["scale"]) == c["scaled"], c
+
+    # Guards the guard: this is the side the divergence actually lives on, so if a
+    # float `round` ever stopped failing here, the vector would have stopped covering
+    # the boundary and the parity claim would be hollow.
+    naive = [c for c in fx["cases"]
+             if (c["weight"] if c["scale"] <= 1 else round(c["weight"] / c["scale"])) != c["scaled"]]
+    assert naive, "vector no longer distinguishes half-to-even from half-up"

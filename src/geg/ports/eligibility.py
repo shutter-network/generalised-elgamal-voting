@@ -41,7 +41,7 @@ class AttestationRequest:
     registry-issued value in a Wahlregister adapter); the core relies only on its
     uniqueness per ``(election_id, voter)`` and unlinkability across elections.
     ``weight`` is resolved by the adapter (1 for one-person-one-vote; voting power
-    for a wallet adapter) and must satisfy ``1 <= weight <= max_weight`` for the
+    for a wallet adapter) and must satisfy ``weight >= 1`` for the
     target election.
     """
 
@@ -73,7 +73,6 @@ def verify_attestation(
     attestation: Attestation,
     *,
     election_id: bytes,
-    max_weight: int,
 ) -> bool:
     """Normative ``ATTESTATION_V1`` verification.
 
@@ -85,8 +84,18 @@ def verify_attestation(
       signature; valid only at ``weight == 1`` (it authorizes no other weight).
 
     Also checks that the attestation binds the expected ``election_id`` and that
-    ``1 <= weight <= max_weight``. Returns ``False`` (never raises) on any
-    failure, so callers treat it uniformly as ``INVALID_ATTESTATION``.
+    ``weight >= 1``. Returns ``False`` (never raises) on any failure, so callers treat
+    it uniformly as ``INVALID_ATTESTATION``.
+
+    There is deliberately **no upper bound** on ``weight``. There used to be a
+    per-election ``max_weight``, from when voting power was clamped: it capped what a
+    compromised eligibility service could attest. Once weights are no longer clamped
+    it stopped constraining anything real — the bound had to be set at least as high
+    as the largest legitimate holder, i.e. effectively the whole supply, at which
+    point an issuer that could forge one weight could already forge a decisive one.
+    Weights also travel in the clear inside every ballot, so a forged one is visible
+    to any auditor rather than merely blocked. Keeping the tally computable is the
+    scale factor's job now (``ElectionConfig.scale``).
     """
     # Import here to keep the port module importable without the crypto backend.
     from geg.crypto.attestation import verify_attestation_legacy_sig, verify_attestation_sig
@@ -94,7 +103,7 @@ def verify_attestation(
 
     if attestation.election_id != election_id:
         return False
-    if not (1 <= attestation.weight <= max_weight):
+    if attestation.weight < 1:
         return False
 
     if attestation.scheme is AttestationScheme.V1:

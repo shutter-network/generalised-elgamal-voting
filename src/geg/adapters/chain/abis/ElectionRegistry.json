@@ -221,7 +221,7 @@
             "internalType": "bool"
           },
           {
-            "name": "maxWeight",
+            "name": "scale",
             "type": "uint32",
             "internalType": "uint32"
           },

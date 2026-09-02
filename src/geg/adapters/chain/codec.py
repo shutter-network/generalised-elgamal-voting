@@ -133,21 +133,32 @@ def ballot_from_contract(raw, election_id: bytes) -> BallotEnvelope:
 # --- aggregate ------------------------------------------------------------- #
 
 def aggregate_to_tuple(agg: AggregateArtifact):
-    """Contract ``EncryptedTally``: (aggregates[(c1,c2)], admitted[], exclusions[(seq,reason)], totalAdmittedWeight)."""
+    """Contract ``EncryptedTally``: (aggregates[(c1,c2)], admitted[], exclusions[(seq,reason)], totalAdmittedWeight, totalScaledWeight)."""
     aggregates = [(ct.c1, ct.c2) for ct in agg.aggregates]
     admitted = [int(s) for s in agg.admitted]
     exclusions = [(int(x.sequence_number), REASON_TO_U8[x.reason]) for x in agg.exclusions]
-    return (aggregates, admitted, exclusions, int(agg.total_admitted_weight))
+    return (
+        aggregates,
+        admitted,
+        exclusions,
+        int(agg.total_admitted_weight),
+        int(agg.total_scaled_weight),
+    )
 
 
 def aggregate_from_contract(raw, election_id: bytes) -> AggregateArtifact:
     aggregates, admitted, exclusions, total_weight = raw[0], raw[1], raw[2], raw[3]
+    # A pre-scale contract returns four fields; those elections were unscaled, so the
+    # scaled total equals the raw one. Tolerated on read rather than rejected, since a
+    # deployment mid-rollout may still hold such rows.
+    scaled_weight_total = int(raw[4]) if len(raw) > 4 else int(total_weight)
     return AggregateArtifact(
         election_id=election_id,
         aggregates=tuple(Ciphertext(c1=bytes(c[0]), c2=bytes(c[1])) for c in aggregates),
         admitted=tuple(int(s) for s in admitted),
         exclusions=tuple(Exclusion(sequence_number=int(x[0]), reason=U8_TO_REASON[int(x[1])]) for x in exclusions),
         total_admitted_weight=int(total_weight),
+        total_scaled_weight=scaled_weight_total,
     )
 
 

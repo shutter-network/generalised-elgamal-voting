@@ -31,25 +31,32 @@ def test_sign_then_verify_ok():
     sk, vk, vk_b = _elig_key()
     voter = _voter_vk()
     att = _attest(sk, vk, voter, weight=7)
-    assert verify_attestation(vk_b, att, election_id=ELECTION, max_weight=10)
+    assert verify_attestation(vk_b, att, election_id=ELECTION)
 
 
 def test_weight_1_ok():
     sk, vk, vk_b = _elig_key()
     att = _attest(sk, vk, _voter_vk(), weight=1)
-    assert verify_attestation(vk_b, att, election_id=ELECTION, max_weight=1)
+    assert verify_attestation(vk_b, att, election_id=ELECTION)
 
 
-def test_rejects_weight_over_max():
+def test_accepts_a_large_weight():
+    """No upper bound survives: the per-election ceiling is gone.
+
+    It only made sense while voting power was clamped — once it is not, the bound has
+    to sit at or above the largest legitimate holder, at which point it constrains
+    nothing an attacker would want. Weights ride in the clear inside every ballot, so
+    a forged one is visible to an auditor rather than merely blocked.
+    """
     sk, vk, vk_b = _elig_key()
-    att = _attest(sk, vk, _voter_vk(), weight=11)
-    assert not verify_attestation(vk_b, att, election_id=ELECTION, max_weight=10)
+    att = _attest(sk, vk, _voter_vk(), weight=10**9)
+    assert verify_attestation(vk_b, att, election_id=ELECTION)
 
 
 def test_rejects_wrong_election_binding():
     sk, vk, vk_b = _elig_key()
     att = _attest(sk, vk, _voter_vk(), weight=3)
-    assert not verify_attestation(vk_b, att, election_id=b"\x99" * 32, max_weight=10)
+    assert not verify_attestation(vk_b, att, election_id=b"\x99" * 32)
 
 
 def test_rejects_tampered_weight():
@@ -60,7 +67,7 @@ def test_rejects_tampered_weight():
         election_id=att.election_id, pseudonym=att.pseudonym, vk=att.vk,
         weight=9, signature=att.signature,
     )
-    assert not verify_attestation(vk_b, tampered, election_id=ELECTION, max_weight=10)
+    assert not verify_attestation(vk_b, tampered, election_id=ELECTION)
 
 
 def test_rejects_tampered_nonce():
@@ -72,7 +79,7 @@ def test_rejects_tampered_nonce():
         election_id=att.election_id, pseudonym=att.pseudonym, vk=att.vk,
         weight=att.weight, signature=att.signature, nonce=2,
     )
-    assert not verify_attestation(vk_b, tampered, election_id=ELECTION, max_weight=10)
+    assert not verify_attestation(vk_b, tampered, election_id=ELECTION)
 
 
 def test_nonce_changes_message():
@@ -87,7 +94,7 @@ def test_rejects_wrong_eligibility_key():
     sk, vk, _ = _elig_key()
     _, _, other_vk_b = _elig_key()
     att = _attest(sk, vk, _voter_vk(), weight=3)
-    assert not verify_attestation(other_vk_b, att, election_id=ELECTION, max_weight=10)
+    assert not verify_attestation(other_vk_b, att, election_id=ELECTION)
 
 
 def test_rejects_tampered_signature():
@@ -99,7 +106,7 @@ def test_rejects_tampered_signature():
         election_id=att.election_id, pseudonym=att.pseudonym, vk=att.vk,
         weight=att.weight, signature=bytes(sig),
     )
-    assert not verify_attestation(vk_b, tampered, election_id=ELECTION, max_weight=10)
+    assert not verify_attestation(vk_b, tampered, election_id=ELECTION)
 
 
 def test_distinct_from_legacy_scheme():
@@ -125,7 +132,7 @@ def _legacy_attest(sk, vk, vk_bytes, election=ELECTION, pseudo=PSEUDO):
 def test_legacy_sign_verify_ok():
     sk, vk, vk_b = _elig_key()
     att = _legacy_attest(sk, vk, _voter_vk())
-    assert verify_attestation(vk_b, att, election_id=ELECTION, max_weight=1)
+    assert verify_attestation(vk_b, att, election_id=ELECTION)
 
 
 def test_legacy_rejects_weight_over_1():
@@ -135,7 +142,7 @@ def test_legacy_rejects_weight_over_1():
         election_id=att.election_id, pseudonym=att.pseudonym, vk=att.vk,
         weight=2, signature=att.signature, scheme=AttestationScheme.LEGACY,
     )
-    assert not verify_attestation(vk_b, tampered, election_id=ELECTION, max_weight=10)
+    assert not verify_attestation(vk_b, tampered, election_id=ELECTION)
 
 
 def test_legacy_matches_reference_message():

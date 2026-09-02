@@ -13,6 +13,7 @@ from dataclasses import replace
 import pytest
 
 from geg.core import write_auth
+from geg.core.aggregation import check_result
 from geg.envelopes.types import ExclusionReason, StoredBallot
 from geg.ports.data_layer import VotingWindowError
 from geg.services import admin, auditor
@@ -236,7 +237,13 @@ def test_auditor_detects_tampered_result(full_env):
     stored.result = replace(stored.result, totals=(9, 9, 9))
     report = auditor.audit(fe.dl, fe.config.election_id)
     assert not report.ok
-    assert any("totals disagree" in d for d in report.discrepancies)
+    # The audit checks the published totals rather than re-deriving them, so the
+    # discrepancy names the failing total. Asserting the `result:` prefix rather than
+    # exact prose keeps this pinned to the guarantee, not the wording.
+    assert any(d.startswith("result:") for d in report.discrepancies)
+    # Shares were fine; only the totals were forged. The report must say so, or an
+    # operator cannot tell a lying publisher from a committee that never delivered.
+    assert report.shares_ok
 
 
 def test_auditor_detects_tampered_aggregate(full_env):
@@ -255,3 +262,92 @@ def test_auditor_detects_tampered_aggregate(full_env):
     report = auditor.audit(fe.dl, fe.config.election_id)
     assert not report.aggregate_ok
     assert any("admitted set differs" in d for d in report.discrepancies)
+
+
+# --------------------------------------------------------------------------- #
+#  check_result — verifying published totals without re-solving
+# --------------------------------------------------------------------------- #
+
+
+def _tallied(fe):
+    """Run a one-ballot election to completion and return the check_result inputs."""
+    _register_and_dkg(fe)
+    fe.clock.set(1_500)
+    submit_ballot(fe.dl, fe.config.election_id, fe.voter_ballot([1, 1, 1], b"\x01" * 32),
+                  clock=fe.clock, gateway_signer=fe.gateway)
+    fe.clock.set(2_500)
+    agg.run_tally(fe.dl, fe.config.election_id, fe.result_publisher, fe.keypers, clock=fe.clock)
+    eid = fe.config.election_id
+    return (
+        fe.config,
+        fe.dl.get_aggregate(eid),
+        fe.dl.list_decryption_shares(eid),
+        fe.dl.get_finalized_key(eid).committee_pks,
+        fe.config.threshold.t,
+    )
+
+
+def test_check_result_accepts_the_published_totals(full_env):
+    cfg, aggregate, shares, pks, quorum = _tallied(full_env)
+    published = full_env.dl.get_result(cfg.election_id)
+    assert published.totals == (1, 1, 1)
+    ok, reason = check_result(cfg, aggregate, shares, pks, quorum, published.totals)
+    assert ok and reason is None
+
+
+def test_check_result_rejects_totals_above_the_bound(full_env):
+    """The range guard, and the cheapest of the three checks.
+
+    Budget 3 x one weight-1 ballot puts the bound at 3, so (9, 9, 9) never reaches the
+    group arithmetic. This is also what stops a publisher offering `T + q`, which is
+    the same group element as `T` and would satisfy the equality.
+    """
+    cfg, aggregate, shares, pks, quorum = _tallied(full_env)
+    ok, reason = check_result(cfg, aggregate, shares, pks, quorum, (9, 9, 9))
+    assert not ok
+    assert reason.startswith("result:") and "outside [0, 3]" in reason
+
+
+def test_check_result_rejects_wrong_totals_that_sum_correctly(full_env):
+    """The case the sum identity alone would miss.
+
+    (3, 0, 0) sums to the bound exactly, like the true (1, 1, 1), so only the
+    per-candidate equality separates them.
+    """
+    cfg, aggregate, shares, pks, quorum = _tallied(full_env)
+    ok, reason = check_result(cfg, aggregate, shares, pks, quorum, (3, 0, 0))
+    assert not ok
+    assert "does not decrypt the aggregate" in reason
+
+
+def test_check_result_rejects_totals_that_do_not_sum_to_the_bound(full_env):
+    """The identity check, which pins the vector as a whole.
+
+    Every admitted ballot spends its whole budget in exact mode, so the totals must
+    sum to `budget x total admitted weight`. (1, 1, 0) decrypts two candidates
+    correctly and still cannot be the result.
+    """
+    cfg, aggregate, shares, pks, quorum = _tallied(full_env)
+    ok, reason = check_result(cfg, aggregate, shares, pks, quorum, (1, 1, 0))
+    assert not ok
+    assert reason.startswith("result:")
+
+
+def test_check_result_reports_share_failures_separately(full_env):
+    """`shares:` and `result:` must be distinguishable.
+
+    A committee that never produced a quorum is an availability problem; a publisher
+    with wrong totals is an integrity problem. They need different responses, so the
+    reason prefix has to tell them apart.
+    """
+    cfg, aggregate, shares, pks, quorum = _tallied(full_env)
+    ok, reason = check_result(cfg, aggregate, shares[:quorum - 1], pks, quorum, (1, 1, 1))
+    assert not ok
+    assert reason.startswith("shares:")
+
+
+def test_check_result_rejects_a_totals_vector_of_the_wrong_length(full_env):
+    cfg, aggregate, shares, pks, quorum = _tallied(full_env)
+    ok, reason = check_result(cfg, aggregate, shares, pks, quorum, (1, 1))
+    assert not ok
+    assert reason.startswith("result:") and "2 totals published for 3 candidates" in reason

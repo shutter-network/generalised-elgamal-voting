@@ -374,10 +374,12 @@ class BlockchainDataLayer(ElectionDataLayer):
         raw = election.functions.getResult().call()
         totals = tuple(int(t) for t in raw[0])
         keyper_indices = tuple(int(i) for i in raw[1])
-        # bsgs_bound is derived (not stored on chain): budget * total admitted weight.
+        # bsgs_bound is derived (not stored on chain): budget * total *scaled* weight.
+        # The scaled total is what the aggregate was built from; using the raw one
+        # would name a bound the plaintext cannot reach whenever scale > 1.
         agg = self.get_aggregate(election_id)
         budget = int(election.functions.budget().call())
-        bound = budget * (agg.total_admitted_weight if agg else 0)
+        bound = budget * (agg.total_scaled_weight if agg else 0)
         from geg.envelopes.types import ResultArtifact
         return ResultArtifact(election_id=election_id, totals=totals, keyper_indices=keyper_indices, bsgs_bound=bound)
 
@@ -414,7 +416,7 @@ class BlockchainDataLayer(ElectionDataLayer):
             codec.MODE_TO_U8[config.mode],
             codec.VARIANT_TO_U8[config.variant],
             config.weighted,
-            config.max_weight,
+            config.scale,
             codec.DUP_TO_U8[config.duplicate_policy],
             config.protocol_version,
             config.eligibility_key,  # pkWR
@@ -437,7 +439,8 @@ class BlockchainDataLayer(ElectionDataLayer):
             mode=codec.U8_TO_MODE[int(v[6])],
             variant=codec.U8_TO_VARIANT[int(v[7])],
             weighted=bool(v[8]),
-            max_weight=int(v[9]),
+            # Same slot the removed `maxWeight` cap occupied, so no index shifts.
+            scale=int(v[9]),
             duplicate_policy=codec.U8_TO_DUP[int(v[10])],
             voting_start=int(v[1]),
             voting_end=int(v[2]),

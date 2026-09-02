@@ -163,7 +163,7 @@ contract ElectionExtensionsTest is Test {
             mode: 0,
             variant: 0,
             weighted: false,
-            maxWeight: 1,
+            scale: 1,
             duplicatePolicy: 1,
             protocolVersion: "v1",
             pkWR: bytes(""),

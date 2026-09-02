@@ -9,6 +9,10 @@ export type ElectionConfigView = {
   budget: number;
   mode: "exact" | "atMost";      // budget constraint (needed by verifyBallot)
   variant: "A" | "B";            // validity-proof construction (needed by verifyBallot)
+  /** The unit the tally counts in. 1 means whole voting weight. Above 1, every
+   *  voter's weight was divided by this before aggregation, so the published
+   *  totals are in scaled units and will not reconcile with ballot weights. */
+  scale: number;
   thresholdN: bigint;
   thresholdT: bigint;
   keyperAddresses: string[];
@@ -41,10 +45,17 @@ export type Ballot = {
 
 export type EncryptedTally = {
   aggregates: Ciphertext[];
-  /** Sum of the admitted ballots' eligibility weights — the "voting power" behind the
-   *  result. With budget B the per-candidate totals sum to B x this, so it is what makes
-   *  a weighted tally readable (5100 points from 51 voting power, not 5100 voters). */
+  /** Sum of the admitted ballots' eligibility weights, as held — the "voting power"
+   *  behind the result. */
   totalAdmittedWeight: bigint;
+  /** The same sum *after* each weight was divided by the election's scale, which is
+   *  what the tally actually counted.
+   *
+   *  These two are equal at scale 1 and the distinction does not arise. Above it they
+   *  diverge, and it is `totalScaledWeight` that satisfies "the per-candidate totals
+   *  sum to budget x this" — the invariant this comment used to attribute to
+   *  `totalAdmittedWeight`, which was true only while scaling did not exist. */
+  totalScaledWeight: bigint;
   /** How many ballots the tally actually counted (after duplicates/invalid are excluded). */
   admittedCount: number;
 };

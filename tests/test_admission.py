@@ -79,11 +79,21 @@ def test_exclude_bad_attestation_signature(env):
     assert res.exclusions[0].reason is ExclusionReason.INVALID_ATTESTATION
 
 
-def test_exclude_attestation_over_max_weight(env):
-    cfg = env.config(max_weight=5)
-    ballots = [_stored(env, 0, [1, 0, 2], P1, weight=9)]  # 9 > 5
+def test_admits_a_large_weight_now_that_there_is_no_ceiling(env):
+    """The per-election `max_weight` cap is gone, so a large weight is just a weight.
+
+    It used to be excluded as INVALID_ATTESTATION above the ceiling. That ceiling only
+    made sense while voting power was clamped; once it is not, the bound had to be set
+    at least as high as the largest legitimate holder, at which point it stopped
+    constraining anything. Weights are public in every ballot, so a forged one is
+    visible to an auditor either way.
+    """
+    cfg = env.config()
+    ballots = [_stored(env, 0, [1, 0, 2], P1, weight=10**9)]
     res = admit(ballots, cfg, env.mpk_bytes)
-    assert res.exclusions[0].reason is ExclusionReason.INVALID_ATTESTATION
+    assert res.exclusions == ()
+    assert res.total_admitted_weight == 10**9
+
 
 
 def test_exclude_attestation_not_bound_to_ballot_vk(env):

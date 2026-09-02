@@ -30,7 +30,7 @@ contract DeployAndPublishLocalScript is Script {
 
     function _params(address admin) private view returns (VotingTypes.ElectionParams memory) {
         return VotingTypes.ElectionParams({
-            mode: 0, variant: 0, weighted: false, maxWeight: 1, duplicatePolicy: 1, protocolVersion: "v1",
+            mode: 0, variant: 0, weighted: false, scale: 1, duplicatePolicy: 1, protocolVersion: "v1",
             votingStart: uint64(vm.envOr("VOTING_START", uint256(block.timestamp + 1 hours))),
             votingEnd: uint64(vm.envOr("VOTING_END", uint256(block.timestamp + 25 hours))),
             selfSubmitFee: vm.envOr("SELF_SUBMIT_FEE", uint256(0.01 ether)),

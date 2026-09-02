@@ -66,7 +66,7 @@ class World:
         self.keypers = [Signer.generate() for _ in range(N)]
         self.config = ElectionConfig(
             election_id=ELECTION_ID, num_candidates=3, budget=3, mode=Mode.EXACT,
-            variant=Variant.A, weighted=False, max_weight=1,
+            variant=Variant.A, weighted=False,
             duplicate_policy=DuplicatePolicy.LAST_WINS, voting_start=1000, voting_end=2000,
             threshold=_non_majority_threshold(),
             keypers=tuple(KeyperIdentity(signing_key=k.identity, url="") for k in self.keypers),
@@ -204,7 +204,7 @@ def test_resolve_unique_raises_on_three_winners():
 def _register(dl, admin, rp, gw, keypers, eid_int):
     cfg = ElectionConfig(
         election_id=eid_int.to_bytes(32, "big"), num_candidates=3, budget=3, mode=Mode.EXACT,
-        variant=Variant.A, weighted=False, max_weight=1,
+        variant=Variant.A, weighted=False,
         duplicate_policy=DuplicatePolicy.LAST_WINS, voting_start=1000, voting_end=2000,
         threshold=_non_majority_threshold(),
         keypers=tuple(KeyperIdentity(signing_key=k.identity, url="") for k in keypers),

@@ -6,5 +6,3 @@ export * from "./binding";
 export * from "./state";
 export * from "./api";
 export { Dashboard } from "./dashboard/Dashboard";
-export { ElectionPicker } from "./dashboard/ElectionList";
-export { ElectionDetail, StateBadge } from "./dashboard/ElectionDetail";

@@ -2846,8 +2846,35 @@
 }
 .vd .elecHeaderStats {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* Column count follows the item count rather than being fixed at 5. The scale stat
+     only renders above scale 1, so this row is 5 or 6 wide; hardcoding 5 dropped the
+     sixth onto a second row on its own, which read as a layout bug rather than a
+     stat. `auto-fit` is deliberately avoided — it re-wraps on viewport width, and the
+     `:not(:last-child)` divider below assumes one row, so a wrap leaves a divider
+     hanging at a row's right edge. */
+  grid-template-columns: repeat(var(--elec-stat-cols, 5), 1fr);
   border-top: 1px solid var(--border);
+}
+/* Below this the columns are too narrow to read, so stack into two rows of three.
+   `:nth-child(3n)` then owns the right edge, so its divider is suppressed too. */
+@media (max-width: 1100px) {
+  .vd .elecHeaderStats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .vd .elecHeaderStat:nth-child(3n)::after {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .vd .elecHeaderStats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .vd .elecHeaderStat:nth-child(3n)::after {
+    display: block;
+  }
+  .vd .elecHeaderStat:nth-child(2n)::after {
+    display: none;
+  }
 }
 .vd .elecHeaderStat {
   padding: 14px 16px;

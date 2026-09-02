@@ -14,12 +14,12 @@ from eth_utils import keccak
 from geg.core import authz
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 
-_EXPECTED_REGISTER = "0x67ba111b6e42c26cb4af4cc03c4b2ed569c4b6cf512126a31013a67f900406bd"
+_EXPECTED_REGISTER = "0x8536550a834b1758270a909fdf80fa18a10d08ea391abfb00132d62f586e52e7"
 _EXPECTED_CANCEL = "0x565f20982cb67ac495bf11fd0bba3020cab421e17ce0e8ae697d42f8f06ecce3"
 
 _CONFIG = ElectionConfig(
     election_id=b"\x11" * 32,  # bound by the signature (the asserted next id)
-    num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A, weighted=True, max_weight=10,
+    num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A, weighted=True,
     duplicate_policy=DuplicatePolicy.LAST_WINS, voting_start=1000, voting_end=2000,
     threshold=Threshold(t=2, n=3),
     keypers=(KeyperIdentity(signing_key=bytes.fromhex("aa" * 20), url="http://k1:8101"),

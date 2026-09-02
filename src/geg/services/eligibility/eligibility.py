@@ -55,9 +55,6 @@ _LOG = logging.getLogger("geg.eligibility")
 # A nonce allocator returns the next monotonic re-vote counter for an (election, pseudonym):
 # 1 for a first vote, then 2, 3, … on each subsequent /attest for the same voter.
 NonceAllocator = Callable[[bytes, bytes], int]
-# Resolves the target election's max_weight. Per-election by construction: the same voter
-# gets different weights in different elections, so a single global cap would be wrong.
-MaxWeightLookup = Callable[[bytes], int]
 
 
 def challenge_message(election_id: bytes, vk: bytes) -> str:
@@ -156,8 +153,7 @@ def _in_memory_nonce_allocator() -> NonceAllocator:
 
 def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: bytes,
                           weight: int = 1, allowlist_path: str | None = None,
-                          next_nonce: NonceAllocator | None = None,
-                          max_weight_for: MaxWeightLookup | None = None) -> Flask:
+                          next_nonce: NonceAllocator | None = None) -> Flask:
     """Build the wallet-authenticated eligibility HTTP app. ``pseudonym_secret`` keys the
     pseudonym; ``weight`` is the (dummy) default voting weight. If ``allowlist_path`` is
     given, that JSON file gates issuance (re-read per request): a listed wallet gets its
@@ -166,13 +162,8 @@ def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: 
     per-(election, pseudonym) re-vote counter bound into each attestation; it defaults to an
     in-memory counter (fine for tests; ``main()`` supplies a durable SQLite store).
 
-    ``max_weight_for(election_id) -> int`` resolves the target election's ``max_weight``
-    so the issued weight can be clamped to it. **It must be per-election** —
-    the same voter legitimately gets different weights in different elections (power 79
-    → 50 under an election capped at 50, → 79 under one capped at 100), so a single
-    global cap would be wrong. ``main()`` reads it from the registered config; tests may
-    pass a plain lambda. When ``None`` no clamp is applied (the historical behaviour,
-    kept so in-process tests need no election to exist)."""
+    Weight is issued **as held**. This used to clamp to the election's ``max_weight``;
+    that ceiling is gone from the protocol, so there is nothing to clamp against."""
     app = Flask(__name__)
     # Bound the body every route buffers via get_json(force=True).
     app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
@@ -230,28 +221,6 @@ def build_eligibility_app(service: StubEligibilityService, *, pseudonym_secret: 
                                message="This wallet isn't eligible for this election."), 403
             voter_weight = allow[addr_hex]
 
-        # Clamp to the target election's max_weight. verify_attestation rejects
-        # weight > max_weight at tally, so issuing an over-weight credential hands the voter
-        # something that cannot be used: the ingest filter turns it away as
-        # INVALID_ATTESTATION (a misleading message — they'd suspect their credential, not
-        # the cap), and with the filter off it is stored and silently dropped at the tally.
-        # Clamping matches the wallet adapter's min(votingPower, maxWeight): max_weight is
-        # the election's declared ceiling, so capping is the intended semantic.
-        if max_weight_for is not None:
-            try:
-                cap = int(max_weight_for(election_id))
-            except Exception as exc:  # noqa: BLE001
-                # Fail closed: an unclamped credential is unusable at tally anyway, so
-                # issuing one only moves the failure somewhere more confusing.
-                _LOG.error("op=attest status=error election=%s reason=max_weight_unavailable err=%s",
-                           election_id.hex(), exc)
-                return jsonify(error="ServerError",
-                               message="Could not read the election's weight limit — try again shortly."), 503
-            if voter_weight > cap:
-                _LOG.warning("op=attest status=clamped election=%s addr=0x%s weight=%d max_weight=%d",
-                             election_id.hex(), addr_hex, voter_weight, cap)
-                voter_weight = cap
-
         pseudonym = derive_pseudonym(pseudonym_secret, election_id, address)
         # Monotonic re-vote nonce for THIS (election, pseudonym): a first vote gets 1, each
         # re-vote a higher value. Bound into the attestation so the tally keeps the latest
@@ -274,39 +243,6 @@ def _pseudonym_secret(elig_sk_hex: str) -> bytes:
         return bytes.fromhex(env.removeprefix("0x"))
     _LOG.warning("ELIGIBILITY_PSEUDONYM_SECRET unset — deriving from the issuing key (dev default)")
     return keccak(b"geg-pseudonym-v1" + int(elig_sk_hex, 16).to_bytes(32, "big"))
-
-
-def config_max_weight_lookup(api_url: str) -> MaxWeightLookup:
-    """Resolve an election's ``max_weight`` from its **registered config**, cached per id.
-
-    The registered config is the single source of truth, so the cap cannot drift from the
-    election the credential is being issued for — which a global env var would. Reads go
-    through the api's port surface (the same one keypers use); the data-layer service is
-    internal-only.
-
-    Caching is safe because the config is immutable once registered (a change raises
-    ``ImmutabilityError``), and it is keyed **by election id** — the same voter gets
-    different caps in different elections.
-    """
-    from geg.adapters.db.client import HttpDataLayerClient
-    from geg.services.data_layer.data_layer import PORT_READ_PREFIX
-
-    dl = HttpDataLayerClient(api_url.rstrip("/") + PORT_READ_PREFIX)
-    cache: dict[bytes, int] = {}
-    lock = threading.Lock()
-
-    def lookup(election_id: bytes) -> int:
-        key = bytes(election_id)
-        with lock:
-            hit = cache.get(key)
-        if hit is not None:
-            return hit
-        cap = int(dl.get_election(key).config.max_weight)   # raises → caller fails closed
-        with lock:
-            cache[key] = cap
-        return cap
-
-    return lookup
 
 
 def main() -> None:
@@ -336,7 +272,6 @@ def main() -> None:
         weight=int(os.environ.get("ELIGIBILITY_DUMMY_WEIGHT", "1")),
         allowlist_path=allowlist_path,
         next_nonce=SqliteNonceStore(nonce_db).next,
-        max_weight_for=config_max_weight_lookup(api_url),
     )
     app.run(host=os.environ.get("ELIGIBILITY_HOST", "0.0.0.0"), port=port)
 

@@ -5,7 +5,7 @@ control of an Ethereum address by signing an **EIP-712 challenge** bound to
 ``(electionId, vk)``; the adapter derives an unlinkable per-election
 **pseudonym** ``keccak256(address ‖ electionId)``, reads the address's **voting
 power**, and issues an ``ATTESTATION_V1`` with ``weight = min(votingPower,
-maxWeight)``. The verifying side is unchanged — the credential this adapter
+votingPower``. The verifying side is unchanged — the credential this adapter
 issues verifies under the same normative ``verify_attestation`` as any other.
 
 The EIP-712 binding gives replay/transfer resistance for free: a signature over
@@ -62,14 +62,9 @@ class WalletAttestationRequest:
 class WalletEligibilityService(EligibilityService):
     """Snapshot-X style issuer: wallet signature → address → voting power → attestation.
 
-    ``max_weight`` is the election's weight ceiling. It accepts either a plain ``int``
-    (fine when this instance serves exactly one election) **or a callable**
-    ``election_id -> int`` for the multi-election case, because the ceiling is a property
-    of the *election*, not of the issuer: the same voter legitimately gets different
-    weights in different elections (power 79 → 50 under a cap of 50, → 79 under a cap of
-    100). A fixed int reused across elections is wrong in both directions — too low
-    silently under-counts the voter, and too high issues a credential
-    ``verify_attestation`` rejects at tally, disenfranchising them.
+    Voting power is attested **as held**. This adapter used to take a ``max_weight``
+    and clamp to it; that ceiling is gone from the protocol, so there is nothing left
+    to clamp against and a voter is counted for what they hold.
 
     This adapter is **reference code**: it has no deployable, and demonstrates that the
     eligibility port accommodates token-weighted (Snapshot X style) issuance. The shipped
@@ -82,7 +77,6 @@ class WalletEligibilityService(EligibilityService):
         elig_sk: int,
         voting_power: VotingPowerSource,
         *,
-        max_weight: int | Callable[[bytes], int],
         chain_id: int,
         domain_name: str = "GEG Eligibility",
         domain_version: str = "1",
@@ -92,7 +86,6 @@ class WalletEligibilityService(EligibilityService):
         self._sk, self._vk = schnorr.keygen(elig_sk)
         self.eligibility_key: bytes = g1_to_compressed(self._vk)
         self._voting_power = voting_power
-        self._max_weight = max_weight
         self._chain_id = chain_id
         self._domain_name = domain_name
         self._domain_version = domain_version
@@ -152,8 +145,10 @@ class WalletEligibilityService(EligibilityService):
 
         # Resolve the ceiling for THIS election (see the class docstring): a callable is
         # the multi-election form, a plain int the single-election one.
-        cap = int(self._max_weight(election_id)) if callable(self._max_weight) else int(self._max_weight)
-        weight = min(vp, cap)  # clamp — the maxWeight BSGS guard
+        # Attested as held: nothing clamps voting power any more (the protocol's
+        # per-election `max_weight` is gone), and keeping the tally computable is the
+        # election's `scale` factor's job.
+        weight = vp
         pseudonym = self.pseudonym_for(address, election_id)
         # This adapter issues at most once per (election, address) (see _prevent_reissue), so
         # it has no re-vote sequence: nonce is fixed at 1. A re-vote-capable issuer allocates

@@ -57,7 +57,7 @@ abstract contract ElectionBase is AccessControl, IElection {
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
     bool public immutable weighted;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
-    uint32 public immutable maxWeight;
+    uint32 public immutable scale;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
     uint8 public immutable duplicatePolicy;
     // forge-lint: disable-next-line(screaming-snake-case-immutable)
@@ -101,8 +101,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         if (
             admin == address(0) || address(keyperSet_) == address(0) || params.resultPublisher == address(0)
                 || params.voteProxy == address(0) || params.votingEnd <= params.votingStart || params.numCandidates == 0
-                || params.budget == 0 || params.maxWeight == 0
-                || (!params.weighted && params.maxWeight != 1)
+                || params.budget == 0 || params.scale == 0
         ) {
             revert InvalidConfig();
         }
@@ -121,7 +120,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         mode = params.mode;
         variant = params.variant;
         weighted = params.weighted;
-        maxWeight = params.maxWeight;
+        scale = params.scale;
         duplicatePolicy = params.duplicatePolicy;
         adminAddr = admin;
         resultPublisherAddr = params.resultPublisher;
@@ -164,7 +163,7 @@ abstract contract ElectionBase is AccessControl, IElection {
         config.mode = mode;
         config.variant = variant;
         config.weighted = weighted;
-        config.maxWeight = maxWeight;
+        config.scale = scale;
         config.duplicatePolicy = duplicatePolicy;
         config.protocolVersion = protocolVersion;
         config.thresholdN = keyperSet.getNumMembers();

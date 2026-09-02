@@ -76,7 +76,7 @@ def validate_ballot(sb: StoredBallot, config: ElectionConfig, mpk) -> ExclusionR
     if att.election_id != config.election_id or att.pseudonym != env.pseudonym or att.vk != env.vk:
         return ExclusionReason.INVALID_ATTESTATION
     if not verify_attestation(
-        config.eligibility_key, att, election_id=config.election_id, max_weight=config.max_weight
+        config.eligibility_key, att, election_id=config.election_id
     ):
         return ExclusionReason.INVALID_ATTESTATION
 

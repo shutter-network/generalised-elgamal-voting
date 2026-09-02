@@ -161,7 +161,7 @@ class _Cluster:
         self.signers = [Signer.generate() for _ in range(_N)]
         config = ElectionConfig(
             election_id=_EID, num_candidates=3, budget=3, mode=Mode.EXACT, variant=Variant.A,
-            weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
+            weighted=True, duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1000, voting_end=2000, threshold=Threshold(t=_T, n=_N),
             keypers=tuple(KeyperIdentity(signing_key=self.signers[i].identity, url="") for i in range(_N)),
             eligibility_key=b"\xe1" * 48, result_publisher_key=Signer.generate().identity,

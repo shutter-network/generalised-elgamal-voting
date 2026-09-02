@@ -30,10 +30,10 @@ def _vk():
     return g1_to_compressed(vk)
 
 
-def _service(vp_map, max_weight=10):
+def _service(vp_map):
     elig_sk, _ = schnorr.keygen()
     return WalletEligibilityService(
-        elig_sk, lambda a: vp_map.get(a, 0), max_weight=max_weight, chain_id=CHAIN_ID
+        elig_sk, lambda a: vp_map.get(a, 0), chain_id=CHAIN_ID
     )
 
 
@@ -48,16 +48,21 @@ def test_issue_and_verify_with_voting_power_weight():
     att = svc.issue_for_wallet(ELECTION, vk, _sign(svc, acct, ELECTION, vk))
     assert att.weight == 4
     assert att.pseudonym == keccak(addr + ELECTION)
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION, max_weight=10)
+    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
-def test_voting_power_clamped_to_max_weight():
+def test_voting_power_is_attested_as_held():
+    """Nothing clamps any more: the adapter used to issue `min(votingPower, maxWeight)`.
+
+    That cap is gone from the protocol, so a large holder is attested for what they
+    hold and the credential verifies on its own terms.
+    """
     acct, addr = _voter()
-    svc = _service({addr: 1_000_000}, max_weight=10)
+    svc = _service({addr: 1_000_000})
     vk = _vk()
     att = svc.issue_for_wallet(ELECTION, vk, _sign(svc, acct, ELECTION, vk))
-    assert att.weight == 10  # clamped
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION, max_weight=10)
+    assert att.weight == 1_000_000
+    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
 def test_zero_voting_power_rejected():
@@ -140,7 +145,7 @@ def test_wallet_attestation_flows_through_admission(env):
     from geg.envelopes.types import BallotEnvelope, Ciphertext
 
     acct, addr = _voter()
-    svc = _service({addr: 3}, max_weight=10)
+    svc = _service({addr: 3})
     sk, vk = schnorr.keygen()
     vk_bytes = g1_to_compressed(vk)
     att = svc.issue_for_wallet(ELECTION, vk_bytes, _sign(svc, acct, ELECTION, vk_bytes))
@@ -158,48 +163,13 @@ def test_wallet_attestation_flows_through_admission(env):
             vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
             zk_proof=built.zk_proof, attestation=att),
     )
-    cfg = env.config(eligibility_key=svc.eligibility_key, weighted=True, max_weight=10)
+    cfg = env.config(eligibility_key=svc.eligibility_key, weighted=True)
     result = admit([StoredBallot(0, envelope)], cfg, env.mpk_bytes)
     assert len(result.admitted) == 1
     assert result.admitted[0].weight == 3
     assert result.total_admitted_weight == 3
 
 
-# --------------------------------------------------------------------------- #
-#  Per-election max_weight (wallet-adapter half)
-# --------------------------------------------------------------------------- #
-
 ELECTION_2 = (2).to_bytes(32, "big")
 
 
-def test_max_weight_may_be_resolved_per_election():
-    """The ceiling belongs to the election, not the issuer.
-
-    One voter with power 79 must be clamped to 50 under an election capped at 50 and left
-    at 79 under one capped at 100 — from the *same* issuer instance. A fixed int reused
-    across elections is wrong in both directions: too low silently under-counts the voter,
-    too high issues a credential `verify_attestation` rejects at tally (disenfranchisement).
-    """
-    acct, addr = _voter()
-    caps = {ELECTION: 50, ELECTION_2: 100}
-    elig_sk, _ = schnorr.keygen()
-    svc = WalletEligibilityService(
-        elig_sk, lambda a: {addr: 79}.get(a, 0),
-        max_weight=lambda eid: caps[bytes(eid)], chain_id=CHAIN_ID,
-    )
-
-    vk1 = _vk()
-    att1 = svc.issue_for_wallet(ELECTION, vk1, _sign(svc, acct, ELECTION, vk1))
-    assert att1.weight == 50   # clamped to this election's ceiling
-
-    vk2 = _vk()
-    att2 = svc.issue_for_wallet(ELECTION_2, vk2, _sign(svc, acct, ELECTION_2, vk2))
-    assert att2.weight == 79   # under the other election's ceiling, so untouched
-
-
-def test_plain_int_max_weight_still_works():
-    """The single-election form stays a plain int — the callable is opt-in."""
-    acct, addr = _voter()
-    svc = _service({addr: 79}, max_weight=50)
-    vk = _vk()
-    assert svc.issue_for_wallet(ELECTION, vk, _sign(svc, acct, ELECTION, vk)).weight == 50

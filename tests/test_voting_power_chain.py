@@ -3,7 +3,7 @@
 Deploys a mock voting-power contract, reads power on-chain via
 ``chain_voting_power``, and drives the wallet eligibility adapter with it so an
 attestation's weight equals the voter's on-chain voting power (clamped to
-maxWeight). Skips if ``anvil`` is unavailable.
+as held). Skips if ``anvil`` is unavailable.
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ def test_wallet_adapter_weight_from_chain_voting_power(anvil_w3):
 
     elig_sk, _ = schnorr.keygen()
     svc = WalletEligibilityService(
-        elig_sk, chain_voting_power(anvil_w3, token.address), max_weight=10, chain_id=CHAIN_ID
+        elig_sk, chain_voting_power(anvil_w3, token.address), chain_id=CHAIN_ID
     )
     _, vk = schnorr.keygen()
     vk_bytes = g1_to_compressed(vk)
@@ -117,28 +117,6 @@ def test_wallet_adapter_weight_from_chain_voting_power(anvil_w3):
     att = svc.issue_for_wallet(ELECTION, vk_bytes, sig)
 
     assert att.weight == 6  # equals on-chain voting power
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION, max_weight=10)
+    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
-def test_wallet_weight_clamped_to_max_from_chain(anvil_w3):
-    from eth_account import Account
-
-    from geg.adapters.chain.deploy import send_tx
-    from geg.adapters.voting_power import chain_voting_power
-
-    deployer = Account.from_key(ANVIL_KEYS[0])
-    voter = Account.from_key(ANVIL_KEYS[4])
-    voter_bytes = bytes.fromhex(voter.address[2:])
-
-    token = _deploy_mock_token(anvil_w3, deployer)
-    send_tx(anvil_w3, deployer, token.functions.setPower(voter.address, 1_000))
-
-    elig_sk, _ = schnorr.keygen()
-    svc = WalletEligibilityService(
-        elig_sk, chain_voting_power(anvil_w3, token.address), max_weight=10, chain_id=CHAIN_ID
-    )
-    _, vk = schnorr.keygen()
-    vk_bytes = g1_to_compressed(vk)
-    sig = voter.sign_message(svc.challenge(ELECTION, vk_bytes)).signature
-    att = svc.issue_for_wallet(ELECTION, vk_bytes, sig)
-    assert att.weight == 10  # clamped to maxWeight

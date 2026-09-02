@@ -80,7 +80,7 @@ class Attestation:
     election_id: bytes  # bytes32
     pseudonym: bytes  # bytes32
     vk: bytes  # G1, 48 bytes — voter ephemeral Schnorr verification key
-    weight: int  # 1 <= weight <= max_weight (must be 1 for the LEGACY scheme)
+    weight: int  # >= 1, uncapped (must be 1 for the LEGACY scheme)
     signature: bytes  # Schnorr, 80 bytes, by eligibility_key over the tuple
     scheme: AttestationScheme = AttestationScheme.V1
     nonce: int = 1  # monotonic re-vote counter per (election, pseudonym); V1 only, >= 1
@@ -194,7 +194,16 @@ class AggregateArtifact:
     aggregates: tuple[Ciphertext, ...]  # per-candidate homomorphic sum
     admitted: tuple[int, ...]  # sequence numbers included in the aggregate
     exclusions: tuple[Exclusion, ...]  # (sequence_number, reason) per excluded ballot
-    total_admitted_weight: int
+    total_admitted_weight: int  # Σ attested weights, as issued — turnout, in token units
+    # Σ of the *scaled* weights the aggregate was actually built from, i.e.
+    # `Σ (w_i + scale//2) // scale`. Equal to `total_admitted_weight` when `scale` is
+    # 1, which is the common case.
+    #
+    # Carried rather than derived because it is not recoverable from the raw total:
+    # per-voter rounding does not commute with summing, so `Σ round(w_i/s)` does not
+    # follow from `(Σ w_i, s)`. It is what `bsgs_bound` is computed from, so a
+    # verifier that assumed the raw total would search the wrong range.
+    total_scaled_weight: int = 0
 
 
 @dataclass(frozen=True)
@@ -204,4 +213,4 @@ class ResultArtifact:
     election_id: bytes  # bytes32
     totals: tuple[int, ...]  # per-candidate plaintext totals
     keyper_indices: tuple[int, ...]  # the t+1 keyper indices whose shares were used
-    bsgs_bound: int  # derived bound = budget * sum(admitted weights)
+    bsgs_bound: int  # derived bound = budget * sum(*scaled* admitted weights)

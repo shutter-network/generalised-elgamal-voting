@@ -112,7 +112,7 @@ class ChainEnv:
     def _build_config(self):
         return ElectionConfig(
             election_id=ELECTION_ID, num_candidates=NUM_CANDIDATES, budget=BUDGET,
-            mode=Mode.EXACT, variant=Variant.A, weighted=True, max_weight=10,
+            mode=Mode.EXACT, variant=Variant.A, weighted=True,
             duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=self.base + 1000, voting_end=self.base + 2000, threshold=Threshold(t=T, n=N),
             keypers=tuple(KeyperIdentity(signing_key=self._addr(f"keyper{i}"), url=f"http://keyper{i}:8100")

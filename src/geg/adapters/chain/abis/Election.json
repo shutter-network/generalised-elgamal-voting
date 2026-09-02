@@ -63,7 +63,7 @@
             "internalType": "bool"
           },
           {
-            "name": "maxWeight",
+            "name": "scale",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -261,6 +261,11 @@
           },
           {
             "name": "totalAdmittedWeight",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalScaledWeight",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -537,7 +542,7 @@
             "internalType": "bool"
           },
           {
-            "name": "maxWeight",
+            "name": "scale",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -791,19 +796,6 @@
   },
   {
     "type": "function",
-    "name": "maxWeight",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "mode",
     "inputs": [],
     "outputs": [
@@ -897,6 +889,19 @@
   },
   {
     "type": "function",
+    "name": "scale",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "selfSubmitFee",
     "inputs": [],
     "outputs": [
@@ -960,6 +965,11 @@
             "name": "totalAdmittedWeight",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "totalScaledWeight",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -1017,6 +1027,11 @@
           },
           {
             "name": "totalAdmittedWeight",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalScaledWeight",
             "type": "uint256",
             "internalType": "uint256"
           }

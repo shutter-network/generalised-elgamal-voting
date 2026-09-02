@@ -179,7 +179,7 @@ class SignatureBackend(ConformanceBackend):
             mode=Mode.EXACT,
             variant=Variant.A,
             weighted=True,
-            max_weight=10,
+            
             duplicate_policy=DuplicatePolicy.LAST_WINS,
             voting_start=1_000,
             voting_end=2_000,

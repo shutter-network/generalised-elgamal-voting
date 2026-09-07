@@ -12,7 +12,7 @@ from geg.adapters.eligibility_wallet import (
     WalletAttestationRequest,
     WalletEligibilityService,
 )
-from geg.crypto import binding, schnorr
+from geg.crypto import schnorr
 from geg.crypto.points import g1_to_compressed
 from geg.ports.eligibility import verify_attestation
 
@@ -152,16 +152,12 @@ def test_wallet_attestation_flows_through_admission(env):
 
     built = ballot_crypto.build_ballot(
         mpk=env.mpk_point, election_id=ELECTION, pseudonym=att.pseudonym,
-        sk=sk, vk=vk, votes=[1, 0, 2], num_candidates=3, budget=3,
+        sk=sk, vk=vk, attestation=att, votes=[1, 0, 2], num_candidates=3, budget=3,
     )
     envelope = BallotEnvelope(
         election_id=ELECTION, pseudonym=att.pseudonym, vk=vk_bytes,
         ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
         zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
-        voter_attestation_signature=binding.sign_ballot_binding(
-            voter_sk=sk, voter_vk=vk, election_id=ELECTION, pseudonym=att.pseudonym,
-            vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
-            zk_proof=built.zk_proof, attestation=att),
     )
     cfg = env.config(eligibility_key=svc.eligibility_key, weighted=True)
     result = admit([StoredBallot(0, envelope)], cfg, env.mpk_bytes)

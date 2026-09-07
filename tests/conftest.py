@@ -15,7 +15,7 @@ import pytest
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 from geg.crypto import attestation as att_crypto
 from geg.crypto import ballot as ballot_crypto
-from geg.crypto import binding, proofs, schnorr
+from geg.crypto import proofs, schnorr
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
 from geg.crypto.points import g1_to_compressed, g2_from_compressed, g2_to_compressed
 from geg.envelopes.types import (
@@ -90,33 +90,25 @@ class Env:
                election_id: bytes = ELECTION_ID, budget: int = 3) -> BallotEnvelope:
         sk, vk = schnorr.keygen()
         vk_bytes = g1_to_compressed(vk)
-        built = ballot_crypto.build_ballot(
-            mpk=self.mpk_point, election_id=election_id, pseudonym=pseudonym,
-            sk=sk, vk=vk, votes=votes, num_candidates=len(votes), budget=budget,
-        )
+        # The credential is minted *before* the ballot: since v2 the voter's signature
+        # covers it, so it has to exist to be signed over.
         _, elig_vk_pt = schnorr.keygen(self.elig_sk)
-        if scheme is AttestationScheme.V1:
-            sig = att_crypto.sign_attestation(
-                self.elig_sk, elig_vk_pt, election_id, pseudonym, vk_bytes, weight, nonce
-            )
-        else:
-            weight = 1
-            sig = att_crypto.sign_attestation_legacy(
-                self.elig_sk, elig_vk_pt, election_id, pseudonym, vk_bytes
-            )
+        sig = att_crypto.sign_attestation(
+            self.elig_sk, elig_vk_pt, election_id, pseudonym, vk_bytes, weight, nonce
+        )
         att = Attestation(
             election_id=election_id, pseudonym=pseudonym, vk=vk_bytes,
             weight=weight, signature=sig, scheme=scheme, nonce=nonce,
+        )
+        built = ballot_crypto.build_ballot(
+            mpk=self.mpk_point, election_id=election_id, pseudonym=pseudonym,
+            sk=sk, vk=vk, attestation=att, votes=votes, num_candidates=len(votes),
+            budget=budget,
         )
         return BallotEnvelope(
             election_id=election_id, pseudonym=pseudonym, vk=vk_bytes,
             ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
             zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
-            voter_attestation_signature=binding.sign_ballot_binding(
-                voter_sk=sk, voter_vk=vk, election_id=election_id, pseudonym=pseudonym,
-                vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
-                zk_proof=built.zk_proof, attestation=att,
-            ),
         )
 
     def shares_for(self, aggregate, keyper_indices) -> list[DecryptionShareEnvelope]:
@@ -192,22 +184,18 @@ class FullEnv:
         mpk = g2_from_compressed(fk.pk_election)
         sk, vk = schnorr.keygen()
         vk_bytes = g1_to_compressed(vk)
-        built = ballot_crypto.build_ballot(
-            mpk=mpk, election_id=self.config.election_id, pseudonym=pseudonym,
-            sk=sk, vk=vk, votes=votes, num_candidates=self.config.num_candidates, budget=self.config.budget,
-        )
         att = self.elig.issue_attestation(
             AttestationRequest(self.config.election_id, pseudonym, vk_bytes, weight, nonce)
+        )
+        built = ballot_crypto.build_ballot(
+            mpk=mpk, election_id=self.config.election_id, pseudonym=pseudonym,
+            sk=sk, vk=vk, attestation=att, votes=votes,
+            num_candidates=self.config.num_candidates, budget=self.config.budget,
         )
         return BallotEnvelope(
             election_id=self.config.election_id, pseudonym=pseudonym, vk=vk_bytes,
             ciphertexts=tuple(Ciphertext(c1=a, c2=b) for (a, b) in built.ciphertexts),
             zk_proof=built.zk_proof, voter_signature=built.voter_signature, attestation=att,
-            voter_attestation_signature=binding.sign_ballot_binding(
-                voter_sk=sk, voter_vk=vk, election_id=self.config.election_id,
-                pseudonym=pseudonym, vk_bytes=vk_bytes, ciphertexts=built.ciphertexts,
-                zk_proof=built.zk_proof, attestation=att,
-            ),
         )
 
 
@@ -259,3 +247,31 @@ def full_env() -> FullEnv:
 
     clock = ManualClock(0)
     return build_full_env(InMemoryDataLayer(clock=clock), clock)
+
+
+# --------------------------------------------------------------------------- #
+#  v2 test credential helper
+# --------------------------------------------------------------------------- #
+
+def make_attestation(election_id: bytes, pseudonym: bytes, vk_bytes: bytes, *,
+                     weight: int = 1, nonce: int = 1, elig_sk: int | None = None):
+    """Mint a credential for a test ballot, returning ``(attestation, eligibility_key)``.
+
+    Since v2 every ballot carries one and the voter's signature covers it, so a test
+    that builds a ballot needs an issuer. Keeping it here rather than in each suite
+    also keeps the issuer key beside the credential it signed — a test cannot end up
+    asserting against a credential minted under a key the verifier does not hold.
+    """
+    from geg.crypto import attestation as att_crypto, schnorr as _schnorr
+    from geg.crypto.points import g1_to_compressed as _g1c
+    from geg.envelopes.types import Attestation, AttestationScheme
+
+    sk, vk_pt = _schnorr.keygen(elig_sk)
+    sig = att_crypto.sign_attestation(
+        sk, vk_pt, election_id, pseudonym, vk_bytes, weight, nonce
+    )
+    att = Attestation(
+        election_id=election_id, pseudonym=pseudonym, vk=vk_bytes,
+        weight=weight, nonce=nonce, signature=sig, scheme=AttestationScheme.V1,
+    )
+    return att, _g1c(vk_pt)

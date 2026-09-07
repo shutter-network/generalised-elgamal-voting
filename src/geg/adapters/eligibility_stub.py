@@ -7,8 +7,7 @@ add. Its value is that it drives the tally pipeline end-to-end and demonstrates
 the port: the verifying side (``verify_attestation``) is identical regardless of
 which adapter issued the credential.
 
-Supports both schemes: the weighted ``ATTESTATION_V1`` and the legacy weightless
-credential (issued at weight 1).
+Mints the weighted ``ATTESTATION_V1``.
 """
 
 from __future__ import annotations
@@ -29,14 +28,6 @@ class StubEligibilityService(EligibilityService):
         self._fixed_weight = fixed_weight
 
     def issue_attestation(self, request: AttestationRequest) -> Attestation:
-        if self._scheme is AttestationScheme.LEGACY:
-            sig = att_crypto.sign_attestation_legacy(
-                self._sk, self._vk, request.election_id, request.pseudonym, request.vk
-            )
-            return Attestation(
-                election_id=request.election_id, pseudonym=request.pseudonym, vk=request.vk,
-                weight=1, signature=sig, scheme=AttestationScheme.LEGACY,
-            )
         weight = self._fixed_weight if self._fixed_weight is not None else request.weight
         sig = att_crypto.sign_attestation(
             self._sk, self._vk, request.election_id, request.pseudonym, request.vk, weight, request.nonce

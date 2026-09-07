@@ -50,7 +50,7 @@ def uint_to_eid(value: int) -> bytes:
 
 # --- attestation packing (into wrAttestation bytes) ------------------------ #
 
-def pack_attestation(att, voter_attestation_signature: bytes = b"") -> bytes:
+def pack_attestation(att) -> bytes:
     """Pack the credential — and the voter's binding — into ``wrAttestation``.
 
     The contract treats these bytes as opaque and never interprets them, so the
@@ -63,8 +63,6 @@ def pack_attestation(att, voter_attestation_signature: bytes = b"") -> bytes:
     signed what.
     """
     body = codecs.enc_attestation(att)
-    if voter_attestation_signature:
-        body = {**body, "voterBinding": codecs.enc_bytes(voter_attestation_signature)}
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
 
 
@@ -73,32 +71,11 @@ def unpack_attestation(raw: bytes):
     return codecs.dec_attestation(json.loads(bytes(raw).decode("utf-8")))
 
 
-def unpack_voter_binding(raw: bytes) -> bytes:
-    """The voter's binding signature from ``wrAttestation``, or empty if absent.
-
-    Empty is not tolerated by admission — it is returned rather than raised so a
-    malformed legacy blob fails as an invalid binding, with the rest of the ballot
-    still decodable for diagnosis, instead of as an undecodable ballot.
-    """
-    try:
-        raw_hex = json.loads(bytes(raw).decode("utf-8")).get("voterBinding")
-    except Exception:  # noqa: BLE001
-        return b""
-    if not isinstance(raw_hex, str):
-        return b""
-    try:
-        return codecs.dec_bytes(raw_hex, name="voterBinding")
-    except Exception:  # noqa: BLE001
-        return b""
-
-
-# --- ballot ---------------------------------------------------------------- #
-
 def ballot_to_tuple(env: BallotEnvelope):
     """Contract ``Ballot``: (pseudonym, vk, ciphertexts[(c1,c2)], zkProof, voterSignature, wrAttestation)."""
     cts = [(ct.c1, ct.c2) for ct in env.ciphertexts]
     return (env.pseudonym, env.vk, cts, env.zk_proof, env.voter_signature,
-            pack_attestation(env.attestation, env.voter_attestation_signature))
+            pack_attestation(env.attestation))
 
 
 def ballot_record_from_contract(raw, election_id: bytes, sequence_number: int) -> StoredBallot:
@@ -126,7 +103,6 @@ def ballot_from_contract(raw, election_id: bytes) -> BallotEnvelope:
         zk_proof=bytes(zk_proof),
         voter_signature=bytes(voter_sig),
         attestation=unpack_attestation(wr),
-        voter_attestation_signature=unpack_voter_binding(wr),
     )
 
 

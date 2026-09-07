@@ -63,7 +63,6 @@ def make_ballot() -> BallotEnvelope:
         zk_proof=bytes(range(20)),  # variable length
         voter_signature=_b(SCHNORR_BYTES, 0x55),
         attestation=make_attestation(),
-        voter_attestation_signature=_b(SCHNORR_BYTES, 0x66),
     )
 
 
@@ -163,14 +162,6 @@ def test_attestation_scheme_absent_on_wire_decodes_as_v1():
     d = codecs.enc_attestation(make_attestation())
     del d["scheme"]  # legacy producers may omit it
     assert codecs.dec_attestation(d).scheme is AttestationScheme.V1
-
-
-def test_legacy_scheme_round_trips():
-    a = Attestation(
-        election_id=_b(BYTES32, 0x11), pseudonym=_b(BYTES32, 0x22), vk=_b(G1_BYTES, 0x33),
-        weight=1, signature=_b(SCHNORR_BYTES, 0x44), scheme=AttestationScheme.LEGACY,
-    )
-    assert codecs.dec_attestation(codecs.enc_attestation(a)) == a
 
 
 def test_unknown_scheme_rejected():

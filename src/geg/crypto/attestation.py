@@ -84,37 +84,3 @@ def verify_attestation_sig(elig_vk_bytes: bytes, election_id: bytes, pseudonym: 
         return False
 
 
-# --------------------------------------------------------------------------- #
-#  Legacy Wahlregister attestation (weightless; legacy interop)
-#
-#  The concept-doc-locked scheme: Schnorr-on-G1 over the bare concatenation
-#  ``keccak256(electionId ‖ pseudonym ‖ vk)`` — no domain separator, no weight.
-#  Carried for interop with existing Munich-style deployments. A legacy
-#  credential is only valid at weight 1 (it does not authorize any other weight).
-# --------------------------------------------------------------------------- #
-
-def legacy_attestation_message(election_id: bytes, pseudonym: bytes, vk_bytes: bytes) -> bytes:
-    """The weightless legacy preimage digest: ``keccak(electionId ‖ pseudonym ‖ vk)``."""
-    if len(election_id) != 32 or len(pseudonym) != 32 or len(vk_bytes) != 48:
-        raise ValueError("legacy attestation: bad field sizes")
-    return keccak(election_id + pseudonym + vk_bytes)
-
-
-def sign_attestation_legacy(elig_sk: int, elig_vk, election_id: bytes, pseudonym: bytes,
-                            vk_bytes: bytes, *, k: int | None = None) -> bytes:
-    """Issue a legacy (weightless) attestation signature (80-byte ``R ‖ s``)."""
-    msg = legacy_attestation_message(election_id, pseudonym, vk_bytes)
-    R, s = schnorr.sign(elig_sk, elig_vk, msg, k=k)
-    return schnorr.encode(R, s)
-
-
-def verify_attestation_legacy_sig(elig_vk_bytes: bytes, election_id: bytes, pseudonym: bytes,
-                                  vk_bytes: bytes, signature: bytes) -> bool:
-    """Verify a legacy weightless attestation. Returns ``False`` (never raises)."""
-    try:
-        elig_vk = g1_from_compressed(elig_vk_bytes)
-        R, s = schnorr.decode(signature)
-        msg = legacy_attestation_message(election_id, pseudonym, vk_bytes)
-        return schnorr.verify(elig_vk, msg, R, s)
-    except Exception:  # noqa: BLE001
-        return False

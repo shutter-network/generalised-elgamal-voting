@@ -21,7 +21,8 @@ from eth_utils import keccak
 
 from geg.crypto import proofs, schnorr
 from geg.crypto.params import (
-    BALLOT_LABEL,
+    BALLOT_MESSAGE_LABEL,
+    BALLOT_PROOF_TRANSCRIPT_LABEL,
     BUDGET_EXACT_TAG,
     BVP_VERSION,
     CURVE_ORDER,
@@ -125,8 +126,22 @@ def decode_ballot_validity_proof(buf: bytes, num_candidates: int, budget: int):
 # --------------------------------------------------------------------------- #
 
 def canonical_ballot_message(election_id: bytes, pseudonym: bytes,
-                             ciphertexts: Sequence[tuple[bytes, bytes]], zk_proof: bytes) -> bytes:
-    """The exact preimage the voter Schnorr-signs (mirrors ``verify.ts``)."""
+                             ciphertexts: Sequence[tuple[bytes, bytes]], zk_proof: bytes,
+                             attestation) -> bytes:
+    """The exact preimage the voter Schnorr-signs (mirrors ``verify.ts``).
+
+    ``attestation`` is the eligibility credential, and **all of it is covered,
+    signature bytes included**. Covering only the fields would leave the signature
+    bytes unauthenticated, and Schnorr signing is randomised — one set of credential
+    fields has many valid signatures — so a relay could swap one for another and keep
+    the voter's signature valid. Semantically identical, but it makes the envelope
+    malleable, and the published ballot feed is re-aggregated byte-for-byte by
+    auditors while ballot digests serve as stable identifiers for duplicate detection
+    and re-vote ordering. Both need the bytes pinned.
+
+    The credential's own ``election_id`` is not repeated: the message already opens
+    with it, and admission rejects an attestation naming a different election.
+    """
     if len(election_id) != 32:
         raise ValueError(f"electionId must be 32 bytes (got {len(election_id)})")
     if len(pseudonym) != 32:
@@ -134,8 +149,50 @@ def canonical_ballot_message(election_id: bytes, pseudonym: bytes,
     for c1, c2 in ciphertexts:
         if len(c1) != 96 or len(c2) != 96:
             raise ValueError("each ciphertext component must be 96 bytes")
+    if len(attestation.pseudonym) != 32:
+        raise ValueError("attestation.pseudonym must be 32 bytes")
+    if len(attestation.vk) != 48:
+        raise ValueError("attestation.vk must be 48 bytes")
+    if attestation.weight < 0 or attestation.nonce < 0:
+        raise ValueError("attestation weight/nonce must be non-negative")
     out = bytearray()
-    out += BALLOT_LABEL.encode("utf-8")
+    out += BALLOT_MESSAGE_LABEL.encode("utf-8")
+    out += election_id
+    out += pseudonym
+    out += len(ciphertexts).to_bytes(2, "big")
+    for c1, c2 in ciphertexts:
+        out += c1
+        out += c2
+    out += len(zk_proof).to_bytes(4, "big")
+    out += zk_proof
+    # Fixed 32-byte big-endian rather than a minimal encoding: a variable-length
+    # integer would need its own length prefix to keep the concatenation injective,
+    # and weight is unbounded now that voting power is uncapped.
+    out += attestation.pseudonym
+    out += attestation.vk
+    out += int(attestation.weight).to_bytes(32, "big")
+    out += int(attestation.nonce).to_bytes(32, "big")
+    sig = attestation.signature
+    if len(sig) > 0xFFFF:
+        raise ValueError(f"attestation.signature too long ({len(sig)})")
+    out += len(sig).to_bytes(2, "big")
+    out += sig
+    return bytes(out)
+
+
+def _pre_v1_ballot_message(election_id: bytes, pseudonym: bytes,
+                           ciphertexts: Sequence[tuple[bytes, bytes]],
+                           zk_proof: bytes) -> bytes:
+    """The v1 preimage -- diagnostic only, never accepted.
+
+    Its single caller is the failure path in ``verify_ballot_crypto``, so a ballot
+    from a pre-v2 client is reported as a format mismatch rather than as a bad
+    signature. Deliberately a separate function rather than a flag on
+    ``canonical_ballot_message``: a parameter that switches a signed format between
+    versions is one mistaken argument away from accepting the old one.
+    """
+    out = bytearray()
+    out += b"SHUTTER-VOTE-BALLOT-v1"
     out += election_id
     out += pseudonym
     out += len(ciphertexts).to_bytes(2, "big")
@@ -150,7 +207,7 @@ def canonical_ballot_message(election_id: bytes, pseudonym: bytes,
 def seed_ballot_transcript(election_id: bytes, mpk, vk, ciphertexts_pts, *,
                            num_candidates: int, budget: int) -> Transcript:
     """Seed the shared prover/verifier transcript (Variant A / exact)."""
-    t = Transcript(BALLOT_LABEL)
+    t = Transcript(BALLOT_PROOF_TRANSCRIPT_LABEL)
     t.append("electionId", election_id)
     t.append_point("mpk", mpk)
     t.append("vk", g1_to_compressed(vk))  # vk is G1
@@ -180,7 +237,7 @@ class BuiltBallot:
     canonical_preimage: bytes
 
 
-def build_ballot(*, mpk, election_id: bytes, pseudonym: bytes, sk: int, vk,
+def build_ballot(*, mpk, election_id: bytes, pseudonym: bytes, sk: int, vk, attestation,
                  votes: Sequence[int], num_candidates: int, budget: int,
                  rs=None, range_proof_w=None, range_proof_sims=None,
                  budget_proof_w=None, schnorr_k=None) -> BuiltBallot:
@@ -239,7 +296,7 @@ def build_ballot(*, mpk, election_id: bytes, pseudonym: bytes, sk: int, vk,
     # 5. Encode proof, canonicalize, Schnorr-sign.
     zk_proof = encode_ballot_validity_proof(range_proofs, e_b, z_b)
     ct_bytes = [(g2_to_compressed(c1), g2_to_compressed(c2)) for (c1, c2) in cts_pts]
-    preimage = canonical_ballot_message(election_id, pseudonym, ct_bytes, zk_proof)
+    preimage = canonical_ballot_message(election_id, pseudonym, ct_bytes, zk_proof, attestation)
     R, s = schnorr.sign(sk, vk, keccak(preimage), k=schnorr_k)
     return BuiltBallot(
         election_id=election_id,
@@ -258,7 +315,8 @@ def build_ballot(*, mpk, election_id: bytes, pseudonym: bytes, sk: int, vk,
 
 def verify_ballot_crypto(*, mpk, election_id: bytes, pseudonym: bytes, vk_bytes: bytes,
                          ciphertext_bytes: Sequence[tuple[bytes, bytes]], zk_proof: bytes,
-                         voter_signature: bytes, num_candidates: int, budget: int) -> tuple[bool, str | None]:
+                         voter_signature: bytes, attestation, num_candidates: int,
+                         budget: int) -> tuple[bool, str | None]:
     """Verify range/budget proofs and the Schnorr signature.
 
     Returns ``(ok, reason)`` where ``reason`` is ``None`` on success or one of
@@ -320,7 +378,15 @@ def verify_ballot_crypto(*, mpk, election_id: bytes, pseudonym: bytes, vk_bytes:
         R, s = schnorr.decode(voter_signature)
     except Exception:  # noqa: BLE001
         return False, "MALFORMED"
-    preimage = canonical_ballot_message(election_id, pseudonym, ciphertext_bytes, zk_proof)
+    preimage = canonical_ballot_message(election_id, pseudonym, ciphertext_bytes, zk_proof,
+                                       attestation)
     if not schnorr.verify(vk, keccak(preimage), R, s):
+        # Name a format mismatch as one. A v1 signature does not fail informatively
+        # against v2 -- ``schnorr.verify`` just returns False, which reads as "wrong
+        # voter" and sends the reader after the key. One extra keccak, on a path that
+        # has already failed.
+        if schnorr.verify(vk, keccak(_pre_v1_ballot_message(
+                election_id, pseudonym, ciphertext_bytes, zk_proof)), R, s):
+            return False, "INVALID_SIGNATURE_PRE_V2"
         return False, "INVALID_SIGNATURE"
     return True, None

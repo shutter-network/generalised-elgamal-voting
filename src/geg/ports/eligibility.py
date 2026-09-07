@@ -76,16 +76,17 @@ def verify_attestation(
 ) -> bool:
     """Normative ``ATTESTATION_V1`` verification.
 
-    Dispatches on ``attestation.scheme``:
+    Verifies the Schnorr-on-G1 signature over the domain-separated transcript of
+    ``(election_id, pseudonym, vk, weight, nonce)``, and checks that the attestation
+    binds the expected ``election_id`` and that ``weight >= 1``. Returns ``False``
+    (never raises) on any failure, so callers treat it uniformly as
+    ``INVALID_ATTESTATION``.
 
-    * ``V1`` — verifies the Schnorr-on-G1 signature over the domain-separated
-      transcript of ``(election_id, pseudonym, vk, weight, nonce)``.
-    * ``LEGACY`` — verifies the weightless ``keccak(electionId‖pseudonym‖vk)``
-      signature; valid only at ``weight == 1`` (it authorizes no other weight).
-
-    Also checks that the attestation binds the expected ``election_id`` and that
-    ``weight >= 1``. Returns ``False`` (never raises) on any failure, so callers treat
-    it uniformly as ``INVALID_ATTESTATION``.
+    ``V1`` is now the only scheme. The weightless LEGACY credential
+    (``keccak(electionId‖pseudonym‖vk)``, no domain separator, valid only at
+    ``weight == 1``) was dropped when the credential moved inside the signed ballot:
+    with one scheme there is nothing for a scheme code to disambiguate. Deployments
+    that still need it stay on SDK 0.1.2.
 
     There is deliberately **no upper bound** on ``weight``. There used to be a
     per-election ``max_weight``, from when voting power was clamped: it capped what a
@@ -98,33 +99,21 @@ def verify_attestation(
     scale factor's job now (``ElectionConfig.scale``).
     """
     # Import here to keep the port module importable without the crypto backend.
-    from geg.crypto.attestation import verify_attestation_legacy_sig, verify_attestation_sig
+    from geg.crypto.attestation import verify_attestation_sig
     from geg.envelopes.types import AttestationScheme
 
     if attestation.election_id != election_id:
         return False
     if attestation.weight < 1:
         return False
-
-    if attestation.scheme is AttestationScheme.V1:
-        return verify_attestation_sig(
-            eligibility_key,
-            attestation.election_id,
-            attestation.pseudonym,
-            attestation.vk,
-            attestation.weight,
-            attestation.nonce,
-            attestation.signature,
-        )
-    if attestation.scheme is AttestationScheme.LEGACY:
-        # Legacy credentials are weightless — they only authorize weight 1.
-        if attestation.weight != 1:
-            return False
-        return verify_attestation_legacy_sig(
-            eligibility_key,
-            attestation.election_id,
-            attestation.pseudonym,
-            attestation.vk,
-            attestation.signature,
-        )
-    return False
+    if attestation.scheme is not AttestationScheme.V1:
+        return False
+    return verify_attestation_sig(
+        eligibility_key,
+        attestation.election_id,
+        attestation.pseudonym,
+        attestation.vk,
+        attestation.weight,
+        attestation.nonce,
+        attestation.signature,
+    )

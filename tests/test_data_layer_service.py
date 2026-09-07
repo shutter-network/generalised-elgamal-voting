@@ -40,7 +40,6 @@ def test_voting_window_error_round_trips_over_http():
         election_id=eid, pseudonym=b"\x22" * 32, vk=b"\x33" * 48,
         ciphertexts=tuple(Ciphertext(c1=b"\x01" * 96, c2=b"\x02" * 96) for _ in range(3)),
         zk_proof=b"\x01\x02\x03", voter_signature=b"\x55" * 80, attestation=att,
-        voter_attestation_signature=b"\x66" * 80,
     )
     srv = make_server("127.0.0.1", 0, build_app(dl))
     thread = threading.Thread(target=srv.serve_forever, daemon=True)

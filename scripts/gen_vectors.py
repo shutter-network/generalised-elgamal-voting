@@ -1,8 +1,7 @@
 """Generate geg-native conformance vectors.
 
 Produces vectors for the protocol extensions the reference SDK suite does not
-cover — the weighted ``ATTESTATION_V1`` and legacy attestation (positive +
-negative cases) — plus a full-election **flow fixture** (config, ballots incl.
+cover — the weighted ``ATTESTATION_V1`` (positive + negative cases) — plus a full-election **flow fixture** (config, ballots incl.
 invalid + duplicate, aggregate with exclusions, decryption shares, result) that
 any implementation can replay to reproduce the tally.
 
@@ -20,9 +19,9 @@ from pathlib import Path
 from geg.core.admission import StoredBallot, admit
 from geg.core.aggregation import build_aggregate_artifact, recover_result
 from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import attestation as att, ballot as ballot_crypto, binding, proofs, schnorr
+from geg.crypto import attestation as att, ballot as ballot_crypto, proofs, schnorr
 from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
-from geg.crypto.points import g1_to_compressed, g2_from_compressed, g2_to_compressed
+from geg.crypto.points import G2, g1_to_compressed, g2_from_compressed, g2_to_compressed, mul
 from geg.envelopes import codecs
 from geg.envelopes.types import (
     Attestation,
@@ -46,7 +45,7 @@ def _write(category: str, name: str, obj: dict) -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  Attestation vectors (ATTESTATION_V1 + legacy; positive + negative)
+#  Attestation vectors (ATTESTATION_V1; positive + negative)
 # --------------------------------------------------------------------------- #
 
 def gen_attestation():
@@ -57,13 +56,13 @@ def gen_attestation():
     pseudonym = bytes.fromhex("22" * 32)
     k = 0x1111222233334444555566667777888899990000AAAABBBBCCCCDDDDEEEEFFFF
 
-    def att_obj(name, desc, *, weight, scheme, election_id, sig, verify, max_weight=10, nonce=1):
+    def att_obj(name, desc, *, weight, scheme, election_id, sig, verify, nonce=1):
         return {
             "name": name, "description": desc, "version": 1,
             "inputs": {
                 "eligibilityKey": elig_key.hex(), "electionId": election_id.hex(),
                 "pseudonym": pseudonym.hex(), "vk": vk.hex(), "weight": weight, "nonce": nonce,
-                "scheme": scheme, "signature": sig.hex(), "maxWeight": max_weight,
+                "scheme": scheme, "signature": sig.hex(),
             },
             "expected": {"verify": verify},
         }
@@ -92,17 +91,15 @@ def gen_attestation():
            att_obj("attestation_v1_wrong_election", "Signature bound to a different electionId.",
                    weight=5, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_other, verify=False))
 
-    # Negative: weight exceeds maxWeight.
+    # A large weight, to pin that nothing rejects it.
     sig_big = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, 50, 1, k=k)
-    _write("attestation", "attestation_v1_over_max_weight",
-           att_obj("attestation_v1_over_max_weight", "weight=50 exceeds maxWeight=10.",
-                   weight=50, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_big, verify=False, max_weight=10))
+    # Was `attestation_v1_over_max_weight`, asserting a per-election ceiling rejected
+    # weight 50. There is no ceiling now -- it constrained nothing once weights were
+    # uncapped -- so the vector asserts the opposite: a large weight verifies.
+    _write("attestation", "attestation_v1_large_weight",
+           att_obj("attestation_v1_large_weight", "weight=50 verifies; there is no upper bound.",
+                   weight=50, scheme="ATTESTATION_V1", election_id=ELECTION_ID, sig=sig_big, verify=True))
 
-    # Valid legacy (weightless, weight 1, nonceless).
-    sig_legacy = att.sign_attestation_legacy(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, k=k)
-    _write("attestation", "attestation_legacy_valid",
-           att_obj("attestation_legacy_valid", "Legacy weightless attestation, valid at weight 1.",
-                   weight=1, scheme="ATTESTATION_LEGACY", election_id=ELECTION_ID, sig=sig_legacy, verify=True, max_weight=1))
 
 
 # --------------------------------------------------------------------------- #
@@ -138,7 +135,7 @@ def gen_flow():
 
     config = ElectionConfig(
         election_id=ELECTION_ID, num_candidates=num_candidates, budget=budget, mode=Mode.EXACT,
-        variant=Variant.A, weighted=True, max_weight=10, duplicate_policy=DuplicatePolicy.LAST_WINS,
+        variant=Variant.A, weighted=True, duplicate_policy=DuplicatePolicy.LAST_WINS,
         voting_start=1000, voting_end=2000, threshold=Threshold(t=t, n=n),
         keypers=tuple(KeyperIdentity(signing_key=bytes([i]) * 20, url="") for i in range(n)),
         eligibility_key=elig_key, result_publisher_key=b"\xa1" * 20, gateway_keys=(b"\x91" * 20,),
@@ -148,26 +145,19 @@ def gen_flow():
     def make_ballot(votes, pseudonym, weight, *, nonce=1, tamper_sig=False):
         sk, vk = schnorr.keygen()
         vk_b = g1_to_compressed(vk)
-        built = ballot_crypto.build_ballot(mpk=mpk, election_id=ELECTION_ID, pseudonym=pseudonym,
-                                           sk=sk, vk=vk, votes=votes, num_candidates=num_candidates, budget=budget)
-        sig = built.voter_signature
-        if tamper_sig:
-            b = bytearray(sig); b[-1] ^= 0x01; sig = bytes(b)
+        # Minted first: since v2 the voter's signature covers the credential.
         a = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk_b, weight, nonce)
         att_obj = Attestation(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk_b, weight=weight,
                               signature=a, scheme=AttestationScheme.V1, nonce=nonce)
+        built = ballot_crypto.build_ballot(mpk=mpk, election_id=ELECTION_ID, pseudonym=pseudonym,
+                                           sk=sk, vk=vk, attestation=att_obj, votes=votes,
+                                           num_candidates=num_candidates, budget=budget)
+        sig = built.voter_signature
+        if tamper_sig:
+            b = bytearray(sig); b[-1] ^= 0x01; sig = bytes(b)
         return BallotEnvelope(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk_b,
                               ciphertexts=tuple(Ciphertext(c1=c[0], c2=c[1]) for c in built.ciphertexts),
-                              zk_proof=built.zk_proof, voter_signature=sig, attestation=att_obj,
-                              # Signed over the *untampered* ballot digest even when
-                              # `tamper_sig` is set: that case exists to exercise
-                              # INVALID_SIGNATURE, and a binding that failed alongside it
-                              # would stop the fixture distinguishing the two rejections.
-                              voter_attestation_signature=binding.sign_ballot_binding(
-                                  voter_sk=sk, voter_vk=vk, election_id=ELECTION_ID,
-                                  pseudonym=pseudonym, vk_bytes=vk_b,
-                                  ciphertexts=built.ciphertexts, zk_proof=built.zk_proof,
-                                  attestation=att_obj))
+                              zk_proof=built.zk_proof, voter_signature=sig, attestation=att_obj)
 
     P1, P2, P3, P4 = (bytes([x]) * 32 for x in (0xA1, 0xA2, 0xA3, 0xA4))
     stored = [
@@ -211,72 +201,86 @@ def gen_flow():
 
 
 # --------------------------------------------------------------------------- #
-#  Binding vectors (voter's ballot<->credential binding; cross-language)
+#  Ballot vectors (the v2 signed message; cross-language)
 # --------------------------------------------------------------------------- #
 
-def gen_binding():
-    """Vectors for `crypto/binding.py`, so the browser can prove it agrees.
+def gen_ballot():
+    """Vectors for the v2 ballot, so the SDK can prove it agrees byte-for-byte.
 
-    Seeded throughout — unlike the flow fixture, these must not move when
-    regenerated, because a silent change here is a change to what every voter
-    signs. Deterministic keys and a fixed nonce `k` make the whole file a pure
-    function of the code that emits it.
+    This corpus is the **only** cross-language lock on the ballot message. Its v1
+    predecessor was generated once and hand-maintained on both sides, which is how the
+    aggregate digest drifted: both halves went stale together and every test passed.
+    Regenerate here and copy into the SDK in the same change -- never one without the
+    other.
+
+    A negative case is included on purpose: `ballot_swapped_credential` carries a
+    credential the issuer genuinely signed, for the same voter and election, but with a
+    different weight. Under v1 that verified, because the credential sat outside the
+    signed message. It must now fail. A corpus of positive cases alone would not
+    notice an implementation that dropped the credential from the preimage.
     """
-    elig_sk, elig_vk = schnorr.keygen(0x1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF)
-    voter_sk, voter_vk = schnorr.keygen(0x0FEDCBA0987654321FEDCBA0987654321FEDCBA0987654321FEDCBA098765432)
-    vk = g1_to_compressed(voter_vk)
-    pseudonym = bytes.fromhex("22" * 32)
-    ballot_digest = bytes.fromhex("33" * 32)
-    k = 0x1111222233334444555566667777888899990000AAAABBBBCCCCDDDDEEEEFFFF
+    from geg.crypto.points import g2_to_compressed as _g2c
 
-    cases = []
-    for name, scheme, weight, nonce in [
-        ("v1_weight1_nonce1", AttestationScheme.V1, 1, 1),
-        ("v1_weighted", AttestationScheme.V1, 7, 3),
-        ("v1_timestamp_nonce", AttestationScheme.V1, 2, 1_700_000_000),  # sx uses a unix timestamp
-        # Past 2^32, so a truncating scalar encoding cannot pass: a timestamp alone
-        # still fits in 32 bits and would leave that bug invisible until much later.
-        ("v1_nonce_beyond_32_bits", AttestationScheme.V1, 5, 2**40 + 12345),
-        ("legacy", AttestationScheme.LEGACY, 1, 1),
-    ]:
-        if scheme is AttestationScheme.V1:
-            sig = att.sign_attestation(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, weight, nonce, k=k)
-        else:
-            sig = att.sign_attestation_legacy(elig_sk, elig_vk, ELECTION_ID, pseudonym, vk, k=k)
-        att_obj = Attestation(election_id=ELECTION_ID, pseudonym=pseudonym, vk=vk, weight=weight,
-                              signature=sig, scheme=scheme, nonce=nonce)
-        msg = binding.binding_message(
-            election_id=ELECTION_ID, pseudonym=pseudonym, vk_bytes=vk,
-            ballot_digest=ballot_digest, attestation_scheme=scheme,
-            attestation_digest=binding.attestation_digest_for(att_obj),
-            eligibility_signature=sig,
-        )
-        cases.append({
+    ELECTION = b"\xe1" * 32
+    PSEUDO = b"\x42" * 32
+    elig_sk, elig_vk = schnorr.keygen(0xE11A)
+    mpk_sk = 0xB0B
+    mpk = mul(G2, mpk_sk)
+
+    def case(name, desc, *, votes, budget, weight, nonce, mutate=None, verify=True):
+        sk, vk = schnorr.keygen()
+        vk_b = g1_to_compressed(vk)
+        a = att.sign_attestation(elig_sk, elig_vk, ELECTION, PSEUDO, vk_b, weight, nonce)
+        att_obj = Attestation(election_id=ELECTION, pseudonym=PSEUDO, vk=vk_b,
+                              weight=weight, signature=a, scheme=AttestationScheme.V1,
+                              nonce=nonce)
+        built = ballot_crypto.build_ballot(
+            mpk=mpk, election_id=ELECTION, pseudonym=PSEUDO, sk=sk, vk=vk,
+            attestation=att_obj, votes=votes, num_candidates=len(votes), budget=budget)
+        wire_att = att_obj
+        if mutate is not None:
+            wire_att = mutate(att_obj, elig_sk, elig_vk, vk_b)
+        _write("ballot", name, {
             "name": name,
-            "attestation": codecs.enc_attestation(att_obj),
-            "ballotDigest": "0x" + ballot_digest.hex(),
-            "attestationDigest": "0x" + binding.attestation_digest_for(att_obj).hex(),
-            "bindingMessage": "0x" + msg.hex(),
-            "voterAttestationSignature": "0x" + binding.sign_binding(voter_sk, voter_vk, msg, k=k).hex(),
+            "description": desc,
+            "version": 2,
+            "inputs": {
+                "mpk": _g2c(mpk).hex(),
+                "vk": vk_b.hex(),
+                "election_id": ELECTION.hex(),
+                "pseudonym": PSEUDO.hex(),
+                "eligibility_key": g1_to_compressed(elig_vk).hex(),
+                "params": {"numCandidates": len(votes), "budget": budget,
+                           "mode": "exact", "variant": "A"},
+                "ciphertexts": [{"c1": c1.hex(), "c2": c2.hex()}
+                                for (c1, c2) in built.ciphertexts],
+                "zkProof": built.zk_proof.hex(),
+                "signature": built.voter_signature.hex(),
+                "attestation": {
+                    "electionId": wire_att.election_id.hex(),
+                    "pseudonym": wire_att.pseudonym.hex(),
+                    "vk": wire_att.vk.hex(),
+                    "weight": wire_att.weight,
+                    "nonce": wire_att.nonce,
+                    "signature": wire_att.signature.hex(),
+                },
+            },
+            "expected": {"verify": verify},
         })
 
-    _write("binding", "binding_message", {
-        "name": "binding_message",
-        "description": (
-            "Voter ballot<->credential binding message and signature. The browser "
-            "rebuilds the transcript itself (the SDK keeps Transcript.preimage private), "
-            "so these vectors are what hold the two languages together: a disagreement "
-            "of one byte excludes every ballot as INVALID_ATTESTATION."
-        ),
-        "version": 1,
-        "inputs": {
-            "electionId": "0x" + ELECTION_ID.hex(),
-            "pseudonym": "0x" + pseudonym.hex(),
-            "vk": "0x" + vk.hex(),
-            "eligibilityKey": "0x" + g1_to_compressed(elig_vk).hex(),
-        },
-        "cases": cases,
-    })
+    case("ballot_variantA_exact",
+         "Full ballot: Variant A, exact, l=3, B=3, votes [1,1,1], weight 5. Must verify.",
+         votes=[1, 1, 1], budget=3, weight=5, nonce=1)
+
+    def _reweight(a, esk, evk, vk_b):
+        sig = att.sign_attestation(esk, evk, ELECTION, PSEUDO, vk_b, 99, a.nonce)
+        return Attestation(election_id=a.election_id, pseudonym=a.pseudonym, vk=a.vk,
+                           weight=99, signature=sig, scheme=a.scheme, nonce=a.nonce)
+
+    case("ballot_swapped_credential",
+         "Credential swapped for another the issuer signed (weight 99). Verified under "
+         "v1; must fail under v2, where the voter's signature covers the credential.",
+         votes=[1, 1, 1], budget=3, weight=5, nonce=1, mutate=_reweight, verify=False)
 
 
 if __name__ == "__main__":
@@ -285,6 +289,6 @@ if __name__ == "__main__":
     # Named targets, because the generator is unseeded: regenerating a category
     # rewrites its crypto material, so a schema change to one fixture must not
     # churn the others as a side effect.
-    targets = sys.argv[1:] or ["attestation", "binding", "flow"]
+    targets = sys.argv[1:] or ["attestation", "ballot", "flow"]
     for name in targets:
-        {"attestation": gen_attestation, "binding": gen_binding, "flow": gen_flow}[name]()
+        {"attestation": gen_attestation, "ballot": gen_ballot, "flow": gen_flow}[name]()

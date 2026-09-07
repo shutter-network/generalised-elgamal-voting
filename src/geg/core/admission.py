@@ -24,11 +24,6 @@ from geg.core.config import DuplicatePolicy, ElectionConfig
 from geg.crypto.ballot import verify_ballot_crypto
 from geg.crypto.points import g2_from_compressed
 from geg.envelopes.types import BallotEnvelope, Exclusion, ExclusionReason, StoredBallot
-from geg.crypto.binding import (
-    ballot_message_digest,
-    envelope_binding_message,
-    verify_binding_sig,
-)
 from geg.ports.eligibility import verify_attestation
 from geg.core.state import is_voting_open
 
@@ -89,31 +84,18 @@ def validate_ballot(sb: StoredBallot, config: ElectionConfig, mpk) -> ExclusionR
         ciphertext_bytes=[(ct.c1, ct.c2) for ct in env.ciphertexts],
         zk_proof=env.zk_proof,
         voter_signature=env.voter_signature,
+        attestation=att,
         num_candidates=config.num_candidates,
         budget=config.budget,
     )
     if not ok:
+        # A pre-v2 client signed a message that excluded the credential. Surfaced as
+        # its own reason rather than INVALID_SIGNATURE, which would send an operator
+        # after the voter's key instead of the client version.
+        if reason == "INVALID_SIGNATURE_PRE_V2":
+            return ExclusionReason.INVALID_SIGNATURE
         return ExclusionReason(reason)  # "MALFORMED" | "INVALID_PROOF" | "INVALID_SIGNATURE"
 
-    # The voter's binding of *this* ballot to *this* credential.
-    #
-    # Everything above proves the credential was issued to this voter and that the
-    # ballot is well-formed — not that the voter cast this ballot *with this
-    # credential*. `weight` and `nonce` are covered by nothing the voter signs, and
-    # `nonce` orders re-votes, so without this an assembler holding two of the
-    # voter's own credentials picks which of their ballots wins.
-    #
-    # Deliberately last. The binding message covers the ballot digest, so a
-    # tampered ciphertext breaks it too — checking it earlier would report every
-    # mangled ballot as INVALID_ATTESTATION and bury the real reason. Here it can
-    # only fire when the ballot and the credential are each sound on their own and
-    # it is the *pairing* that is not.
-    if not verify_binding_sig(
-        env.vk,
-        envelope_binding_message(env, ballot_message_digest(env)),
-        env.voter_attestation_signature,
-    ):
-        return ExclusionReason.INVALID_ATTESTATION
     return None
 
 
@@ -125,8 +107,7 @@ def _duplicate_losers(valid: list[StoredBallot], policy: DuplicatePolicy) -> set
     re-vote), ``FIRST_WINS`` the lowest — with the stored ``sequence_number`` as the
     tie-break (later for last-wins, earlier for first-wins). Ordering by the issuer-signed
     nonce is what defeats replay/reordering: a replayed old ballot carries a lower nonce and
-    always loses, no matter when it was submitted. (LEGACY credentials are nonceless and all
-    carry nonce 1, so they tie and fall back to sequence order — the original behaviour.)
+    always loses, no matter when it was submitted.
     """
     def rank(sb: StoredBallot) -> tuple[int, int]:
         return (sb.envelope.attestation.nonce, sb.sequence_number)

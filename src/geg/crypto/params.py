@@ -27,12 +27,32 @@ DST_FIAT_SHAMIR = b"SHUTTER-VOTE-FS-v1"
 DST_SCHNORR = b"SHUTTER-VOTE-SCHNORR-v1"
 
 # Transcript labels.
-BALLOT_LABEL = "SHUTTER-VOTE-BALLOT-v1"
+# v2 folds the eligibility credential into the signed ballot message. Under v1 the
+# credential sat outside it and was bound by a second Schnorr signature over
+# ``BINDING_LABEL``; that transcript existed in four implementations across two
+# languages and is gone. Bumping the label is what makes a stale client detectable:
+# a v1 signature checked against v2 does not fail informatively, it just returns
+# False, which reads as "wrong voter".
+BALLOT_MESSAGE_LABEL = "SHUTTER-VOTE-BALLOT-v2"
+
+# The Fiat-Shamir transcript for the range/budget proofs -- a **different domain** from
+# the signed message above, not an older version of it.
+#
+# These were one constant. Bumping the message to v2 therefore changed every proof's
+# challenge as a side effect, which is a bug: the two version for unrelated reasons.
+# The message changed because the credential moved inside it; the proof still proves
+# the same statement over the same public inputs and its domain never changed.
+#
+# The string carries `-PROOF-` for a reason. While it read `SHUTTER-VOTE-BALLOT-v1` it
+# was byte-identical to the *superseded message format* used by the v1 detection in
+# `_pre_v1_ballot_message`, so one literal meant two unrelated things and the obvious
+# tidy-up -- bumping this "stale v1" to v2 -- silently invalidated every proof.
+# `tests/test_crypto_ballot.py` asserts the three labels stay distinct.
+BALLOT_PROOF_TRANSCRIPT_LABEL = "SHUTTER-VOTE-BALLOT-PROOF-v1"
 ONCHAIN_DECRYPT_LABEL = "SHUTTER-VOTE-DECRYPT-v1"
 ATTESTATION_LABEL = "SHUTTER-VOTE-ATTEST-v1"  # ATTESTATION_V1 (weighted)
 # The voter's ballot<->credential binding (crypto/binding.py). A label of its
 # own so a binding signature can never be replayed as a ballot or attestation one.
-BINDING_LABEL = "SHUTTER-VOTE-BINDING-v1"
 
 # Ballot-validity-proof codec constants.
 BVP_VERSION = 0x01

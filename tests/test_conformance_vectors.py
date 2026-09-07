@@ -152,6 +152,13 @@ def test_ballot_vector(name, v):
     params = i["params"]
     if params["mode"] != "exact" or params["variant"] != "A":
         pytest.skip("variant B / atMost ballot is conformance level 2 (not implemented)")
+    from geg.envelopes.types import Attestation, AttestationScheme
+    a = i["attestation"]
+    attestation = Attestation(
+        election_id=_hx(a["electionId"]), pseudonym=_hx(a["pseudonym"]),
+        vk=_hx(a["vk"]), weight=a["weight"], nonce=a["nonce"],
+        signature=_hx(a["signature"]), scheme=AttestationScheme.V1,
+    )
     ok, _reason = verify_ballot_crypto(
         mpk=_g2(i["mpk"]),
         election_id=_hx(i["election_id"]),
@@ -160,6 +167,7 @@ def test_ballot_vector(name, v):
         ciphertext_bytes=[(_hx(c["c1"]), _hx(c["c2"])) for c in i["ciphertexts"]],
         zk_proof=_hx(i["zkProof"]),
         voter_signature=_hx(i["signature"]),
+        attestation=attestation,
         num_candidates=params["numCandidates"],
         budget=params["budget"],
     )

@@ -37,14 +37,6 @@ def test_fixed_weight_override():
     assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
 
 
-def test_issued_legacy_attestation_verifies_at_weight_1():
-    elig_sk, _ = schnorr.keygen()
-    svc = StubEligibilityService(elig_sk, scheme=AttestationScheme.LEGACY)
-    att = svc.issue_attestation(_request(weight=7))  # legacy forces weight 1
-    assert att.scheme is AttestationScheme.LEGACY and att.weight == 1
-    assert verify_attestation(svc.eligibility_key, att, election_id=ELECTION)
-
-
 def test_verification_is_adapter_independent():
     """Same voter tuple, two stub instances with the same key → interchangeable."""
     elig_sk, _ = schnorr.keygen()

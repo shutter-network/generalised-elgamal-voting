@@ -45,13 +45,17 @@ class ExclusionReason(str, Enum):
 class AttestationScheme(str, Enum):
     """Which eligibility-credential scheme an attestation uses.
 
-    ``V1`` is the weighted, domain-separated ``ATTESTATION_V1``. ``LEGACY`` is the
-    weightless Wahlregister scheme (``keccak(electionId‖pseudonym‖vk)``), carried
-    for interop with existing Munich-style deployments and only valid at weight 1.
+    Only ``V1`` -- the weighted, domain-separated ``ATTESTATION_V1``. The weightless
+    Wahlregister scheme (``keccak(electionId‖pseudonym‖vk)``, no domain separator,
+    valid only at weight 1) was dropped when the credential moved inside the signed
+    ballot: with one scheme there is nothing for a scheme code to disambiguate, so it
+    left the signed message too. Deployments needing it stay on SDK 0.1.2.
+
+    Kept as an enum rather than collapsed away so the wire format still carries an
+    explicit ``scheme`` and a future scheme has somewhere to go.
     """
 
     V1 = "ATTESTATION_V1"
-    LEGACY = "ATTESTATION_LEGACY"
 
 
 @dataclass(frozen=True)
@@ -74,13 +78,12 @@ class Attestation:
     a monotonic per-(election, pseudonym) re-vote counter (issued 1, 2, 3, … by the
     eligibility service) that the tally uses to pick the voter's latest ballot, so a
     replayed old ballot (lower nonce) can never override a genuine re-vote. The
-    ``LEGACY`` scheme is weightless/nonceless and carries ``weight = 1``, ``nonce = 1``.
     """
 
     election_id: bytes  # bytes32
     pseudonym: bytes  # bytes32
     vk: bytes  # G1, 48 bytes — voter ephemeral Schnorr verification key
-    weight: int  # >= 1, uncapped (must be 1 for the LEGACY scheme)
+    weight: int  # >= 1, uncapped
     signature: bytes  # Schnorr, 80 bytes, by eligibility_key over the tuple
     scheme: AttestationScheme = AttestationScheme.V1
     nonce: int = 1  # monotonic re-vote counter per (election, pseudonym); V1 only, >= 1
@@ -101,14 +104,11 @@ class BallotEnvelope:
     vk: bytes  # G1, 48 bytes
     ciphertexts: tuple[Ciphertext, ...]  # one per candidate
     zk_proof: bytes  # versioned BallotValidityProof encoding (variable length)
-    voter_signature: bytes  # Schnorr, 80 bytes, over canonical ballot message
+    # Schnorr, 80 bytes, over the canonical ballot message -- which since v2 covers
+    # the attestation too, so this one signature binds the ballot *and* the credential
+    # it was cast with. There used to be a second signature here for that job.
+    voter_signature: bytes
     attestation: Attestation
-    # Schnorr, 80 bytes, under the same voter key as ``voter_signature`` but over
-    # `crypto.binding`'s message: the ballot digest *and* the credential together.
-    # Without it the voter commits to no particular `weight`/`nonce`, and whoever
-    # pairs a ballot with a credential picks which of the voter's ballots wins the
-    # re-vote ordering. See crypto/binding.py.
-    voter_attestation_signature: bytes
 
 
 @dataclass(frozen=True)

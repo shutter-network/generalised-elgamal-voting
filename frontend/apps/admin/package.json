@@ -10,7 +10,7 @@
     "postinstall": "cp ../../node_modules/@shutter-network/urban-verified-crypto/dist/blst.js ../../node_modules/@shutter-network/urban-verified-crypto/dist/blst.wasm public/"
   },
   "dependencies": {
-    "@shutter-network/urban-verified-crypto": "0.1.2",
+    "@shutter-network/urban-verified-crypto": "0.3.0",
     "buffer": "^6.0.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

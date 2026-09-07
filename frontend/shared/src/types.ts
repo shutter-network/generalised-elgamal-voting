@@ -90,7 +90,6 @@ export interface BallotJson {
   /** Schnorr under the same voter key as `voterSignature`, over the ballot digest
    * *and* the credential together — see `binding.ts`. Required: an optional
    * binding is no binding, since an assembler would simply omit it. */
-  voterAttestationSignature: Hex;
 }
 
 export interface ExclusionJson {

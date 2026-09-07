@@ -40,14 +40,6 @@ def test_weighted_admission_sums_weights(env):
     assert {a.weight for a in res.admitted} == {3, 5}
 
 
-def test_legacy_attestation_admitted_at_weight_1(env):
-    cfg = env.config()
-    ballots = [_stored(env, 0, [1, 0, 2], P1, scheme=AttestationScheme.LEGACY)]
-    res = admit(ballots, cfg, env.mpk_bytes)
-    assert len(res.admitted) == 1
-    assert res.admitted[0].weight == 1
-
-
 def test_exclude_wrong_election_malformed(env):
     cfg = env.config()
     ballots = [StoredBallot(0, env.ballot([1, 0, 2], P1, election_id=b"\x99" * 32))]

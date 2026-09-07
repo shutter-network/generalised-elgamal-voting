@@ -9,9 +9,9 @@
   "scripts": {
     "dev:admin": "npm run dev -w @geg/admin",
     "dev:voter": "npm run dev -w @geg/voter",
-    "build": "npm run build -w @geg/admin && npm run build -w @geg/voter",
+    "build": "npm run typecheck && npm run build -w @geg/admin && npm run build -w @geg/voter",
     "test": "vitest run",
-    "typecheck": "tsc -p shared/tsconfig.json --noEmit"
+    "typecheck": "tsc -p shared/tsconfig.json --noEmit && tsc -p apps/admin/tsconfig.json --noEmit && tsc -p apps/voter/tsconfig.json --noEmit"
   },
   "dependencies": {
     "@rainbow-me/rainbowkit": "^2.2.0",

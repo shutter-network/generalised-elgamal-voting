@@ -6,29 +6,34 @@
  * the (pluggable, dummy) eligibility service and is attached as the geg wire's
  * *structured* `attestation` field.
  *
- * Attestation note: the SDK's `wrAttestation` is opaque bytes NOT covered by the signed
- * `canonicalBallotMessage`, whereas the geg wire ballot carries a structured attestation
- * the gateway/tally verify. So we pass an empty placeholder to `buildBallot` and attach
- * the real structured attestation when assembling the wire envelope.
+ * Attestation note: since the v2 ballot message the credential lives *inside* the signed
+ * ballot, so there is exactly one voter signature and it covers `weight`, `nonce` and the
+ * issuer's signature bytes along with the ciphertexts and proof.
  *
- * Because the SDK's ballot signature cannot be extended to cover that attestation, the
- * envelope carries a second signature under the same voter key — `voterAttestationSignature`
- * — over the ballot digest and the credential together. Without it the voter commits to no
- * particular `weight` or `nonce`, and `nonce` is what orders their re-votes. */
+ * It used to be two. The SDK's `wrAttestation` slot was opaque bytes not covered by
+ * `canonicalBallotMessage`, so this module passed an empty placeholder, attached the real
+ * credential beside it, and signed a *second* time over a separate binding transcript to
+ * tie them together — because otherwise the voter committed to no particular `weight` or
+ * `nonce`, and `nonce` is what orders their re-votes. That transcript existed in four
+ * implementations across two languages; folding the credential into the ballot deleted all
+ * of them.
+ *
+ * One consequence worth knowing when reading rejections: a tampered ciphertext and a
+ * swapped credential now both fail as an invalid signature. The old two-step check could
+ * tell them apart, and `INVALID_ATTESTATION` meant something narrow — ballot and
+ * credential each sound, the *pairing* wrong. There is only one signature to fail now. */
 
 import {
   G2Point,
   buildBallot,
-  canonicalBallotMessage,
-  encodeSchnorr,
   initCurves,
   schnorrKeygen,
-  schnorrSign,
+  type Attestation,
   type BallotInputs,
 } from "@shutter-network/urban-verified-crypto";
 import {
+  type AttestationJson,
   attest,
-  bindingMessage,
   bytesToHex,
   eidToBareHex,
   eidToHex,
@@ -37,7 +42,6 @@ import {
   type BallotJson,
   type ElectionConfig,
 } from "@geg/shared";
-import { keccak256 } from "viem";
 import type { Hex } from "viem";
 
 /** The chain-free EIP-191 challenge the wallet signs — byte-identical to the eligibility
@@ -51,6 +55,20 @@ let curvesReady: Promise<void> | null = null;
 export function ensureCurves(): Promise<void> {
   if (!curvesReady) curvesReady = initCurves();
   return curvesReady;
+}
+
+/** The wire credential (hex, optional nonce) as the SDK's byte-and-bigint shape. */
+function toSdkAttestation(a: AttestationJson): Attestation {
+  return {
+    electionId: hexToBytes(a.electionId),
+    pseudonym: hexToBytes(a.pseudonym),
+    vk: hexToBytes(a.vk),
+    weight: BigInt(a.weight),
+    // The issuer always emits it; defaulting keeps an older stub usable rather than
+    // silently signing over a different nonce than the one that will be stored.
+    nonce: BigInt(a.nonce ?? 1),
+    signature: hexToBytes(a.signature),
+  };
 }
 
 export interface CastVoteArgs {
@@ -82,6 +100,11 @@ export async function castVote(args: CastVoteArgs): Promise<{ sequenceNumber: nu
   const pseudonymBytes = hexToBytes(pseudonym);
 
   onStage?.("Building ballot");
+
+  // The credential goes *into* the ballot, so it must exist before the ballot is
+  // signed. Under v1 it was fetched here too, but the ballot's own signature did not
+  // cover it and a second signature over a separate binding transcript was what tied
+  // them together.
   const inputs: BallotInputs = buildBallot({
     mpk,
     electionId: eidBytes,
@@ -95,43 +118,8 @@ export async function castVote(args: CastVoteArgs): Promise<{ sequenceNumber: nu
       mode: config.mode,
       variant: config.variant,
     },
-    wrAttestation: new Uint8Array(0), // placeholder; not signed, not read by geg
+    attestation: toSdkAttestation(attestation),
   });
-
-  // Bind the ballot to the credential it was cast with.
-  //
-  // `voterSignature` covers (electionId, pseudonym, ciphertexts, zkProof) and
-  // says nothing about `weight` or `nonce`. Since `nonce` decides which of a
-  // voter's re-votes counts, a signature over the ballot alone leaves whoever
-  // pairs the two free to choose. This second signature — same key, both digests
-  // — is what makes the pairing the voter's, and admission rejects a ballot
-  // whose binding does not verify.
-  onStage?.("Signing ballot + attestation");
-  const ballotDigest = hexToBytes(
-    keccak256(
-      canonicalBallotMessage({
-        electionId: eidBytes,
-        pseudonym: inputs.pseudonym,
-        ciphertexts: inputs.ciphertexts,
-        zkProof: inputs.zkProof,
-      }),
-    ),
-  );
-  const voterAttestationSignature = bytesToHex(
-    encodeSchnorr(
-      schnorrSign(
-        sk,
-        vk,
-        bindingMessage({
-          electionId: eidBytes,
-          pseudonym: inputs.pseudonym,
-          vk: inputs.vk,
-          ballotDigest,
-          attestation,
-        }),
-      ),
-    ),
-  );
 
   const ballot: BallotJson = {
     electionId: eidHex,
@@ -141,7 +129,6 @@ export async function castVote(args: CastVoteArgs): Promise<{ sequenceNumber: nu
     zkProof: bytesToHex(inputs.zkProof),
     voterSignature: bytesToHex(inputs.voterSignature),
     attestation,
-    voterAttestationSignature,
   };
 
   return submitBallot(eidToBareHex(config.electionId), ballot);

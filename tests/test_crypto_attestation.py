@@ -117,36 +117,3 @@ def test_distinct_from_legacy_scheme():
     legacy = keccak(ELECTION + PSEUDO + voter)
     v1 = attestation.attestation_message(ELECTION, PSEUDO, voter, weight=1, nonce=1)
     assert legacy != v1
-
-
-# --- legacy (weightless) scheme -------------------------------------------- #
-
-def _legacy_attest(sk, vk, vk_bytes, election=ELECTION, pseudo=PSEUDO):
-    sig = attestation.sign_attestation_legacy(sk, vk, election, pseudo, vk_bytes)
-    return Attestation(
-        election_id=election, pseudonym=pseudo, vk=vk_bytes, weight=1,
-        signature=sig, scheme=AttestationScheme.LEGACY,
-    )
-
-
-def test_legacy_sign_verify_ok():
-    sk, vk, vk_b = _elig_key()
-    att = _legacy_attest(sk, vk, _voter_vk())
-    assert verify_attestation(vk_b, att, election_id=ELECTION)
-
-
-def test_legacy_rejects_weight_over_1():
-    sk, vk, vk_b = _elig_key()
-    att = _legacy_attest(sk, vk, _voter_vk())
-    tampered = Attestation(
-        election_id=att.election_id, pseudonym=att.pseudonym, vk=att.vk,
-        weight=2, signature=att.signature, scheme=AttestationScheme.LEGACY,
-    )
-    assert not verify_attestation(vk_b, tampered, election_id=ELECTION)
-
-
-def test_legacy_matches_reference_message():
-    """Legacy message is exactly keccak(electionId || pseudonym || vk)."""
-    from eth_utils import keccak
-    voter = _voter_vk()
-    assert attestation.legacy_attestation_message(ELECTION, PSEUDO, voter) == keccak(ELECTION + PSEUDO + voter)

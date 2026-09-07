@@ -51,6 +51,17 @@ def test_schnorr_known_vector_byte_parity():
 #  Ballot — deterministic build reproduces exact ciphertexts, proof, signature
 # --------------------------------------------------------------------------- #
 
+def _vector_attestation(i):
+    """The credential pinned in the vector, as an ``Attestation``."""
+    from geg.envelopes.types import Attestation, AttestationScheme
+    a = i["attestation"]
+    return Attestation(
+        election_id=_bytes(a["electionId"]), pseudonym=_bytes(a["pseudonym"]),
+        vk=_bytes(a["vk"]), weight=a["weight"], nonce=a["nonce"],
+        signature=_bytes(a["signature"]), scheme=AttestationScheme.V1,
+    )
+
+
 def test_ballot_known_vector_byte_parity():
     v = json.loads((VECTORS / "ballot" / "ballot_variantA_exact_known.json").read_text())
     i = v["inputs"]
@@ -72,6 +83,7 @@ def test_ballot_known_vector_byte_parity():
         pseudonym=_bytes(i["pseudonym"]),
         sk=_int(i["sk"]),
         vk=vk,
+        attestation=_vector_attestation(i),
         votes=[int(x) for x in i["votes"]],
         num_candidates=params["numCandidates"],
         budget=params["budget"],
@@ -101,6 +113,7 @@ def test_ballot_known_vector_verifies():
         ciphertext_bytes=[(bytes.fromhex(a), bytes.fromhex(b)) for (a, b) in out["ciphertexts"]],
         zk_proof=bytes.fromhex(out["zkProof"]),
         voter_signature=bytes.fromhex(out["voterSignature"]),
+        attestation=_vector_attestation(i),
         num_candidates=params["numCandidates"],
         budget=params["budget"],
     )

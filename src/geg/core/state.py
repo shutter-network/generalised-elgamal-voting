@@ -1,0 +1,77 @@
+"""Derived election lifecycle state.
+
+Election state is **derived, never stored**: a pure function of the facts in the
+data layer and the current time. Every service and every auditor uses this same
+function, so no service owns transitions — they are all watchers. The voting
+interval is half-open ``[voting_start, voting_end)``: a ballot at exactly
+``voting_end`` is out of window.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+
+from geg.core.config import ElectionConfig
+
+
+class ElectionState(str, Enum):
+    # Terminal states.
+    CANCELLED = "Cancelled"  # cancellation recorded (only possible before voting_start)
+    COMPLETE = "Complete"  # result published
+    DKG_FAILED = "DKGFailed"  # now >= voting_start and key not finalized
+    # Live states.
+    REGISTERED = "Registered"  # config exists, key not finalized, now < voting_start
+    KEY_READY = "KeyReady"  # key finalized, now < voting_start
+    VOTING = "Voting"  # key finalized, voting_start <= now < voting_end
+    TALLYING = "Tallying"  # key finalized, now >= voting_end, no result (unbounded — no deadline)
+    # Advisory overlay on TALLYING (NOT terminal): the coordinator abandoned the tally after
+    # exhausting its attempts. Recoverable — a published result still wins (→ COMPLETE), and
+    # the coordinator clears it on resume.
+    TALLY_STALLED = "TallyStalled"
+
+
+@dataclass(frozen=True)
+class StateFacts:
+    """The data-layer facts state derivation depends on."""
+
+    cancelled: bool  # a cancellation fact exists
+    key_finalized: bool  # the DKG finalization quorum rule is met
+    result_published: bool  # a result artifact exists
+    tally_stalled: bool = False  # coordinator abandoned the tally (advisory, recoverable)
+
+
+def derive_state(config: ElectionConfig, facts: StateFacts, now: int) -> ElectionState:
+    """Map ``(config, facts, now)`` to a lifecycle state.
+
+    The order below is the normative derivation: terminal outcomes are resolved
+    before live states.
+    """
+    # Terminal: cancellation (only ever recorded before voting_start).
+    if facts.cancelled:
+        return ElectionState.CANCELLED
+    # Terminal: a published result wins over everything else.
+    if facts.result_published:
+        return ElectionState.COMPLETE
+    # Terminal: no finalized key by the time voting opens.
+    if now >= config.voting_start and not facts.key_finalized:
+        return ElectionState.DKG_FAILED
+
+    # Live states (key finalization + the half-open voting window).
+    if not facts.key_finalized:
+        # now < voting_start guaranteed here (else DKGFailed above).
+        return ElectionState.REGISTERED
+    if now < config.voting_start:
+        return ElectionState.KEY_READY
+    if now < config.voting_end:
+        return ElectionState.VOTING
+    # Past voting_end with a key but no result → Tallying, unless the coordinator has
+    # marked it stalled (advisory overlay; a result would have been COMPLETE above).
+    if facts.tally_stalled:
+        return ElectionState.TALLY_STALLED
+    return ElectionState.TALLYING
+
+
+def is_voting_open(config: ElectionConfig, now: int) -> bool:
+    """Half-open voting-window predicate: ``voting_start <= now < voting_end``."""
+    return config.voting_start <= now < config.voting_end

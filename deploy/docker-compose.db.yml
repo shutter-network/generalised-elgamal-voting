@@ -1,0 +1,114 @@
+# Database-backend deployment: every service speaks HTTP to the uniform
+# data-layer service, which writes to Postgres. See RUNNING.md.
+#
+#   python scripts/gen_deploy_env.py          # once: writes deploy/.env
+#   docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env up --build
+#
+# All identities come from deploy/.env (see .env.example for the full list).
+name: geg-db
+
+x-image: &image
+  build:
+    context: ..
+    dockerfile: Dockerfile
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: geg
+      POSTGRES_PASSWORD: geg
+      POSTGRES_DB: geg
+    volumes:
+      - ../postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geg -d geg"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The one uniform data-layer service (GEG_DATA_LAYER=database → Postgres).
+  # Every other component talks to it over HTTP.
+  data-layer:
+    <<: *image
+    command: ["python", "-m", "geg.services.data_layer"]
+    restart: unless-stopped
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_DSN: postgresql://geg:geg@postgres:5432/geg
+      DATA_LAYER_PORT: "8000"
+    # No host port. Only internal service can access it.
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Coordinator: watches for Registered elections, discovers keyper endpoints from
+  # the config, bootstraps their tokens, drives the DKG, and — once Tallying —
+  # triggers keypers to aggregate (quorum → canonical) then decrypt, and recovers +
+  # publishes the result (signing it with COORDINATOR_SIGNING_KEY = result_publisher_key).
+  # The single keyper-facing orchestrator.
+  coordinator:
+    <<: *image
+    command: ["python", "-m", "geg.services.coordinator"]
+    restart: unless-stopped
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
+      COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
+      COORDINATOR_PORT: "8400"
+      COORDINATOR_POLL_S: "30.0"
+      COORDINATOR_STATE_DIR: /coordinator-state   # private token persistence (restart-safe)
+    ports:
+      - "8400:8400"
+    volumes:
+      - ../coordinator-state:/coordinator-state
+    # Local split only: lets this service reach the separately-deployed keyper
+    # stacks over host-published ports (http://host.docker.internal:810N). Provided
+    # automatically on Docker Desktop (Mac/Windows); required on Linux. Unused in
+    # production, where the config's keyper URLs are real public addresses.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: [data-layer]
+
+  # Public API (frontend / external integrators): reads + ballot ingest on :8500.
+  # Reads are backend-blind (through the data-layer service, identical on db and chain).
+  # The ballot POST (formerly the standalone gateway) is signed with GATEWAY_SIGNING_KEY on
+  # db too — the data-layer service verifies it against config.gatewayKeys. CORS-enabled.
+  api:
+    <<: *image
+    command: ["python", "-m", "geg.services.api"]
+    restart: unless-stopped
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      API_PORT: "8500"
+      GATEWAY_FILTER: "1"   # ballot admission filter (UX + spam); 0 to disable
+      # Signs each ballot WRITE so the data layer can honour config.gatewayKeys.
+      # On chain this same key is the ballot tx sender; on db it is the gateway
+      # identity. Required whenever an election registers a non-empty gatewayKeys.
+      GATEWAY_SIGNING_KEY: ${GATEWAY_SIGNING_KEY}
+    ports:
+      - "8500:8500"
+    depends_on: [data-layer]
+
+
+  # Admin service — HTTP register/cancel on :8300. Each write is authorized by the admin
+  # wallet's signature (relayed by the service; no token). Registration is driven by the
+  # admin frontend, which builds and signs the config in the browser.
+  admin:
+    <<: *image
+    entrypoint: ["python", "-m", "geg.services.admin"]
+    command: ["serve"]
+    restart: unless-stopped
+    environment:
+      GEG_DATA_LAYER: database
+      GEG_DATA_LAYER_URL: http://data-layer:8000
+      ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
+      ADMIN_PORT: "8300"
+    ports:
+      - "8300:8300"
+    depends_on: [data-layer]

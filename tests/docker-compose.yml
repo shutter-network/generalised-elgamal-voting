@@ -1,0 +1,22 @@
+# Test-only Postgres for the geg database data-layer adapter (test_adapter_db.py,
+# test_services_db_e2e.py). NOT a deployment stack — those live in deploy/.
+# Isolated from any other local Postgres: non-default port 5433, throwaway creds.
+#   docker compose -f tests/docker-compose.yml up -d      # start
+#   docker compose -f tests/docker-compose.yml down -v    # stop + wipe
+name: geg-test-db
+
+services:
+  geg-postgres:
+    image: postgres:16-alpine
+    container_name: geg-postgres
+    environment:
+      POSTGRES_USER: geg
+      POSTGRES_PASSWORD: geg
+      POSTGRES_DB: geg
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geg -d geg"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

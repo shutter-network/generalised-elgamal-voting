@@ -1,0 +1,37 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.env
+
+# Postgres data
+postgres-data/
+
+# Shared keyper-token hand-off dir (bind-mounted into coordinator/tally-aggregator).
+# Holds secret bootstrap tokens — never commit.
+coordinator-state/
+.env.coordinator
+!.env.coordinator.example
+
+# Keyper encrypted-state bind dirs (docker-compose.keyper.yml). Fernet-encrypted
+# keyper secrets — never commit.
+keyper-state*/
+
+# Eligibility service durable state (re-vote nonce DB) bind dir.
+eligibility-state/
+
+# Per-operator keyper env (holds the keyper's private key) — but keep the template.
+.env.keyper*
+!.env.keyper.example
+
+# Eligibility issuer env (holds the issuing private key) — but keep the template.
+.env.eligibility
+!.env.eligibility.example
+
+# Internal engineering / design docs — not published with the repo
+docs/
+.ai/

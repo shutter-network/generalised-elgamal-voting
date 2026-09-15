@@ -1,0 +1,20 @@
+"""Services / actors — thin orchestration over the deep modules,
+organized one **domain package** per actor. Each package colocates that domain's
+modules and re-exports its public API; deployable ones expose ``__main__`` so
+``python -m geg.services.<domain>`` runs them.
+
+* :mod:`geg.services.keyper` — DKG participation + precondition-guarded decryption; the
+  HTTP keyper process, token bootstrap, and encrypted state.
+* :mod:`geg.services.coordinator` — the single keyper-facing orchestrator: DKG
+  watcher/driver **and** tally driver (trigger aggregate → quorum → decrypt →
+  recover + publish result) + keyper-write relay (``dkg_coordinator`` holds the
+  ceremony primitives).
+* :mod:`geg.services.tally_aggregator` — tally *library*: ``finalize`` (recover +
+  publish the result, called by the coordinator) plus the in-process test harness.
+* :mod:`geg.services.gateway` — ballot admission filter (library; the ingest HTTP
+  endpoint is hosted on :mod:`geg.services.api`).
+* :mod:`geg.services.admin` — sole writer of election config (CLI + HTTP).
+* :mod:`geg.services.auditor` — re-verifies an election from public reads.
+* :mod:`geg.services.data_layer` — the uniform data-layer HTTP service.
+* :mod:`geg.services.common` — shared helpers (backend selection).
+"""

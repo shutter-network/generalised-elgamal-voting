@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "geg"
+version = "0.1.0"
+description = "Generalised Threshold ElGamal Voting — storage-agnostic protocol (ports, adapters, services)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "py_arkworks_bls12381>=0.4.0",   # BLS12-381 G1/G2/Scalar (zcash-format compressed points)
+    "eth-utils>=2.0",                # keccak256
+    "eth-hash[pycryptodome]>=0.5",   # keccak backend for eth-utils
+    "eth-account>=0.11",             # secp256k1 write-authz identities (EIP-191 sign / ecrecover)
+    "eth-abi>=5.0",                  # content-binding digests matching Solidity abi.encode
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+# Database data-layer adapter (microservice + HTTP client) over Postgres.
+db = ["psycopg[binary]>=3.1", "psycopg_pool>=3.2", "flask>=3.0", "requests>=2.31"]
+# Blockchain data-layer adapter (web3 against the bulletin-board contracts).
+chain = ["web3>=7.0"]
+# Keyper backend service (Flask HTTP server, bootstrap sealing, encrypted state).
+keyper = ["flask>=3.0", "requests>=2.31", "cryptography>=42.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/geg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,27 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 1
+via_ir = true
+evm_version = "cancun"
+offline = true
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[rpc_endpoints]
+gnosis = "${GNOSIS_RPC_URL}"
+chiado = "${CHIADO_RPC_URL}"
+hoodi = "${HOODI_RPC_URL}"
+
+[etherscan]
+gnosis = { key = "${GNOSISSCAN_API_KEY}", url = "https://api.gnosisscan.io/api" }
+chiado = { key = "${GNOSISSCAN_API_KEY}", url = "https://gnosis-chiado.blockscout.com/api" }
+hoodi = { key = "${HOODI_ETHERSCAN_API_KEY}", url = "https://api-hoodi.etherscan.io/api", chain = 560048 }

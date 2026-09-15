@@ -1,0 +1,11 @@
+.venv
+.git
+contracts/out
+contracts/cache
+contracts/lib
+tests
+**/__pycache__
+*.pyc
+.pytest_cache
+deploy/.env
+deploy/*.json

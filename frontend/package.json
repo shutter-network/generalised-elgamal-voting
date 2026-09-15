@@ -1,0 +1,38 @@
+{
+  "name": "geg-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Admin + Voter browser apps and a shared multi-election dashboard for generalised-el-gamal.",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:admin": "npm run dev -w @geg/admin",
+    "dev:voter": "npm run dev -w @geg/voter",
+    "build": "npm run typecheck && npm run build -w @geg/admin && npm run build -w @geg/voter",
+    "test": "vitest run",
+    "typecheck": "tsc -p shared/tsconfig.json --noEmit && tsc -p apps/admin/tsconfig.json --noEmit && tsc -p apps/voter/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@rainbow-me/rainbowkit": "^2.2.0",
+    "@tanstack/react-query": "^5.59.0",
+    "date-fns": "^3.6.0",
+    "echarts": "^5.6.0",
+    "i18next": "^23.16.0",
+    "react-datepicker": "^7.5.0",
+    "react-i18next": "^15.1.0",
+    "viem": "^2.23.2",
+    "wagmi": "^2.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.1"
+  }
+}

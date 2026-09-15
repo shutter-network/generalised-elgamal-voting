@@ -1,0 +1,119 @@
+"""``EligibilityService`` — the authority on who may vote and with what weight
+.
+
+The core protocol never sees this service's internals; it interacts through
+exactly one artifact, the ``ATTESTATION_V1`` credential
+(:class:`geg.envelopes.types.Attestation`): a Schnorr-on-G1 signature by
+``eligibility_key`` over a domain-separated transcript of
+``(election_id, pseudonym, vk, weight)``.
+
+Two halves, with very different normativity:
+
+* **Issuance is adapter-specific and out of scope for the protocol.** How a voter
+  obtains an attestation — an OIDC flow, a wallet signature challenge, in-person
+  registration — is each implementation's own business. This ABC fixes only that
+  an adapter *can* issue, and over which tuple; it does not constrain how the
+  adapter authenticates the request.
+* **Verification is fully normative.** One canonical preimage, one signature
+  scheme per protocol version. Verification is a pure function (no service state),
+  so it lives as :func:`verify_attestation` rather than on the service — auditors
+  and the tally pipeline call it without any eligibility service present.
+
+Reference adapters: a Wahlregister-style adapter (weight fixed
+to 1) and a wallet-based adapter (EIP-712 challenge + on-chain voting power →
+``weight``). Both are later slices; this module is the contract only.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+from geg.envelopes.types import Attestation
+
+
+@dataclass(frozen=True)
+class AttestationRequest:
+    """Inputs an adapter binds into an attestation.
+
+    The ``pseudonym`` construction is adapter-owned (e.g.
+    ``keccak256(address || election_id)`` in a wallet adapter, an opaque
+    registry-issued value in a Wahlregister adapter); the core relies only on its
+    uniqueness per ``(election_id, voter)`` and unlinkability across elections.
+    ``weight`` is resolved by the adapter (1 for one-person-one-vote; voting power
+    for a wallet adapter) and must satisfy ``weight >= 1`` for the
+    target election.
+    """
+
+    election_id: bytes
+    pseudonym: bytes
+    vk: bytes  # voter's ephemeral Schnorr verification key (G1, 48 bytes)
+    weight: int
+    # Monotonic per-(election, pseudonym) re-vote counter (1 for a first vote, then
+    # 2, 3, …). The issuing service allocates it; the tally picks the highest-nonce
+    # ballot per pseudonym so a replayed old ballot cannot override a genuine re-vote.
+    nonce: int = 1
+
+
+class EligibilityService(ABC):
+    """Issuing interface for ``ATTESTATION_V1``. Verification is :func:`verify_attestation`."""
+
+    @abstractmethod
+    def issue_attestation(self, request: AttestationRequest) -> Attestation:
+        """Issue a signed ``ATTESTATION_V1`` for an authenticated, eligible voter.
+
+        How the caller proved eligibility (and how ``request`` was authenticated)
+        is entirely the adapter's concern. The returned attestation binds
+        ``(election_id, pseudonym, vk, weight)`` under ``eligibility_key``.
+        """
+
+
+def verify_attestation(
+    eligibility_key: bytes,
+    attestation: Attestation,
+    *,
+    election_id: bytes,
+) -> bool:
+    """Normative ``ATTESTATION_V1`` verification.
+
+    Verifies the Schnorr-on-G1 signature over the domain-separated transcript of
+    ``(election_id, pseudonym, vk, weight, nonce)``, and checks that the attestation
+    binds the expected ``election_id`` and that ``weight >= 1``. Returns ``False``
+    (never raises) on any failure, so callers treat it uniformly as
+    ``INVALID_ATTESTATION``.
+
+    ``V1`` is now the only scheme. The weightless LEGACY credential
+    (``keccak(electionId‖pseudonym‖vk)``, no domain separator, valid only at
+    ``weight == 1``) was dropped when the credential moved inside the signed ballot:
+    with one scheme there is nothing for a scheme code to disambiguate. Deployments
+    that still need it stay on SDK 0.1.2.
+
+    There is deliberately **no upper bound** on ``weight``. There used to be a
+    per-election ``max_weight``, from when voting power was clamped: it capped what a
+    compromised eligibility service could attest. Once weights are no longer clamped
+    it stopped constraining anything real — the bound had to be set at least as high
+    as the largest legitimate holder, i.e. effectively the whole supply, at which
+    point an issuer that could forge one weight could already forge a decisive one.
+    Weights also travel in the clear inside every ballot, so a forged one is visible
+    to any auditor rather than merely blocked. Keeping the tally computable is the
+    scale factor's job now (``ElectionConfig.scale``).
+    """
+    # Import here to keep the port module importable without the crypto backend.
+    from geg.crypto.attestation import verify_attestation_sig
+    from geg.envelopes.types import AttestationScheme
+
+    if attestation.election_id != election_id:
+        return False
+    if attestation.weight < 1:
+        return False
+    if attestation.scheme is not AttestationScheme.V1:
+        return False
+    return verify_attestation_sig(
+        eligibility_key,
+        attestation.election_id,
+        attestation.pseudonym,
+        attestation.vk,
+        attestation.weight,
+        attestation.nonce,
+        attestation.signature,
+    )

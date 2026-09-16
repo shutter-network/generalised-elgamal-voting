@@ -14,7 +14,7 @@ layer. When the data layer belongs to someone else — another system storing th
 artifacts and serving the port contract over HTTP — run
 `deploy/docker-compose.coordinator.yml` instead: the coordinator alone, pointed at that
 URL with `GEG_DATA_LAYER_URL`, with no postgres, data-layer, api or admin service. The
-keypers are unchanged (`deploy/docker-compose.keyper.yml`); they read the external data
+keypers are unchanged (`deploy/docker-compose.keyper*.yml`); they read the external data
 layer's `/port` mount via `GEG_API_URL` and relay their writes through the coordinator
 exactly as they do on the bundled stacks. Nothing in the code is aware of the
 difference: `GEG_DATA_LAYER=database` has always meant "speak the port contract over
@@ -38,8 +38,10 @@ system, not for testing correctness.
    publishes the result)
 ```
 
-- **Keypers run as separate stacks** (`docker-compose.keyper.yml`), one per operator — no
-  shared Docker network. The coordinator reaches each by the URL in the election config
+- **Keypers run as separate stacks**, one per operator — `docker-compose.keyper.yml`
+  runs the published image, `docker-compose.keyper.build.yml` builds from this
+  checkout; this guide uses the latter.
+  No shared Docker network. The coordinator reaches each by the URL in the election config
   (public, or `host.docker.internal` locally).
 - **Database backend** — every component speaks HTTP to the one data-layer service, which
   verifies the caller's signature and writes to Postgres. Keypers POST signed writes to the
@@ -83,7 +85,7 @@ machines):
 
 ```bash
 for n in 1 2 3; do
-  docker compose -p keyper$n -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper$n up -d --build
+  docker compose -p keyper$n -f deploy/docker-compose.keyper.build.yml --env-file deploy/.env.keyper$n up -d --build
 done
 ```
 
@@ -97,7 +99,8 @@ for p in 8101 8102 8103; do echo -n "keyper :$p → "; curl -s http://localhost:
 Real operator (own machine): fill your own env, run one
 ```bash
 cp deploy/.env.keyper.example deploy/.env.keyper
-docker compose -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper up -d --build
+# Run the published image version
+docker compose -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper up -d
 ```
 > Onboarding is one-time: give the admin your keyper's **public URL** (→ `config.keypers[].url`)
 > and receive `COORDINATOR_IDENTITY` out of band; tokens are installed automatically over the
@@ -191,7 +194,7 @@ Watch the DKG run in the logs (use your stack's compose file):
 
 ```bash
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env logs -f coordinator
-docker compose -p keyper1 -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper1 logs -f
+docker compose -p keyper1 -f deploy/docker-compose.keyper.build.yml --env-file deploy/.env.keyper1 logs -f
 ```
 
 Within a few seconds the finalized election key is readable (`00..01` = first election):
@@ -218,7 +221,7 @@ Watch it happen:
 
 ```bash
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env logs -f coordinator
-docker compose -p keyper1 -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper1 logs -f
+docker compose -p keyper1 -f deploy/docker-compose.keyper.build.yml --env-file deploy/.env.keyper1 logs -f
 ```
 
 ## 8. Verify the final tally
@@ -237,7 +240,7 @@ curl -s http://127.0.0.1:8500/elections/1/result
 ```bash
 docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env down -v # or chain-devnet.yml
 docker compose -f deploy/docker-compose.eligibility.yml --env-file deploy/.env.eligibility down -v
-for n in 1 2 3; do docker compose -p keyper$n -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper$n down; done
+for n in 1 2 3; do docker compose -p keyper$n -f deploy/docker-compose.keyper.build.yml --env-file deploy/.env.keyper$n down; done
 rm -rf postgres-data keyper-state* coordinator-state eligibility-state   # bind-mounted state at repo root
 # postgres-data is db-stack only and holds the elections DB.
 ```

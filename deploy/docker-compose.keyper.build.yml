@@ -1,4 +1,4 @@
-# Keyper operator stack — one independently-operated committee member.
+# Keyper stack, built from source — development only.
 #
 # Run this on your own machine. You hold only your own keyper signing key; the
 # admin's API + coordinator, and the other keypers, are all external to this stack
@@ -28,12 +28,21 @@
 #                           `never` opts in explicitly to indefinite retention)
 #                          shares before pruning. Default 90 days (7776000).
 #
-# Quick start (one real operator):
+# Quick start:
 #   cp deploy/.env.keyper.example deploy/.env.keyper   # fill in your values
-#   docker compose -f deploy/docker-compose.keyper.yml --env-file deploy/.env.keyper up -d
+#   docker compose -f deploy/docker-compose.keyper.build.yml \
+#     --env-file deploy/.env.keyper up -d --build
 #
-# This runs the published image; you need no checkout of this repository to operate a
-# keyper, only this file and the env template beside it.
+# This builds the image from this checkout, for protocol development — you are
+# changing keyper code and want to run it.
+#
+# **Operators running a real committee member should use
+# `docker-compose.keyper.yml`**, which pins the published image. A committee
+# straddling two builds is a committee whose members can disagree on what a ballot
+# means, and a local build is by definition not the one the others agreed on.
+#
+# The two files are standalone, not layered, and otherwise identical. Any change to
+# the service below belongs in that file too.
 #
 # Operator onboarding (one-time): share your keyper's public URL with the admin
 # (goes into config.keypers[].endpoint); receive COORDINATOR_IDENTITY from them out
@@ -43,7 +52,12 @@
 
 services:
   keyper:
-    image: ${GEG_IMAGE:-ghcr.io/shutter-network/generalised-elgamal-voting:0.1.0}
+    # Built from this checkout. See the header: this is the development stack, not
+    # the one to run a committee member on.
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: geg-app
     command: ["python", "-m", "geg.services.keyper"]
     environment:
       KEYPER_SIGNING_KEY: ${KEYPER_SIGNING_KEY:?set KEYPER_SIGNING_KEY (your keyper private key)}

@@ -1,7 +1,7 @@
 # Coordinator sizing — what a tally costs
 
 How much machine the tally needs, and what that machine buys you in voting power. Read this before
-choosing a coordinator host, and before setting an election's `max_weight`.
+choosing a coordinator host, and before setting an election's `scale`.
 
 All figures measured against `py_arkworks_bls12381`, this repository's curve backend.
 
@@ -24,8 +24,10 @@ re-derives the result independently.
 
 ## Recovery cost model
 
-`recover_result` recovers each candidate total by BSGS over `bound = budget × Σ(admitted weights)`
-(`core/aggregation.py:29`). With `m = √bound`:
+`recover_result` recovers each candidate total by BSGS over
+`bound = budget × Σ(scaled admitted weights)` (`bsgs_bound` in `core/aggregation.py`). Each weight
+is divided by the election's `scale` before it is summed; with the default `scale = 1` this is
+the plain sum of admitted weights. With `m = √bound`:
 
 ```
 tally time    ≈ 2m × 11 µs      (m ops to build the baby-step table, plus ~m giant steps in total)
@@ -79,7 +81,8 @@ interpreter, ballots and aggregate.
 | 64 GB | 2.3e8 | 5.2e16 | 5.2e16 | 5.2e14 | 84 min |
 
 `Σ weight` is the sum of attested weights over ballots actually admitted, not over the eligible
-electorate. Cost scales as `√`, so **4× the RAM buys 16× the voting power**.
+electorate. When `scale > 1`, read it as the sum of *scaled* weights. Cost scales as `√`, so
+**4× the RAM buys 16× the voting power**.
 
 ### Three caveats before reading a row off this table
 
@@ -99,29 +102,34 @@ electorate. Cost scales as `√`, so **4× the RAM buys 16× the voting power**.
 
 ---
 
-## Choosing `max_weight`
+## Choosing `scale`
 
-`ElectionConfig` enforces `budget × max_weight ≤ MAX_BUDGET_TIMES_WEIGHT` (`core/config.py:231`),
-defaulting to 1e6. Note what that expression is and is not:
+`scale` on `ElectionConfig` is the setting that controls how much a tally costs.
 
-- It is a **per-voter** bound. The quantity that actually drives BSGS is `budget × Σ weights`, a
-  **per-election total**.
-- The two coincide only when exactly one ballot is admitted. With `N` ballots the real bound reaches
-  `N × budget × max_weight`.
+**What `scale` does.** At aggregation, every attested weight is divided by `scale` and rounded half
+up: `(weight + scale // 2) // scale` (`scaled_weight` in `core/aggregation.py`). The tally then
+counts in units of `scale` instead of single tokens. Dividing every weight by the same number keeps
+the ratios between voters, so it changes the tally cost without favouring anyone. Capping the
+largest holders instead would change outcomes.
 
-So the default is simultaneously **too strict** for a small election (a 3-voter election with one
-large holder is trivially tallyable and gets capped anyway) and **too loose** for a large one (1,000
-voters at `max_weight = 1e4` and budget 100 gives bound 1e9, which registers cleanly and which no
-check anywhere rejects).
+**When to change it.** Leave `scale = 1` unless the election cannot be tallied otherwise. Work it
+out like this:
 
-If you are integrating this protocol, size `max_weight` from the two constraints separately:
+1. Estimate the total weight that will be admitted. Over-estimating is safe.
+2. Multiply by `budget` to get the bound.
+3. If the bound is above the search bound your coordinator's RAM allows (see the machine table),
+   pick the smallest `scale` that brings `bound / scale` under it.
 
-- **Feasibility** is `budget × Σ(expected weights) ≤` the bound your coordinator's RAM allows, per
-  the table above. Use a conservative estimate of total voting power; over-estimating is safe.
-- **`max_weight` itself** is best understood as an **issuer-abuse bound** — `verify_attestation`
-  rejects `weight > max_weight` (`ports/eligibility.py:96`) and every keyper enforces it
-  independently at admission, so it caps the damage a compromised or buggy eligibility service can
-  do. Set it from that reasoning, not from a compute budget.
+Example: a budget-100 election where up to 1e15 tokens may vote has a bound of 1e17, which no row
+in the table covers. With `scale = 1e4` the bound becomes 1e13, which fits a 1 GB coordinator.
+
+**What it costs voters.** A weight below `scale / 2` rounds to 0. That ballot is still admitted but
+adds nothing to the tally. In the example above, any voter holding fewer than 5,000 tokens would
+count for nothing. Larger weights lose up to half a unit to rounding.
+
+**When it is set.** `scale` is part of the signed election config. The deployment chooses it, it is
+fixed before voting opens, and voters must be told about it, because it changes what each ballot is
+worth.
 
 ---
 

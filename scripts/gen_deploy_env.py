@@ -163,10 +163,6 @@ def main() -> None:
         "# (every wallet gets ELIGIBILITY_DUMMY_WEIGHT above, so the per-wallet weights in the",
         "# allowlist file are IGNORED until this is uncommented). Needs a container recreate.",
         "# ELIGIBILITY_ALLOWLIST=/app/eligibility-allowlist.json",
-        "# Public API base. The issuer reads each election's maxWeight from its registered",
-        "# config so an issued weight is clamped to it; unreachable -> /attest fails closed",
-        "# with a 503 rather than minting a credential the tally would reject.",
-        "GEG_API_URL=http://host.docker.internal:8500",
         "",
     ]))
 

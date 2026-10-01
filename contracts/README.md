@@ -122,7 +122,7 @@ Immutable election configuration (generalised — beyond the original Munich set
 - `votingStart`, `votingEnd`
 - `selfSubmitFee`
 - `numCandidates`, `budget`
-- `mode`, `variant`, `weighted`, `maxWeight`, `duplicatePolicy`, `protocolVersion`
+- `mode`, `variant`, `weighted`, `scale`, `duplicatePolicy`, `protocolVersion`
 - `pkWR` (eligibility public key)
 - `adminAddr`, `tallyAggregator`, `voteProxy`
 

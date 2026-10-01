@@ -262,7 +262,6 @@ def main() -> None:
     port = int(os.environ.get("ELIGIBILITY_PORT", "8600"))
     allowlist_path = os.environ.get("ELIGIBILITY_ALLOWLIST") or None
     nonce_db = os.environ.get("ELIGIBILITY_NONCE_DB", "eligibility-nonces.db")
-    api_url = os.environ.get("GEG_API_URL")
     _LOG.info("op=start service=eligibility port=%d eligibility_key=%s auth=wallet-personal-sign policy=%s nonce_db=%s",
               port, codecs.enc_bytes(service.eligibility_key),
               f"allowlist:{allowlist_path}" if allowlist_path else "allow-all", nonce_db)

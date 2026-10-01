@@ -280,7 +280,8 @@ filter. The nonce is inside the signed attestation, so it can't be forged.
 
 **Eligibility = sole authority on voter weight.** It binds each voter's weight into the signed
 `ATTESTATION_V1` (over `electionId, pseudonym, vk, weight, nonce`); the config only sets policy
-(`weighted`, `maxWeight` ceiling), and admission rejects `weight < 1` or `> maxWeight`. The
+(`weighted`, and a `scale` divisor applied to every weight at tally). Admission rejects
+`weight < 1`. The
 bundled stub grants a fixed `ELIGIBILITY_DUMMY_WEIGHT` (default 1); real weights come from the
 integrator's source (token balance, registry, membership tier, …).
 

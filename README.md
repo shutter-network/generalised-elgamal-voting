@@ -27,10 +27,12 @@ configuration change, not a code change.
   holds the decryption key. Any `t` keypers can jointly decrypt the tally (`t` IS the quorum: `(2,3)` is 2-of-3, and `t` must be a strict majority); up to
   `t` compromised keypers learn nothing.
 - **Weighted voting.** The **eligibility service assigns each voter's weight** and binds
-  it into the signed `ATTESTATION_V1` credential — the voter and the config never set it
-  (the config only declares `weighted` + a `maxWeight` ceiling, enforced at admission). The
-  tally scales each ballot by its attested weight: `Σ wᵢ·ctᵢ` per candidate. Weight 1 is the
-  degenerate one-person-one-vote case.
+  it into the signed `ATTESTATION_V1` credential. The voter and the config never set it.
+  Admission accepts any signed weight of 1 or more. The config
+  declares `weighted` and a `scale` divisor. The tally multiplies each ballot by its attested
+  weight divided by `scale` (rounded half up): `Σ (wᵢ/scale)·ctᵢ` per candidate. `scale`
+  defaults to 1, which means no division. Weight 1 for every voter is the
+  one-person-one-vote case.
 - **Publicly auditable.** Every stored artifact is self-verifying (zero-knowledge
   proofs + signatures). From public reads alone, anyone can recompute the DKG
   finalization, re-derive the admitted ballot set, re-verify every decryption
@@ -130,13 +132,15 @@ ballot, so sponsored submission is the anonymity-preserving choice. See
 >   rather than reading `"latest"`. `chain_voting_power(...)` defaults to `"latest"` for
 >   convenience; left unpinned, a voter can move tokens between wallets and vote twice
 >   with the same balance.
-> - **Clamp attested `weight` to the election's `maxWeight`** and enforce eligibility
->   durably (the bundled reissue/nonce guards are single-process).
+> - **Issue each voter's correct weight, and enforce eligibility durably** (the bundled
+>   reissue/nonce guards are single-process). The protocol accepts any signed weight of 1 or
+>   more, so a wrong weight from the issuer is counted as issued. Weights are visible in
+>   every ballot, so an auditor can see a wrong one, but the protocol does not reject it.
 > - **Bind a freshness/expiry (and ideally a one-time nonce) into the wallet challenge**
 >   so a captured signature can't be replayed to mint credentials.
 >
-> `geg`'s core verifies only the attestation's signature, `weight ≤ maxWeight`, and the
-> bindings — it trusts the issuer for weight correctness by design.
+> `geg`'s core verifies only the attestation's signature, `weight ≥ 1`, and the
+> bindings. It trusts the issuer for weight correctness by design.
 
 ### Source layout (`src/geg/`)
 

@@ -219,6 +219,13 @@ Every actor is a deployable service (`python -m geg.services.<name>`):
   Fernet-encrypted at rest (key derived from the signing key), so a keyper survives
   the gap between DKG and decryption and reloads on restart.
 
+### Trust boundary: the voter's browser
+
+The API and other `geg` services are trusted, but the voter's browser is not. v1 has
+no **cast-as-intended** check: the browser encrypts the vote, so a compromised browser
+can quietly encrypt a different choice (or leak it), and neither the voter nor any
+auditor can tell.
+
 ---
 
 ## Cryptographic suite (protocol v1)

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Generalised Threshold ElGamal Voting — storage-agnostic protocol (ports, adapters, services)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-only" }
 dependencies = [
     "py_arkworks_bls12381>=0.4.0",   # BLS12-381 G1/G2/Scalar (zcash-format compressed points)
     "eth-utils>=2.0",                # keccak256

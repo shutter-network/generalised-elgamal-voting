@@ -2,6 +2,7 @@
   "name": "geg-frontend",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "description": "Admin + Voter browser apps and a shared multi-election dashboard for generalised-el-gamal.",
   "workspaces": [
     "apps/*"

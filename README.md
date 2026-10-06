@@ -340,3 +340,7 @@ Admin register/cancel is authorized by the admin wallet's EIP-191 signature (no 
 bearer token). Deferred beyond v1: keyper-set rotation/discovery, phase-2 consolidation of
 keyper orchestration, trust-minimizing the aggregate (keypers threshold-publish it), and an
 optional ballot meta-transaction.
+
+## License
+
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only). See [LICENSE](LICENSE).

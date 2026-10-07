@@ -1,6 +1,6 @@
-/** Data client for the ported voting-dashboard — sources from geg's public read API
- * (`@geg/shared` `api`) instead of an Ethereum contract, and shapes the responses into the
- * voting-dashboard `types.ts` views. Keyed by geg's decimal electionId (number). */
+/** Data client for the ported voting-dashboard — sources from shutter_governance_protocol's public read API
+ * (`@shutter-governance-protocol/shared` `api`) instead of an Ethereum contract, and shapes the responses into the
+ * voting-dashboard `types.ts` views. Keyed by shutter_governance_protocol's decimal electionId (number). */
 import { api } from "../../api";
 import type {
   Ballot,
@@ -26,7 +26,7 @@ export async function fetchElectionOverview(electionId: number): Promise<{
   const [rec, resultResp] = await Promise.all([api.getElection(electionId), api.getResult(electionId)]);
   const cfg = rec.config;
   const now = Math.floor(Date.now() / 1000);
-  // geg has no on-chain phase enum; derive the three the dashboard cares about:
+  // shutter_governance_protocol has no on-chain phase enum; derive the three the dashboard cares about:
   // <3 pre-voting, 3 voting-open, >=4 post-voting.
   const phase = now >= cfg.votingEnd ? 4 : now >= cfg.votingStart ? 3 : 2;
   const config: ElectionConfigView = {
@@ -70,7 +70,7 @@ export async function fetchBallotsPage(
     ciphertexts: (b.ciphertexts ?? []).map((ct: any) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })),
     zkProof: b.zkProof as Hex,
     voterSignature: b.voterSignature as Hex,
-    // geg's attestation is structured (scheme, weight, nonce, 80-byte R‖s sig); the SDK's WR
+    // shutter_governance_protocol's attestation is structured (scheme, weight, nonce, 80-byte R‖s sig); the SDK's WR
     // verifier callback only receives one opaque blob, so pack everything the scheme-
     // directed verifier needs into it: scheme(1) ‖ weight(32 BE) ‖ nonce(32 BE) ‖ signature(80).
     wrAttestation: packWrAttestation(b.attestation?.scheme, b.attestation?.weight, b.attestation?.nonce, b.attestation?.signature),
@@ -80,9 +80,9 @@ export async function fetchBallotsPage(
   return { total: BigInt(resp.total), ballots };
 }
 
-/** Pack geg's structured attestation into the single `att` blob the WR verifier reads:
+/** Pack shutter_governance_protocol's structured attestation into the single `att` blob the WR verifier reads:
  * `scheme(1) ‖ weight(32-byte BE) ‖ nonce(32-byte BE) ‖ signature(80 = R‖s)`. scheme byte:
- * 0x01 = ATTESTATION_V1, 0x00 = LEGACY (weightless). Mirrors geg core `verify_attestation`. */
+ * 0x01 = ATTESTATION_V1, 0x00 = LEGACY (weightless). Mirrors shutter_governance_protocol core `verify_attestation`. */
 function packWrAttestation(scheme: string | undefined, weight: number | undefined, nonce: number | undefined, sig: string | undefined): Hex {
   const schemeByte = scheme === "LEGACY" ? "00" : "01";
   const weightHex = BigInt(weight ?? 1).toString(16).padStart(64, "0");
@@ -97,7 +97,7 @@ export async function fetchAggregate(electionId: number): Promise<EncryptedTally
   return {
     aggregates: aggregate.aggregates.map((ct: any) => ({ c1: ct.c1 as Hex, c2: ct.c2 as Hex })),
     totalAdmittedWeight: BigInt(aggregate.totalAdmittedWeight ?? 0),
-    // Mirrors geg's decoder, which defaults the scaled total to the raw one when the
+    // Mirrors shutter_governance_protocol's decoder, which defaults the scaled total to the raw one when the
     // field is absent: they are equal by construction at scale 1, so an artifact
     // written before scaling existed decodes correctly. Defaulting to 0 would make
     // an unscaled election look like it counted nothing.
@@ -114,7 +114,7 @@ export async function fetchDecryptionShares(electionId: number): Promise<Decrypt
     keyperIndex: s.keyperIndex,
     submittedAt: 0n,
     shares: s.entries.map((e) => e.sigma as Hex),
-    // geg packs each DLEQ proof as a 64-byte big-endian blob `e(32) ‖ z(32)`
+    // shutter_governance_protocol packs each DLEQ proof as a 64-byte big-endian blob `e(32) ‖ z(32)`
     // (crypto/params.py DLEQ_BYTES, proofs.encode_dleq); decode it back to {e, z}
     // so the shares/result verification fixtures carry the real challenge + response.
     proofs: s.entries.map((e) => decodeDleq(e.proof as Hex)),
@@ -122,7 +122,7 @@ export async function fetchDecryptionShares(electionId: number): Promise<Decrypt
   }));
 }
 
-/** Split geg's 64-byte DLEQ blob (0x-hex, big-endian `e(32)‖z(32)`) into scalars. */
+/** Split shutter_governance_protocol's 64-byte DLEQ blob (0x-hex, big-endian `e(32)‖z(32)`) into scalars. */
 function decodeDleq(proof: Hex): { e: bigint; z: bigint } {
   const hex = proof.replace(/^0x/, "").padStart(128, "0");
   return { e: BigInt("0x" + hex.slice(0, 64)), z: BigInt("0x" + hex.slice(64, 128)) };

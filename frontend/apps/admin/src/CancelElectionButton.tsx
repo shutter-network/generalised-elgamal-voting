@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, cancelElection, deriveState, eidToBareHex, eidToHex, formatApiError, type ElectionRecord } from "@geg/shared";
-import { type WalletSigner } from "@geg/shared/wallet";
+import { api, cancelElection, deriveState, eidToBareHex, eidToHex, formatApiError, type ElectionRecord } from "@shutter-governance-protocol/shared";
+import { type WalletSigner } from "@shutter-governance-protocol/shared/wallet";
 import { cancelDigest } from "./adminSign";
 
 type Status = { kind: "ok" | "err" | "info"; msg: string } | null;

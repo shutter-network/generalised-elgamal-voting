@@ -1,16 +1,16 @@
 {
-  "name": "geg-frontend",
+  "name": "shutter-governance-protocol-frontend",
   "private": true,
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
-  "description": "Admin + Voter browser apps and a shared multi-election dashboard for generalised-el-gamal.",
+  "description": "Admin + Voter browser apps and a shared multi-election dashboard for shutter-governance-protocol.",
   "workspaces": [
     "apps/*"
   ],
   "scripts": {
-    "dev:admin": "npm run dev -w @geg/admin",
-    "dev:voter": "npm run dev -w @geg/voter",
-    "build": "npm run typecheck && npm run build -w @geg/admin && npm run build -w @geg/voter",
+    "dev:admin": "npm run dev -w @shutter-governance-protocol/admin",
+    "dev:voter": "npm run dev -w @shutter-governance-protocol/voter",
+    "build": "npm run typecheck && npm run build -w @shutter-governance-protocol/admin && npm run build -w @shutter-governance-protocol/voter",
     "test": "vitest run",
     "typecheck": "tsc -p shared/tsconfig.json --noEmit && tsc -p apps/admin/tsconfig.json --noEmit && tsc -p apps/voter/tsconfig.json --noEmit"
   },

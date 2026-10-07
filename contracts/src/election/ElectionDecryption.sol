@@ -18,15 +18,20 @@ abstract contract ElectionDecryption is ElectionBase {
     /// @notice Decryption share authorized by an embedded keyper signature (meta-tx).
     /// @dev Relayed by the data-layer service; attributed on-chain to the
     ///      ``ecrecover``ed keyper. Signature is EIP-191 over
-    ///      ``keccak256("GEG-DECRYPT-SHARE-v1" ‖ electionId ‖ abi.encode(shares) ‖ abi.encode(proofs))``.
+    ///      ``keccak256("SHUTTER-GOVERNANCE-PROTOCOL-DECRYPT-SHARE-v1" ‖ electionId ‖ abi.encode(shares) ‖ abi.encode(proofs))``.
     function submitDecryptionShareSigned(
-        bytes[] calldata shares, VotingTypes.DLEQProof[] calldata proofs, bytes calldata keyperSig
+        bytes[] calldata shares,
+        VotingTypes.DLEQProof[] calldata proofs,
+        bytes calldata keyperSig
     ) external {
         _requireNotCancelled();
         if (!dkgFinalized) revert DKGNotFinalized();
         if (block.timestamp < votingEnd) revert VotingStillOpen(block.timestamp);
-        bytes32 digest =
-            keccak256(abi.encodePacked("GEG-DECRYPT-SHARE-v1", electionId, abi.encode(shares), abi.encode(proofs)));
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "SHUTTER-GOVERNANCE-PROTOCOL-DECRYPT-SHARE-v1", electionId, abi.encode(shares), abi.encode(proofs)
+            )
+        );
         address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(digest), keyperSig);
         _registerDecryptionShare(signer, shares, proofs);
     }

@@ -3,7 +3,7 @@
  * Uses `@shutter-network/urban-verified-crypto` (the TS origin the Python crypto
  * byte-matches) to build the encrypted ballot entirely in the browser — plaintext
  * votes and randomness never leave this device. The eligibility attestation comes from
- * the (pluggable, dummy) eligibility service and is attached as the geg wire's
+ * the (pluggable, dummy) eligibility service and is attached as the shutter_governance_protocol wire's
  * *structured* `attestation` field.
  *
  * Attestation note: since the v2 ballot message the credential lives *inside* the signed
@@ -41,13 +41,13 @@ import {
   submitBallot,
   type BallotJson,
   type ElectionConfig,
-} from "@geg/shared";
+} from "@shutter-governance-protocol/shared";
 import type { Hex } from "viem";
 
 /** The chain-free EIP-191 challenge the wallet signs — byte-identical to the eligibility
  * service's `challenge_message` (see eligibility.py), so the service can `ecrecover` it. */
 function challengeMessage(eidHex: string, vkHex: string): string {
-  return `GEG eligibility attestation\nelectionId: ${eidHex}\nvk: ${vkHex}`;
+  return `Shutter Governance Protocol eligibility attestation\nelectionId: ${eidHex}\nvk: ${vkHex}`;
 }
 
 let curvesReady: Promise<void> | null = null;

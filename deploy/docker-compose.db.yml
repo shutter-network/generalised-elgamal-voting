@@ -5,7 +5,7 @@
 #   docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env up --build
 #
 # All identities come from deploy/.env (see .env.example for the full list).
-name: geg-db
+name: shutter-governance-protocol-db
 
 x-image: &image
   build:
@@ -17,26 +17,26 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: geg
-      POSTGRES_PASSWORD: geg
-      POSTGRES_DB: geg
+      POSTGRES_USER: shutter_governance_protocol
+      POSTGRES_PASSWORD: shutter_governance_protocol
+      POSTGRES_DB: shutter_governance_protocol
     volumes:
       - ../postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U geg -d geg"]
+      test: ["CMD-SHELL", "pg_isready -U shutter_governance_protocol -d shutter_governance_protocol"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  # The one uniform data-layer service (GEG_DATA_LAYER=database → Postgres).
+  # The one uniform data-layer service (SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER=database → Postgres).
   # Every other component talks to it over HTTP.
   data-layer:
     <<: *image
-    command: ["python", "-m", "geg.services.data_layer"]
+    command: ["python", "-m", "shutter_governance_protocol.services.data_layer"]
     restart: unless-stopped
     environment:
-      GEG_DATA_LAYER: database
-      GEG_DATA_LAYER_DSN: postgresql://geg:geg@postgres:5432/geg
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER: database
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_DSN: postgresql://shutter_governance_protocol:shutter_governance_protocol@postgres:5432/shutter_governance_protocol
       DATA_LAYER_PORT: "8000"
     # No host port. Only internal service can access it.
     expose:
@@ -52,11 +52,11 @@ services:
   # The single keyper-facing orchestrator.
   coordinator:
     <<: *image
-    command: ["python", "-m", "geg.services.coordinator"]
+    command: ["python", "-m", "shutter_governance_protocol.services.coordinator"]
     restart: unless-stopped
     environment:
-      GEG_DATA_LAYER: database
-      GEG_DATA_LAYER_URL: http://data-layer:8000
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER: database
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL: http://data-layer:8000
       COORDINATOR_SIGNING_KEY: ${COORDINATOR_SIGNING_KEY}
       COORDINATOR_API_TOKEN: ${COORDINATOR_API_TOKEN}
       COORDINATOR_PORT: "8400"
@@ -80,11 +80,11 @@ services:
   # db too — the data-layer service verifies it against config.gatewayKeys. CORS-enabled.
   api:
     <<: *image
-    command: ["python", "-m", "geg.services.api"]
+    command: ["python", "-m", "shutter_governance_protocol.services.api"]
     restart: unless-stopped
     environment:
-      GEG_DATA_LAYER: database
-      GEG_DATA_LAYER_URL: http://data-layer:8000
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER: database
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL: http://data-layer:8000
       API_PORT: "8500"
       GATEWAY_FILTER: "1"   # ballot admission filter (UX + spam); 0 to disable
       # Signs each ballot WRITE so the data layer can honour config.gatewayKeys.
@@ -101,12 +101,12 @@ services:
   # admin frontend, which builds and signs the config in the browser.
   admin:
     <<: *image
-    entrypoint: ["python", "-m", "geg.services.admin"]
+    entrypoint: ["python", "-m", "shutter_governance_protocol.services.admin"]
     command: ["serve"]
     restart: unless-stopped
     environment:
-      GEG_DATA_LAYER: database
-      GEG_DATA_LAYER_URL: http://data-layer:8000
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER: database
+      SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL: http://data-layer:8000
       ADMIN_SIGNING_KEY: ${ADMIN_SIGNING_KEY}
       ADMIN_PORT: "8300"
     ports:

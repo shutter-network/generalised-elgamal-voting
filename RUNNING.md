@@ -1,6 +1,6 @@
-# Running geg — deployment guide
+# Running Shutter Governance Protocol — deployment guide
 
-`geg` is one protocol over interchangeable data-layer backends; a deployment **picks a
+Shutter Governance Protocol works over interchangeable data-layer backends; a deployment **picks a
 backend** and every service is unchanged. Three compose stacks:
 
 | Backend | Compose file | Status |
@@ -13,11 +13,11 @@ backend** and every service is unchanged. Three compose stacks:
 layer. When the data layer belongs to someone else — another system storing the
 artifacts and serving the port contract over HTTP — run
 `deploy/docker-compose.coordinator.yml` instead: the coordinator alone, pointed at that
-URL with `GEG_DATA_LAYER_URL`, with no postgres, data-layer, api or admin service. The
+URL with `SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL`, with no postgres, data-layer, api or admin service. The
 keypers are unchanged (`deploy/docker-compose.keyper*.yml`); they read the external data
-layer's `/port` mount via `GEG_API_URL` and relay their writes through the coordinator
+layer's `/port` mount via `SHUTTER_GOVERNANCE_PROTOCOL_API_URL` and relay their writes through the coordinator
 exactly as they do on the bundled stacks. Nothing in the code is aware of the
-difference: `GEG_DATA_LAYER=database` has always meant "speak the port contract over
+difference: `SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER=database` has always meant "speak the port contract over
 HTTP", and this only packages that configuration.
 
 The automated test suite (`pytest`) is the integration test across all three
@@ -26,6 +26,28 @@ the multi-operator HTTP keyper path. These composes are for **operating** the
 system, not for testing correctness.
 
 ---
+
+## Updating an existing deployment
+
+The package is now named `shutter-governance-protocol`. Python imports and service
+commands use `shutter_governance_protocol`, and frontend workspaces use the
+`@shutter-governance-protocol` scope. Reinstall the Python package and frontend
+dependencies after updating your checkout.
+
+Use the `SHUTTER_GOVERNANCE_PROTOCOL_` prefix for protocol environment variables.
+Update operator environment files using the templates in `deploy/`, and rebuild
+service images. Compose project names and the example database credentials also
+use the new name. Existing database volumes keep their original credentials;
+point the new configuration at those credentials and volumes when keeping data.
+
+Request signatures, keyper bootstrap messages, and wallet eligibility challenges
+now use the new protocol name. Update the Python services, browser apps, and
+contracts together. Previously signed requests and bootstrap messages do not
+verify under the new labels, so generate fresh signatures and bootstrap tokens.
+The eligibility service's default pseudonym secret also changes when no explicit
+secret is configured. Keep an explicit `ELIGIBILITY_PSEUDONYM_SECRET` when
+preserving voter pseudonyms across an update. Finish active elections using their
+original components before switching to this version.
 
 ## Architecture
 
@@ -58,6 +80,11 @@ Voter ballot + attestation keys are separate — Schnorr-G1, client-side.
 ---
 
 # End-to-end walkthrough
+
+Run commands from the repository root. Install Python 3.11+ and the project
+(`pip install -e '.[dev,db,chain,keyper]'`), Docker with Compose, and Node.js/npm
+before starting. For the blockchain devnet, also install Foundry and initialise
+the contract submodules (`git submodule update --init --recursive`).
 
 Follow the steps in order — later steps depend on earlier services being up. Frontend steps
 (5, 6, 8) are browser interactions; everything else is copy-paste.
@@ -121,11 +148,11 @@ docker compose -f deploy/docker-compose.chain-devnet.yml --env-file deploy/.env 
 ```
 
 > **Real chain** — identical to the devnet stack, but with `deploy/docker-compose.chain.yml`
-> (no `anvil`, no auto `deploy-registry`, 12s polls). 
+> (no `anvil`, no auto `deploy-registry`, 30-second coordinator polls).
 > **Prerequisite, one-time out of band:**
 > deploy the `ElectionRegistry` once (`scripts/deploy_registry.py`) and set
-> `GEG_REGISTRY_ADDRESS`, fund admin/gateway/coordinator with real ETH, and set
-> `GEG_CHAIN_RPC` — all in `deploy/.env`. Then
+> `SHUTTER_GOVERNANCE_PROTOCOL_REGISTRY_ADDRESS`, fund admin/gateway/coordinator with real ETH, and set
+> `SHUTTER_GOVERNANCE_PROTOCOL_CHAIN_RPC` — all in `deploy/.env`. Then
 > `docker compose -f deploy/docker-compose.chain.yml --env-file deploy/.env up -d --build`.
 
 ## 3. Start the eligibility service (+ whitelist)
@@ -169,7 +196,7 @@ token); the form verifies the entered eligibility public key against the running
 **Form values for this local walkthrough** — all fixed public dev values from
 `gen_deploy_env.py` (it also prints them):
 
-- **Threshold** — `t = 1`, `n = 3` (1-of-3 → a quorum of 2 decrypts).
+- **Threshold** — `t = 2`, `n = 3` (two of three keypers must cooperate; `t` is the quorum).
 - **Keypers** — add three, one URL per line (the form resolves each address from its
   `/status`):
   ```
@@ -197,7 +224,7 @@ docker compose -f deploy/docker-compose.db.yml --env-file deploy/.env logs -f co
 docker compose -p keyper1 -f deploy/docker-compose.keyper.build.yml --env-file deploy/.env.keyper1 logs -f
 ```
 
-Within a few seconds the finalized election key is readable (`00..01` = first election):
+Once the coordinator finishes key generation, the finalized election key is readable (`00..01` = first election):
 
 ```bash
 curl -s http://127.0.0.1:8500/elections/1/dkg/finalized
@@ -211,12 +238,14 @@ Once the election is `Voting` (i.e. past `voting_start`) with a finalized key, o
 app (`:5174`), connect a **whitelisted** wallet (from step 3), pick the election, enter the
 vote vector, and cast. The app fetches a credential from the eligibility service (`/attest`)
 and submits the ballot to the public API — the ballot is built entirely in the browser. A
-voter may re-cast until the window closes (last vote wins; see replay note below).
+voter may re-cast until the window closes. With the default `last-wins` policy,
+the valid ballot with the highest credential nonce counts. With `first-wins`,
+the lowest nonce counts instead; see the replay note below.
 
 ## 7. Wait for voting end → aggregate & decrypt
 
 After `voting_end` the coordinator drives the tally automatically: it triggers the keypers to
-aggregate (t+1 quorum → canonical), then to decrypt, recovers the result, and publishes it.
+aggregate (agreement from `t` keypers makes the aggregate canonical), then to decrypt, recovers the result, and publishes it.
 Watch it happen:
 
 ```bash
@@ -265,18 +294,23 @@ the friendly decimal id and are what the frontends use, so they are the ones to 
 when eyeballing an election by hand (the curls above). They are *display-shaped*: election
 ids are decimalized and ballot pages cap at 200. The `/port` routes
 (`/port/elections/<64-hex>/…`) are the byte-verbatim `ElectionDataLayer` contract —
-bare-hex ids, ballot storage metadata, no cap. Use `/port` when the bytes matter
+bare-hex ids and ballot storage metadata. Port ballot pages are capped at 1,000
+records; request a positive `count` and advance `start` until all records are read. Use `/port` when the bytes matter
 (re-deriving a digest, verifying a signature, reading every ballot) and when writing a
-client that speaks the port; that is what keypers point `GEG_API_URL` at.
+client that speaks the port; that is what keypers point `SHUTTER_GOVERNANCE_PROTOCOL_API_URL` at.
 
 ### Operational notes
 
 **Re-votes & replay protection.** The eligibility service stamps each credential with a
 monotonic per-(election, pseudonym) **nonce**, persisted in `ELIGIBILITY_NONCE_DB` (on the
 `eligibility-state` bind mount). Two defenses use it: (1) the **tally** keeps only the
-highest-nonce ballot per voter — authoritative and bypass-proof; (2) the **API ingest**
-rejects a nonce `≤` the highest stored (`400 STALE_OR_REPLAYED`) — a best-effort funds/DoS
-filter. The nonce is inside the signed attestation, so it can't be forged.
+highest-nonce valid ballot per voter for `last-wins`, or the lowest for
+`first-wins`, with storage order breaking ties; (2) the **API ingest** rejects a
+nonce `≤` the highest it finds among the latest 1,000 stored ballots
+(`400 STALE_OR_REPLAYED`). This bounded scan is a best-effort funds/DoS filter.
+The nonce is inside the signed attestation, and the v2 voter signature also
+covers the full credential, so a relay cannot attach a newer credential to an
+older signed ballot.
 
 **Eligibility = sole authority on voter weight.** It binds each voter's weight into the signed
 `ATTESTATION_V1` (over `electionId, pseudonym, vk, weight, nonce`); the config only sets policy
@@ -294,15 +328,20 @@ integrator's source (token balance, registry, membership tier, …).
 **Ballot gas & privacy (chain).** `submitVote` is `msg.sender`: **sponsor** (funded
 `GATEWAY_SIGNING_KEY` on the ballot ingest) or **voters self-pay**. `selfSubmitFee` (per-election,
 in the signed config) + `VOTE_PROXY_ROLE` tune the protocol fee; `selfSubmitFee = 0` is fee-free.
-With the address-derived pseudonym (`keccak256(address ‖ electionId)`), self-pay puts the
-address on-chain and deanonymizes the ballot — **sponsored submission keeps it off-chain** and
-is the anonymity-preserving choice.
+Self-submission exposes the submitting wallet address on-chain. Sponsored
+submission keeps that address out of the transaction sender field. The bundled
+HTTP issuer derives pseudonyms with a secret-keyed HMAC; the separate reference
+wallet adapter uses `keccak256(address ‖ electionId)`, which anyone with a candidate
+address can recompute. Sponsorship alone does not hide that adapter's identity link.
+The issuer itself still knows which wallet requested each credential.
 
 **Budget is bounded on the chain backend.** `submitVote` stores the whole ballot, and Variant A's
 proof grows as `ℓ x (budget + 1)`, so at `ℓ = 3` a budget-100 ballot is ~78 KB — about **49M gas**
 of storage against a 30M block limit. Casting fails with
 `Out of gas: gas required exceeds allowance: 30000000`, which names the gas and not the cause.
-Budget **10 or below** is fine at `ℓ = 3`; budget 100 is a **database-only** configuration for now.
+For three candidates, budget 10 is much smaller than budget 100. Check transaction
+gas against the target chain's block limit; these example limits are not universal.
+Use the database backend for ballots too large to fit the target chain.
 
 **Timing.** You choose the voting window **in the register form** (step 5) — for a quick demo
 pick a short one (e.g. a couple of minutes out and a couple of minutes long), leaving enough
@@ -312,34 +351,49 @@ lead time for the DKG.
 commitments and shares, verified against the config member address) and each secret share is
 **sealed** to the recipient's X25519 key, so nothing secret is on the wire. If a keyper's
 Feldman-VSS check rejects a dealer's share it returns a **signed accusation**, and the
-coordinator **halts the ceremony before publishing** rather than finalizing a divergent
-transcript — the election then derives to `DKGFailed`, with the signed accusations in the
-coordinator log for manual resolution (`op=dkg_complaint`). The accused dealer's
-`/dkg/reveal_share` will disclose a share only to its own recipient (accusation-gated).
+coordinator runs a bounded repair loop: it asks the accused dealer to resend
+the share and asks the recipient to verify it again. Keypers with verified shares
+can still publish if another keyper keeps complaining. The ceremony fails when
+no key finalises after repair; signed accusations are logged as `op=dkg_complaint`.
+An election without a finalised key at voting start derives to `DKGFailed`. The accused dealer's `/dkg/reveal_share` sends a replacement share sealed to the
+accusing recipient; the secret share is not returned to the coordinator.
 
 **Tally ordering & bounds.** The tally runs in strict order and only after `voting_end`, enforced at
 every layer: the coordinator drives it only in the `Tallying` state, keypers self-guard, and the data
 layer **and** chain contract **reject** an aggregate submitted before `voting_end`, and a decryption
 share submitted before `voting_end` **or before a canonical aggregate exists**. The sequence is
-aggregate → gate on the `t+1` canonical (byte-identical) quorum → **then** decrypt → publish. Each
-phase is bounded by 5 coordinator polls; a tally that never reaches quorum (too many keypers down) is
+aggregate → gate on `t` byte-identical keyper submissions → decrypt → publish.
+The default retry budget is five unsuccessful attempts per phase. Polls reporting
+that a keyper is still computing an aggregate do not consume this budget. The
+coordinator also checks a six-hour elapsed-time limit measured from `voting_end`
+while waiting for an aggregate or shares. These are coordinator defaults, not
+election configuration fields or a terminal protocol deadline. A tally that cannot proceed is
 **abandoned** — logged as `op=tally status=abandoned` **and** surfaced on the dashboard as a red
 **`TallyStalled`** badge (a persisted flag; the coordinator is the only writer of "stalled"). It's
 recoverable but **not** self-healing: the persisted flag is authoritative, so a **coordinator
 restart does NOT resume a stalled tally**. The only way out is the **Retry** button on the admin
 panel — the admin wallet signs a `clearTallyStalled`, which the admin service relays; the
 coordinator then resumes with a **fresh 5-attempt budget** (bring the keypers back online first,
-or it just re-stalls). A published result always supersedes it (→ `Complete`). Integrity is
-independent of ordering — a bogus aggregate can't reach the quorum, and decryption shares are
-DLEQ-verified against the canonical aggregate.
+or it just re-stalls). Retry resets the attempt counters, but does not move the
+six-hour limit away from the original voting end; a retry after that limit can
+stall again on its next incomplete poll. A published result always supersedes it (→ `Complete`). Integrity is
+checked through ballot verification, the storage adapter's aggregate quorum rule
+and DLEQ proofs for the decryption shares. The current keyper trusts the aggregate
+returned by its data-layer read endpoint; see the
+[README verification limits](./README.md#current-verification-limits).
 
 **Admin auth.** Each register/cancel is authorized by the admin wallet's signature (no token);
 the same EOA is the wallet, `config.admin_key`, and `ADMIN_SIGNING_KEY`. "Changing keypers" is
 per new election — each config names its own committee; URLs travel in the config (on chain the
 `KeyperSet` stores them), read through the port — no URL env var.
 
+**Secret retention.** Keyper shares are retained for 90 days after voting end by
+default (`KEYPER_SECRET_TTL_S=7776000`). A tally can no longer decrypt if too many
+shares have been pruned. Set retention to match your recovery needs; `never`
+disables automatic expiry.
+
 **Rebuild after code changes:** re-run `up` with `--build`.
 
-**Backend selection** via `GEG_DATA_LAYER`: `memory` (zero-dep local) · `database`
-(`GEG_DATA_LAYER_URL` for clients / `GEG_DATA_LAYER_DSN` for the service) · `blockchain`
-(`GEG_CHAIN_RPC`, `GEG_REGISTRY_ADDRESS`, each actor's own key).
+**Backend selection** via `SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER`: `memory` (zero-dep local) · `database`
+(`SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL` for clients / `SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_DSN` for the service) · `blockchain`
+(`SHUTTER_GOVERNANCE_PROTOCOL_CHAIN_RPC`, `SHUTTER_GOVERNANCE_PROTOCOL_REGISTRY_ADDRESS`, each actor's own key).

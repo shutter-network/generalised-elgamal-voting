@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, formatApiError, isVotingOpen, type ElectionRecord } from "@geg/shared";
-import { useWalletSigner } from "@geg/shared/wallet";
+import { api, formatApiError, isVotingOpen, type ElectionRecord } from "@shutter-governance-protocol/shared";
+import { useWalletSigner } from "@shutter-governance-protocol/shared/wallet";
 import { castVote } from "./ballot";
 
 type Status = { kind: "ok" | "err" | "info"; msg: string } | null;

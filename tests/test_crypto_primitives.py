@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from geg.crypto import elgamal, proofs, schnorr
-from geg.crypto.params import CURVE_ORDER
-from geg.crypto.points import (
+from shutter_governance_protocol.crypto import elgamal, proofs, schnorr
+from shutter_governance_protocol.crypto.params import CURVE_ORDER
+from shutter_governance_protocol.crypto.points import (
     G1,
     G2,
     Z1,
@@ -17,8 +17,8 @@ from geg.crypto.points import (
     mul,
     random_scalar,
 )
-from geg.crypto.recovery import baby_step_giant_step
-from geg.crypto.transcript import Transcript
+from shutter_governance_protocol.crypto.recovery import baby_step_giant_step
+from shutter_governance_protocol.crypto.transcript import Transcript
 
 
 # --- point codecs ---------------------------------------------------------- #
@@ -69,7 +69,7 @@ def test_scalar_mul_ct_scales_plaintext():
 
 def test_sum_cts_empty_is_identity_encrypting_zero():
     c1, c2 = elgamal.sum_cts([])
-    from geg.crypto.points import is_identity
+    from shutter_governance_protocol.crypto.points import is_identity
     assert is_identity(c1) and is_identity(c2)
 
 

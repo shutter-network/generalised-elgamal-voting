@@ -1,6 +1,6 @@
 /** Admin authorization: sign register/cancel requests with the admin wallet (MetaMask).
  *
- * The digests below are byte-exact mirrors of `geg.core.authz`:
+ * The digests below are byte-exact mirrors of `shutter_governance_protocol.core.authz`:
  *   register → keccak256(canonical JSON of the config, electionId INCLUDED)     == register_digest
  *   cancel   → keccak256(DST | len|op | len|eid | len|payload)                   == request_digest("cancel", eid)
  * The wallet then EIP-191 personal-signs the raw digest (== Python encode_defunct(primitive=digest)),
@@ -54,7 +54,7 @@ export function encodeElectionId(n: number): Hex {
  * separator. Framing makes each boundary explicit, so content can never
  * impersonate one. Both sides must change together or admin signatures stop verifying;
  * adminSign.test.ts and tests/test_admin_digest_fixture.py lock the pair. */
-const REQUEST_DST = "GEG-REQUEST-v1";
+const REQUEST_DST = "SHUTTER-GOVERNANCE-PROTOCOL-REQUEST-v1";
 
 function u32be(n: number): Uint8Array {
   const b = new Uint8Array(4);
@@ -67,7 +67,7 @@ function framed(bytes: Uint8Array): Uint8Array[] {
 }
 
 /** request_digest(op, eid, payload=empty). `eid` is the canonical 0x-hex 32-byte election
- * id (accepts a plain string; @geg/shared's Hex is `string`). */
+ * id (accepts a plain string; @shutter-governance-protocol/shared's Hex is `string`). */
 function requestDigest(op: string, eid: string): Hex {
   return keccak256(concat([
     stringToBytes(REQUEST_DST),

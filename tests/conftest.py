@@ -12,13 +12,13 @@ from dataclasses import dataclass
 
 import pytest
 
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import attestation as att_crypto
-from geg.crypto import ballot as ballot_crypto
-from geg.crypto import proofs, schnorr
-from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
-from geg.crypto.points import g1_to_compressed, g2_from_compressed, g2_to_compressed
-from geg.envelopes.types import (
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.crypto import attestation as att_crypto
+from shutter_governance_protocol.crypto import ballot as ballot_crypto
+from shutter_governance_protocol.crypto import proofs, schnorr
+from shutter_governance_protocol.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
+from shutter_governance_protocol.crypto.points import g1_to_compressed, g2_from_compressed, g2_to_compressed
+from shutter_governance_protocol.envelopes.types import (
     Attestation,
     AttestationScheme,
     BallotEnvelope,
@@ -177,8 +177,8 @@ class FullEnv:
     t: int
 
     def voter_ballot(self, votes, pseudonym: bytes, *, weight: int = 1, nonce: int = 1) -> BallotEnvelope:
-        from geg.crypto import ballot as ballot_crypto
-        from geg.ports.eligibility import AttestationRequest
+        from shutter_governance_protocol.crypto import ballot as ballot_crypto
+        from shutter_governance_protocol.ports.eligibility import AttestationRequest
 
         fk = self.dl.get_finalized_key(self.config.election_id)
         mpk = g2_from_compressed(fk.pk_election)
@@ -201,9 +201,9 @@ class FullEnv:
 
 def build_full_env(dl, clock) -> FullEnv:
     """Wire signers, config, eligibility, and keyper services onto a data layer."""
-    from geg.adapters.eligibility_stub import StubEligibilityService
-    from geg.core.authz import Signer
-    from geg.services.keyper import KeyperService
+    from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService
+    from shutter_governance_protocol.core.authz import Signer
+    from shutter_governance_protocol.services.keyper import KeyperService
 
     n, t = 3, 2  # 2-of-3: t IS the quorum
     admin = Signer.generate()
@@ -243,7 +243,7 @@ def build_full_env(dl, clock) -> FullEnv:
 
 @pytest.fixture
 def full_env() -> FullEnv:
-    from geg.adapters.memory import InMemoryDataLayer
+    from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
 
     clock = ManualClock(0)
     return build_full_env(InMemoryDataLayer(clock=clock), clock)
@@ -262,9 +262,9 @@ def make_attestation(election_id: bytes, pseudonym: bytes, vk_bytes: bytes, *,
     also keeps the issuer key beside the credential it signed — a test cannot end up
     asserting against a credential minted under a key the verifier does not hold.
     """
-    from geg.crypto import attestation as att_crypto, schnorr as _schnorr
-    from geg.crypto.points import g1_to_compressed as _g1c
-    from geg.envelopes.types import Attestation, AttestationScheme
+    from shutter_governance_protocol.crypto import attestation as att_crypto, schnorr as _schnorr
+    from shutter_governance_protocol.crypto.points import g1_to_compressed as _g1c
+    from shutter_governance_protocol.envelopes.types import Attestation, AttestationScheme
 
     sk, vk_pt = _schnorr.keygen(elig_sk)
     sig = att_crypto.sign_attestation(

@@ -41,8 +41,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: geg-app
-    command: ["python", "-m", "geg.services.eligibility"]
+    image: shutter-governance-protocol-app
+    command: ["python", "-m", "shutter_governance_protocol.services.eligibility"]
     restart: unless-stopped
     environment:
       ELIGIBILITY_PRIVATE_KEY: ${ELIGIBILITY_PRIVATE_KEY:?set ELIGIBILITY_PRIVATE_KEY (issuer secp256k1 key)}

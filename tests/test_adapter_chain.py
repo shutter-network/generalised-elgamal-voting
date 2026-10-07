@@ -19,8 +19,8 @@ import time
 
 import pytest
 
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.envelopes.types import (
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.envelopes.types import (
     AggregateArtifact,
     Attestation,
     BallotEnvelope,
@@ -28,7 +28,7 @@ from geg.envelopes.types import (
     DecryptionShareEntry,
     DecryptionShareEnvelope,
 )
-from geg.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
+from shutter_governance_protocol.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
 
 # Well-known Anvil dev keys (public test keys — safe to hardcode).
 ANVIL_KEYS = [
@@ -87,8 +87,8 @@ class ChainEnv:
     def __init__(self, w3):
         from eth_account import Account
 
-        from geg.adapters.chain.client import BlockchainDataLayer
-        from geg.adapters.chain.deploy import chain_now, deploy_registry
+        from shutter_governance_protocol.adapters.chain.client import BlockchainDataLayer
+        from shutter_governance_protocol.adapters.chain.deploy import chain_now, deploy_registry
 
         self.w3 = w3
         self._Adapter = BlockchainDataLayer
@@ -130,7 +130,7 @@ class ChainEnv:
         return self.dl("admin")
 
     def warp(self, offset):
-        from geg.adapters.chain.deploy import anvil_set_time
+        from shutter_governance_protocol.adapters.chain.deploy import anvil_set_time
 
         anvil_set_time(self.w3, self.base + offset)
 
@@ -165,17 +165,17 @@ class ChainEnv:
         return int.from_bytes(self.accounts[role].key, "big")
 
     def dkg_sig(self, role, pk, committee) -> bytes:
-        from geg.core import write_auth
+        from shutter_governance_protocol.core import write_auth
         return write_auth.sign_dkg_result(self._key(role), ELECTION_ID, pk, committee)
 
     def share_sig(self, role, share) -> bytes:
-        from geg.core import write_auth
+        from shutter_governance_protocol.core import write_auth
         sigmas = [e.sigma for e in share.entries]
         proofs = [(int.from_bytes(e.proof[:32], "big"), int.from_bytes(e.proof[32:], "big")) for e in share.entries]
         return write_auth.sign_decryption_share(self._key(role), ELECTION_ID, sigmas, proofs)
 
     def aggregate_sig(self, role, aggregate) -> bytes:
-        from geg.core import write_auth
+        from shutter_governance_protocol.core import write_auth
         return write_auth.sign_aggregate(self._key(role), ELECTION_ID, aggregate)
 
     def register(self):
@@ -244,7 +244,7 @@ def test_register_body_cannot_be_replayed(env):
 
 
 def test_list_elections_and_filter(env):
-    from geg.ports.data_layer import ElectionFilter
+    from shutter_governance_protocol.ports.data_layer import ElectionFilter
 
     env.register()
     assert ELECTION_ID in env.reader().list_elections()
@@ -439,6 +439,6 @@ def test_verifiability_tier_is_zero(env):
 
 
 def _b_result():
-    from geg.envelopes.types import ResultArtifact
+    from shutter_governance_protocol.envelopes.types import ResultArtifact
 
     return ResultArtifact(election_id=ELECTION_ID, totals=(1, 1, 1), keyper_indices=(1, 2), bsgs_bound=6)

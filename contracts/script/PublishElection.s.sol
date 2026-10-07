@@ -9,7 +9,7 @@ import {IKeyperSet} from "../src/interfaces/IKeyperSet.sol";
 import {VotingTypes} from "../src/VotingTypes.sol";
 
 /// @notice Publish a generalised election via `ElectionRegistry.publishElection`
-///         (the geg ElectionDataLayer path). The electionId is assigned by the
+///         (the shutter_governance_protocol ElectionDataLayer path). The electionId is assigned by the
 ///         registry (next sequential id — the canonical bulletin-board model) and
 ///         reported in the logs; callers read it back rather than choosing it.
 ///

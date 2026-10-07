@@ -1,4 +1,4 @@
-"""Generate geg-native conformance vectors.
+"""Generate shutter-governance-protocol-native conformance vectors.
 
 Produces vectors for the protocol extensions the reference SDK suite does not
 cover — the weighted ``ATTESTATION_V1`` (positive + negative cases) — plus a full-election **flow fixture** (config, ballots incl.
@@ -16,14 +16,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from geg.core.admission import StoredBallot, admit
-from geg.core.aggregation import build_aggregate_artifact, recover_result
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import attestation as att, ballot as ballot_crypto, proofs, schnorr
-from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
-from geg.crypto.points import G2, g1_to_compressed, g2_from_compressed, g2_to_compressed, mul
-from geg.envelopes import codecs
-from geg.envelopes.types import (
+from shutter_governance_protocol.core.admission import StoredBallot, admit
+from shutter_governance_protocol.core.aggregation import build_aggregate_artifact, recover_result
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.crypto import attestation as att, ballot as ballot_crypto, proofs, schnorr
+from shutter_governance_protocol.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
+from shutter_governance_protocol.crypto.points import G2, g1_to_compressed, g2_from_compressed, g2_to_compressed, mul
+from shutter_governance_protocol.envelopes import codecs
+from shutter_governance_protocol.envelopes.types import (
     Attestation,
     AttestationScheme,
     BallotEnvelope,
@@ -31,7 +31,7 @@ from geg.envelopes.types import (
     DecryptionShareEntry,
     DecryptionShareEnvelope,
 )
-from geg.ports.eligibility import AttestationRequest
+from shutter_governance_protocol.ports.eligibility import AttestationRequest
 
 VECTORS = Path(__file__).resolve().parents[1] / "tests" / "vectors"
 ELECTION_ID = bytes.fromhex("11" * 32)
@@ -219,7 +219,7 @@ def gen_ballot():
     signed message. It must now fail. A corpus of positive cases alone would not
     notice an implementation that dropped the credential from the preimage.
     """
-    from geg.crypto.points import g2_to_compressed as _g2c
+    from shutter_governance_protocol.crypto.points import g2_to_compressed as _g2c
 
     ELECTION = b"\xe1" * 32
     PSEUDO = b"\x42" * 32

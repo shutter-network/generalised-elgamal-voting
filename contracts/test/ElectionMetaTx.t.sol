@@ -139,7 +139,8 @@ contract ElectionMetaTxTest is Test {
     // -- signing helpers (mirror the contract digests) --------------------- #
 
     function _signAggregate(uint256 pk_, VotingTypes.EncryptedTally memory agg) private pure returns (bytes memory) {
-        bytes32 digest = keccak256(abi.encodePacked("GEG-AGGREGATE-v1", uint256(1), abi.encode(agg)));
+        bytes32 digest =
+            keccak256(abi.encodePacked("SHUTTER-GOVERNANCE-PROTOCOL-AGGREGATE-v1", uint256(1), abi.encode(agg)));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk_, MessageHashUtils.toEthSignedMessageHash(digest));
         return abi.encodePacked(r, s, v);
     }
@@ -151,16 +152,28 @@ contract ElectionMetaTxTest is Test {
         cts[2] = VotingTypes.Ciphertext({c1: _g2Point(seed + 4), c2: _g2Point(seed + 5)});
     }
 
-    function _signDkg(uint256 pk_, bytes memory pkElection, bytes[] memory committee) private pure returns (bytes memory) {
-        bytes32 digest = keccak256(abi.encodePacked("GEG-DKG-RESULT-v1", uint256(1), pkElection, abi.encode(committee)));
+    function _signDkg(uint256 pk_, bytes memory pkElection, bytes[] memory committee)
+        private
+        pure
+        returns (bytes memory)
+    {
+        bytes32 digest = keccak256(
+            abi.encodePacked("SHUTTER-GOVERNANCE-PROTOCOL-DKG-RESULT-v1", uint256(1), pkElection, abi.encode(committee))
+        );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk_, MessageHashUtils.toEthSignedMessageHash(digest));
         return abi.encodePacked(r, s, v);
     }
 
     function _signShare(uint256 pk_, bytes[] memory shares, VotingTypes.DLEQProof[] memory proofs)
-        private pure returns (bytes memory)
+        private
+        pure
+        returns (bytes memory)
     {
-        bytes32 digest = keccak256(abi.encodePacked("GEG-DECRYPT-SHARE-v1", uint256(1), abi.encode(shares), abi.encode(proofs)));
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "SHUTTER-GOVERNANCE-PROTOCOL-DECRYPT-SHARE-v1", uint256(1), abi.encode(shares), abi.encode(proofs)
+            )
+        );
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk_, MessageHashUtils.toEthSignedMessageHash(digest));
         return abi.encodePacked(r, s, v);
     }
@@ -196,9 +209,20 @@ contract ElectionMetaTxTest is Test {
 
     function _params() private view returns (VotingTypes.ElectionParams memory) {
         return VotingTypes.ElectionParams({
-            votingStart: votingStart, votingEnd: votingEnd, selfSubmitFee: 0,
-            numCandidates: 3, budget: 1, mode: 0, variant: 0, weighted: false, scale: 1, duplicatePolicy: 1,
-            protocolVersion: "v1", pkWR: bytes(""), resultPublisher: resultPublisher, voteProxy: voteProxy
+            votingStart: votingStart,
+            votingEnd: votingEnd,
+            selfSubmitFee: 0,
+            numCandidates: 3,
+            budget: 1,
+            mode: 0,
+            variant: 0,
+            weighted: false,
+            scale: 1,
+            duplicatePolicy: 1,
+            protocolVersion: "v1",
+            pkWR: bytes(""),
+            resultPublisher: resultPublisher,
+            voteProxy: voteProxy
         });
     }
 }

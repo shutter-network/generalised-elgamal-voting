@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from geg.core.admission import StoredBallot, admit
-from geg.core.aggregation import bsgs_bound, build_aggregate_artifact, recover_result
+from shutter_governance_protocol.core.admission import StoredBallot, admit
+from shutter_governance_protocol.core.aggregation import bsgs_bound, build_aggregate_artifact, recover_result
 
 P1 = b"\xa1" * 32
 P2 = b"\xa2" * 32
@@ -127,8 +127,8 @@ def test_recover_result_builds_one_baby_step_table_for_the_whole_election(env, m
     (``docs/COORDINATOR_SIZING.md``). A timing assertion would be flaky and would
     not say *why* it regressed; counting says exactly that.
     """
-    from geg.core import aggregation
-    from geg.crypto import recovery
+    from shutter_governance_protocol.core import aggregation
+    from shutter_governance_protocol.crypto import recovery
 
     builds: list[int] = []
     real_build = recovery.build_baby_step_table
@@ -165,7 +165,7 @@ def test_recover_result_refuses_a_bound_over_the_deployment_ceiling(env):
     """
     import pytest
 
-    from geg.core.aggregation import TallyInfeasible, bsgs_bound
+    from shutter_governance_protocol.core.aggregation import TallyInfeasible, bsgs_bound
 
     cfg = env.config(weighted=True)
     ballots = [
@@ -201,12 +201,12 @@ def test_scaled_weight_is_integer_half_up_at_the_boundary():
     """Half-up, and integer-only — the cross-language landmine.
 
     Python's `round` is half-to-even and JavaScript's `Math.round` is half-up, so a
-    float implementation would put geg and the SDK on different aggregates at exactly
+    float implementation would put shutter_governance_protocol and the SDK on different aggregates at exactly
     `.5`. That surfaces as an honest committee appearing to publish a false
     aggregate, with nothing in the error pointing at rounding. The SDK pins the same
     boundary; a divergence must fail on both sides, not silently on neither.
     """
-    from geg.core.aggregation import scaled_weight
+    from shutter_governance_protocol.core.aggregation import scaled_weight
 
     # w/s == .5 exactly must round *up*, where Python's round() would give 0 and 2.
     assert scaled_weight(1, 2) == 1
@@ -222,7 +222,7 @@ def test_scaled_weight_is_integer_half_up_at_the_boundary():
 
 def test_scaled_election_tallies_in_units_of_scale(env):
     """A scaled election counts proportionally, not truncated at the top."""
-    from geg.core.aggregation import bsgs_bound
+    from shutter_governance_protocol.core.aggregation import bsgs_bound
 
     cfg = env.config(weighted=True, scale=4)
     ballots = [

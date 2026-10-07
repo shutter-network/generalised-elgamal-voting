@@ -30,11 +30,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from geg.crypto.recovery import (  # noqa: E402
+from shutter_governance_protocol.crypto.recovery import (  # noqa: E402
     build_baby_step_table,
     baby_step_giant_step_with_table,
 )
-from geg.crypto.points import G2, mul  # noqa: E402
+from shutter_governance_protocol.crypto.points import G2, mul  # noqa: E402
 
 GREEN, YELLOW, BOLD, RESET = "\x1b[32m", "\x1b[33m", "\x1b[1m", "\x1b[0m"
 

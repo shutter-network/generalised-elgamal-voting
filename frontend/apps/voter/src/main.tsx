@@ -4,7 +4,7 @@ import { Buffer } from "buffer";
 
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Web3Providers } from "@geg/shared/wallet";
+import { Web3Providers } from "@shutter-governance-protocol/shared/wallet";
 import { App } from "./App";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

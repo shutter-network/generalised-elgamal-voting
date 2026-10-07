@@ -11,7 +11,7 @@ const facts = (
   ...o,
 });
 
-describe("deriveState (mirror of geg.core.state.derive_state)", () => {
+describe("deriveState (mirror of shutter_governance_protocol.core.state.derive_state)", () => {
   it("cancelled wins over everything", () => {
     expect(deriveState(C, facts({ cancelled: true, resultPublished: true }), 500)).toBe("Cancelled");
   });

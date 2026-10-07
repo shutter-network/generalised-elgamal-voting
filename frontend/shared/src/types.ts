@@ -1,4 +1,4 @@
-/** TypeScript shapes mirroring the geg wire envelopes (`geg.envelopes.codecs`).
+/** TypeScript shapes mirroring the shutter_governance_protocol wire envelopes (`shutter_governance_protocol.envelopes.codecs`).
  *
  * The **public read API** decimalizes every `electionId` (so those are `number`);
  * cryptographic byte-strings stay `0x`-hex. Ballots/attestations *sent* to the

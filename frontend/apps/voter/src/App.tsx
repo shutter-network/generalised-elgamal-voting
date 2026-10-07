@@ -1,5 +1,5 @@
-import { Dashboard } from "@geg/shared";
-import { ConnectButton } from "@geg/shared/wallet";
+import { Dashboard } from "@shutter-governance-protocol/shared";
+import { ConnectButton } from "@shutter-governance-protocol/shared/wallet";
 import { VoteButton } from "./VoteForm";
 
 export function App() {
@@ -9,7 +9,7 @@ export function App() {
         <div className="topbar-brand">
           <img src="/shutter.png" alt="Shutter" className="topbar-logo-img" />
           <div>
-            <div className="topbar-title">Shutter OpenGov</div>
+            <div className="topbar-title">Shutter Governance Protocol</div>
             <div className="topbar-sub">Voter Panel</div>
           </div>
         </div>

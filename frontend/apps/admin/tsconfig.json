@@ -12,8 +12,8 @@
     "skipLibCheck": true,
     "types": ["vite/client", "node"],
     "paths": {
-      "@geg/shared": ["../../shared/src"],
-      "@geg/shared/*": ["../../shared/src/*"]
+      "@shutter-governance-protocol/shared": ["../../shared/src"],
+      "@shutter-governance-protocol/shared/*": ["../../shared/src/*"]
     }
   },
   "include": ["src", "vite.config.ts"]

@@ -3,7 +3,7 @@
 Keyper operators read the data layer but write through the coordinator relay
 (``keyper_server`` sends writes to ``submitter``), so they only need the port's *read*
 half. Mounting that half on the public ``api`` service lets a keyper point
-``GEG_DATA_LAYER_URL`` at ``http://<api>/port`` instead of requiring the data-layer
+``SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL`` at ``http://<api>/port`` instead of requiring the data-layer
 service itself to be reachable from outside the deployment.
 
 For that to be safe the ``/port`` surface must be byte-faithful to the port — not the
@@ -27,13 +27,13 @@ import pytest
 
 from conformance import ManualClock
 
-from geg.adapters.db.client import HttpDataLayerClient
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.core import write_auth
-from geg.core.authz import Signer
-from geg.envelopes.types import Attestation, BallotEnvelope, Ciphertext
-from geg.services.api import build_api_app
+from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.core import write_auth
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.envelopes.types import Attestation, BallotEnvelope, Ciphertext
+from shutter_governance_protocol.services.api import build_api_app
 
 VOTING_START, VOTING_END = 1_000, 2_000
 
@@ -120,8 +120,8 @@ def test_port_surface_caps_a_single_page_but_paging_recovers_everything(env):
     """
     import requests
 
-    from geg.services.common.reads import read_all_ballots
-    from geg.services.data_layer.data_layer import MAX_BALLOT_PAGE
+    from shutter_governance_protocol.services.common.reads import read_all_ballots
+    from shutter_governance_protocol.services.data_layer.data_layer import MAX_BALLOT_PAGE
 
     dl, eid, base, _ = env
     total = 1200                                     # deliberately over MAX_BALLOT_PAGE
@@ -144,7 +144,7 @@ def test_read_all_ballots_raises_rather_than_returning_short(env):
     that makes keypers diverge, and it would look like 'the committee disagreed'."""
     import pytest as _pytest
 
-    from geg.services.common.reads import IncompleteBallotRead, read_all_ballots
+    from shutter_governance_protocol.services.common.reads import IncompleteBallotRead, read_all_ballots
 
     dl, eid, base, _ = env
     for i in range(5):
@@ -162,7 +162,7 @@ def test_oversized_request_body_is_refused(env):
     validation — and the ballot POST is public and unauthenticated."""
     import requests
 
-    from geg.services.data_layer.data_layer import MAX_CONTENT_LENGTH
+    from shutter_governance_protocol.services.data_layer.data_layer import MAX_CONTENT_LENGTH
 
     _, eid, base, _ = env
     oversized = b'{"ballot":"' + b"a" * (MAX_CONTENT_LENGTH + 1024) + b'"}'
@@ -188,41 +188,41 @@ def test_port_surface_exposes_no_write_routes(env):
 
 
 # --------------------------------------------------------------------------- #
-#  Keyper read-endpoint resolution (GEG_API_URL)
+#  Keyper read-endpoint resolution (SHUTTER_GOVERNANCE_PROTOCOL_API_URL)
 # --------------------------------------------------------------------------- #
 
 def test_api_url_gets_the_port_path_appended():
     """Operators supply the API base URL; the keyper knows the read-surface path."""
-    from geg.services.keyper.keyper_server import resolve_read_url
+    from shutter_governance_protocol.services.keyper.keyper_server import resolve_read_url
 
-    assert resolve_read_url({"GEG_API_URL": "http://api:8500"}) == "http://api:8500/port"
-    assert resolve_read_url({"GEG_API_URL": "http://api:8500/"}) == "http://api:8500/port"
+    assert resolve_read_url({"SHUTTER_GOVERNANCE_PROTOCOL_API_URL": "http://api:8500"}) == "http://api:8500/port"
+    assert resolve_read_url({"SHUTTER_GOVERNANCE_PROTOCOL_API_URL": "http://api:8500/"}) == "http://api:8500/port"
     # Works behind a reverse proxy mounted at a sub-path.
-    assert resolve_read_url({"GEG_API_URL": "https://vote.example.org/geg"}) == "https://vote.example.org/geg/port"
+    assert resolve_read_url({"SHUTTER_GOVERNANCE_PROTOCOL_API_URL": "https://vote.example.org/shutter_governance_protocol"}) == "https://vote.example.org/shutter_governance_protocol/port"
 
 
 def test_stale_data_layer_url_is_not_honoured():
     """No back-compat fallback: nothing is deployed, so an env still carrying the old
-    GEG_DATA_LAYER_URL must fail loudly rather than quietly reading from a URL that now
+    SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL must fail loudly rather than quietly reading from a URL that now
     points at an internal-only service."""
-    from geg.services.keyper.keyper_server import resolve_read_url
+    from shutter_governance_protocol.services.keyper.keyper_server import resolve_read_url
 
-    with pytest.raises(SystemExit, match="GEG_API_URL"):
-        resolve_read_url({"GEG_DATA_LAYER_URL": "http://dl:8000"})
+    with pytest.raises(SystemExit, match="SHUTTER_GOVERNANCE_PROTOCOL_API_URL"):
+        resolve_read_url({"SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER_URL": "http://dl:8000"})
 
 
 def test_missing_read_url_fails_loudly():
-    from geg.services.keyper.keyper_server import resolve_read_url
+    from shutter_governance_protocol.services.keyper.keyper_server import resolve_read_url
 
-    with pytest.raises(SystemExit, match="GEG_API_URL"):
+    with pytest.raises(SystemExit, match="SHUTTER_GOVERNANCE_PROTOCOL_API_URL"):
         resolve_read_url({})
 
 
 def test_resolved_url_actually_serves_the_port_surface(env):
     """The appended path lines up with where api mounts the blueprint."""
-    from geg.services.keyper.keyper_server import resolve_read_url
+    from shutter_governance_protocol.services.keyper.keyper_server import resolve_read_url
 
     dl, eid, base, _ = env
     dl.submit_ballot(eid, _ballot(eid, 1))
-    client = HttpDataLayerClient(resolve_read_url({"GEG_API_URL": base}))
+    client = HttpDataLayerClient(resolve_read_url({"SHUTTER_GOVERNANCE_PROTOCOL_API_URL": base}))
     assert client.count_ballots(eid) == 1

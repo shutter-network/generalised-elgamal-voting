@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from geg.core.state import ElectionState, StateFacts, derive_state, is_voting_open
+from shutter_governance_protocol.core.state import ElectionState, StateFacts, derive_state, is_voting_open
 
 # voting_start=1000, voting_end=2000 (from env.config defaults)
 

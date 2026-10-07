@@ -7,12 +7,12 @@ recovers it from a quorum of partial decryptions with DLEQ-verified shares.
 
 from __future__ import annotations
 
-from geg.crypto import elgamal, proofs
-from geg.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
-from geg.crypto.params import ONCHAIN_DECRYPT_LABEL
-from geg.crypto.points import G2, mul
-from geg.crypto.recovery import threshold_decrypt
-from geg.crypto.transcript import Transcript
+from shutter_governance_protocol.crypto import elgamal, proofs
+from shutter_governance_protocol.crypto.dkg import KeyperDKGState, derive_joint_mpk, derive_mpk_share
+from shutter_governance_protocol.crypto.params import ONCHAIN_DECRYPT_LABEL
+from shutter_governance_protocol.crypto.points import G2, mul
+from shutter_governance_protocol.crypto.recovery import threshold_decrypt
+from shutter_governance_protocol.crypto.transcript import Transcript
 
 
 def run_dkg(n: int, quorum: int):
@@ -108,8 +108,8 @@ def _over_long_dealer(keyper_id: int, n: int, quorum: int):
     against this longer vector, so nothing in round 2 complains unless the LENGTH itself
     is checked.
     """
-    from geg.crypto.params import CURVE_ORDER
-    from geg.crypto.points import random_scalar
+    from shutter_governance_protocol.crypto.params import CURVE_ORDER
+    from shutter_governance_protocol.crypto.points import random_scalar
 
     coeffs = [random_scalar() for _ in range(quorum + 1)]     # one degree too many
     comms = [mul(G2, c) for c in coeffs]
@@ -132,8 +132,8 @@ def test_over_long_commitments_pass_feldman_but_break_recovery():
     unrecoverable.
     This pins the underlying maths, independently of where the guard lives.
     """
-    from geg.crypto.points import Z2, add
-    from geg.crypto.recovery import combine_shares
+    from shutter_governance_protocol.crypto.points import Z2, add
+    from shutter_governance_protocol.crypto.recovery import combine_shares
 
     n, quorum = 3, 2
     comms, shares = _over_long_dealer(2, n, quorum)
@@ -214,7 +214,7 @@ def test_derive_helpers_reject_wrong_length():
     """Last gate before a key is published: neither helper may consume a bad vector."""
     import pytest
 
-    from geg.crypto.dkg import check_commitment_lengths
+    from shutter_governance_protocol.crypto.dkg import check_commitment_lengths
 
     n, quorum = 3, 2
     states = {i: KeyperDKGState() for i in range(1, n + 1)}

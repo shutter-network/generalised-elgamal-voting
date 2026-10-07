@@ -13,7 +13,7 @@ import inspect
 
 import pytest
 
-from geg.services.common.auth import tokens_equal
+from shutter_governance_protocol.services.common.auth import tokens_equal
 
 
 # --- the helper ------------------------------------------------------------ #
@@ -51,8 +51,8 @@ def test_auth_paths_use_the_constant_time_helper():
     A source assertion, deliberately — the timing behaviour it protects cannot be
     observed reliably from a test, so what we pin is that the plain compare is gone.
     """
-    from geg.services.coordinator import coordinator
-    from geg.services.keyper import keyper_server
+    from shutter_governance_protocol.services.coordinator import coordinator
+    from shutter_governance_protocol.services.keyper import keyper_server
 
     # The exact pre-fix expressions, so the check cannot be tripped by an unrelated
     # `!=` elsewhere in the module (e.g. a length or address comparison).

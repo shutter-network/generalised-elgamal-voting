@@ -15,13 +15,13 @@ import pytest
 
 from conftest import ManualClock, build_full_env
 
-from geg.adapters.db import DEFAULT_DSN
-from geg.services import admin, auditor
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services import tally_aggregator as agg
-from geg.services.gateway import submit_ballot
+from shutter_governance_protocol.adapters.db import DEFAULT_DSN
+from shutter_governance_protocol.services import admin, auditor
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services import tally_aggregator as agg
+from shutter_governance_protocol.services.gateway import submit_ballot
 
-DSN = os.environ.get("GEG_TEST_DSN", DEFAULT_DSN)
+DSN = os.environ.get("SHUTTER_GOVERNANCE_PROTOCOL_TEST_DSN", DEFAULT_DSN)
 DKG_LEAD_TIME = 100
 
 
@@ -30,9 +30,9 @@ def db_full_env():
     psycopg = pytest.importorskip("psycopg")
     from werkzeug.serving import make_server
 
-    from geg.adapters.db.client import HttpDataLayerClient
-    from geg.adapters.db.server import build_app
-    from geg.adapters.db.store import PostgresStore
+    from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
+    from shutter_governance_protocol.adapters.db.server import build_app
+    from shutter_governance_protocol.adapters.db.store import PostgresStore
 
     clock = ManualClock(0)
     try:
@@ -76,7 +76,7 @@ def test_full_weighted_election_over_postgres(db_full_env):
 
 def test_result_persists_across_client_reconnect(db_full_env):
     """Data is durably in Postgres: a fresh client reads the published result."""
-    from geg.adapters.db.client import HttpDataLayerClient
+    from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
 
     fe = db_full_env
     admin.register_election(fe.dl, fe.config, fe.admin.sign_register(fe.config),

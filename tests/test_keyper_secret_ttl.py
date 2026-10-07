@@ -4,14 +4,14 @@ Retention itself is deliberate — operators need the secret for late or repeate
 decryption — so the 90-day window is unchanged. What the fix changes is the *fallback*:
 an unset `KEYPER_SECRET_TTL_S` used to produce `expires_at=None` and nothing was ever
 pruned, so safe behaviour depended on the compose file passing the variable and a bare
-`python -m geg.services.keyper` kept every historical share for ever.
+`python -m shutter_governance_protocol.services.keyper` kept every historical share for ever.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from geg.services.keyper.keyper_server import _DEFAULT_SECRET_RETENTION_S, _parse_secret_ttl
+from shutter_governance_protocol.services.keyper.keyper_server import _DEFAULT_SECRET_RETENTION_S, _parse_secret_ttl
 
 
 def test_code_default_matches_the_compose_default():

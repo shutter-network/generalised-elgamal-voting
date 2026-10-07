@@ -11,7 +11,7 @@ import pytest
 
 from conformance import DataLayerConformance, ManualClock, SignatureBackend
 
-from geg.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
 
 
 class TestInMemoryConformance(DataLayerConformance):

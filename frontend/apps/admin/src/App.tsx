@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Dashboard } from "@geg/shared";
-import { ConnectButton, useWalletSigner } from "@geg/shared/wallet";
+import { Dashboard } from "@shutter-governance-protocol/shared";
+import { ConnectButton, useWalletSigner } from "@shutter-governance-protocol/shared/wallet";
 import { CancelElectionButton } from "./CancelElectionButton";
 import { RetryTallyButton } from "./RetryTallyButton";
 import { RegisterForm } from "./RegisterForm";
@@ -32,7 +32,7 @@ export function App() {
         <div className="topbar-brand">
           <img src="/shutter.png" alt="Shutter" className="topbar-logo-img" />
           <div>
-            <div className="topbar-title">Shutter OpenGov</div>
+            <div className="topbar-title">Shutter Governance Protocol</div>
             <div className="topbar-sub">Admin Panel</div>
           </div>
         </div>

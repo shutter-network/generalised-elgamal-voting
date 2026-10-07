@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from geg.crypto import ballot, schnorr
-from geg.crypto.points import g1_from_compressed, g2_from_compressed
+from shutter_governance_protocol.crypto import ballot, schnorr
+from shutter_governance_protocol.crypto.points import g1_from_compressed, g2_from_compressed
 
 VECTORS = Path(__file__).parent / "vectors"
 
@@ -39,7 +39,7 @@ def test_schnorr_known_vector_byte_parity():
     R, s = schnorr.sign(sk, vk, msg, k=_int(i["k"]))
 
     # Byte-for-byte against the fixture.
-    from geg.crypto.points import g1_to_compressed
+    from shutter_governance_protocol.crypto.points import g1_to_compressed
     assert g1_to_compressed(R).hex() == i["R"]
     assert s == _int(i["s"])
     assert schnorr.encode(R, s).hex() == i["sig_encoded"]
@@ -53,7 +53,7 @@ def test_schnorr_known_vector_byte_parity():
 
 def _vector_attestation(i):
     """The credential pinned in the vector, as an ``Attestation``."""
-    from geg.envelopes.types import Attestation, AttestationScheme
+    from shutter_governance_protocol.envelopes.types import Attestation, AttestationScheme
     a = i["attestation"]
     return Attestation(
         election_id=_bytes(a["electionId"]), pseudonym=_bytes(a["pseudonym"]),

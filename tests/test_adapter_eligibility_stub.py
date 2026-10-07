@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from geg.adapters.eligibility_stub import StubEligibilityService
-from geg.crypto import schnorr
-from geg.crypto.points import g1_to_compressed
-from geg.envelopes.types import AttestationScheme
-from geg.ports.eligibility import AttestationRequest, verify_attestation
+from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed
+from shutter_governance_protocol.envelopes.types import AttestationScheme
+from shutter_governance_protocol.ports.eligibility import AttestationRequest, verify_attestation
 
 ELECTION = b"\x11" * 32
 PSEUDO = b"\x22" * 32

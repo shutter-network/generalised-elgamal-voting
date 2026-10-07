@@ -23,7 +23,7 @@ Writes (under ``deploy/``, relative to repo root):
                              doubles as the chain relayer + result publisher)
   * ``.env.keyper{1,2,3}`` — one self-contained env per keyper stack (its key, pinned
                              coordinator address, port, state dir, plus the two admin
-                             URLs it needs: ``GEG_API_URL`` for reads and
+                             URLs it needs: ``SHUTTER_GOVERNANCE_PROTOCOL_API_URL`` for reads and
                              ``COORDINATOR_URL`` for its relayed writes)
   * ``.env.eligibility``   — the eligibility issuer's env (its private key + service
                              config), run with its own ``--env-file``
@@ -44,8 +44,8 @@ from eth_account import Account
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from geg.crypto import schnorr  # noqa: E402
-from geg.crypto.points import g1_to_compressed  # noqa: E402
+from shutter_governance_protocol.crypto import schnorr  # noqa: E402
+from shutter_governance_protocol.crypto.points import g1_to_compressed  # noqa: E402
 
 N_KEYPERS = 3
 T = 2  # (t, n) = (2, 3): any 2 of 3 decrypt — t IS the quorum
@@ -125,8 +125,8 @@ def main() -> None:
         "",
         "# Blockchain backend only (the coordinator's account above is the gas-paying",
         "# relayer for keyper meta-tx and the result publisher):",
-        "# GEG_CHAIN_RPC=http://anvil:8545",
-        "# GEG_REGISTRY_ADDRESS: leave UNSET on the devnet — the chain-devnet compose",
+        "# SHUTTER_GOVERNANCE_PROTOCOL_CHAIN_RPC=http://anvil:8545",
+        "# SHUTTER_GOVERNANCE_PROTOCOL_REGISTRY_ADDRESS: leave UNSET on the devnet — the chain-devnet compose",
         "# auto-deploys the registry on `up` at a deterministic address and defaults to it.",
         "# Set it only for a real chain (registry deployed out of band).",
         "",
@@ -179,7 +179,7 @@ def main() -> None:
             f"COORDINATOR_IDENTITY={coord_addr.lower()}",
             "# (relay bearer token is NOT here — the coordinator pushes it via /auth/bootstrap)",
             "# Reads: the public API's BASE url — the keyper appends its read-surface path itself.",
-            "GEG_API_URL=http://host.docker.internal:8500",
+            "SHUTTER_GOVERNANCE_PROTOCOL_API_URL=http://host.docker.internal:8500",
             "# Writes: signed DKG/aggregate/decryption artifacts, relayed by the coordinator.",
             "COORDINATOR_URL=http://host.docker.internal:8400",
             f"KEYPER_PORT={port}",

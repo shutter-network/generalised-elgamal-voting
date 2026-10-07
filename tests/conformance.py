@@ -26,11 +26,11 @@ from abc import ABC, abstractmethod
 
 import pytest
 
-from geg.core import authz
+from shutter_governance_protocol.core import authz
 
-from geg.core import write_auth
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.envelopes.types import (
+from shutter_governance_protocol.core import write_auth
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.envelopes.types import (
     AggregateArtifact,
     Attestation,
     BallotEnvelope,
@@ -39,7 +39,7 @@ from geg.envelopes.types import (
     DecryptionShareEnvelope,
     ResultArtifact,
 )
-from geg.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
+from shutter_governance_protocol.ports.data_layer import ImmutabilityError, VotingWindowError, WriteAuthorizationError
 
 # Election ids are registry-assigned sequential values; a fresh backend per test
 # means the first (and usually only) registration is id 1.
@@ -158,7 +158,7 @@ class SignatureBackend(ConformanceBackend):
     """Backend for signature-checking adapters. ``adapter`` uses ``clock``."""
 
     def __init__(self, adapter, clock: ManualClock):
-        from geg.core.authz import Signer
+        from shutter_governance_protocol.core.authz import Signer
 
         self._adapter = adapter
         self._clock = clock
@@ -269,7 +269,7 @@ class DataLayerConformance:
         assert backend.reader().list_elections() == [ELECTION_ID]
 
     def test_list_elections_and_filter(self, backend):
-        from geg.ports.data_layer import ElectionFilter
+        from shutter_governance_protocol.ports.data_layer import ElectionFilter
 
         backend.register()
         assert ELECTION_ID in backend.reader().list_elections()

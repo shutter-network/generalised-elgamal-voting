@@ -1,5 +1,5 @@
-/* Ported voting-dashboard (technical mode) rendered inside the geg dashboard body.
- * Sourced from geg's public API via ./eth/client. Easy-mode, language/complexity toggles,
+/* Ported voting-dashboard (technical mode) rendered inside the shutter_governance_protocol dashboard body.
+ * Sourced from shutter_governance_protocol's public API via ./eth/client. Easy-mode, language/complexity toggles,
  * registry/find-my-vote/AI, and the standalone top bar are dropped (our app supplies the
  * topbar + election dropdown). Live crypto verification is deferred: automatic ballot
  * verification and per-share DLEQ verify are disabled; the "Verify yourself" guide panels

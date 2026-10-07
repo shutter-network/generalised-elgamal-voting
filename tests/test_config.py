@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from geg.core.config import (
+from shutter_governance_protocol.core.config import (
     DuplicatePolicy,
     ElectionConfig,
     KeyperIdentity,

@@ -1,4 +1,4 @@
-/** Typed client for the geg service surfaces the browser apps talk to.
+/** Typed client for the shutter_governance_protocol service surfaces the browser apps talk to.
  *
  * - Public API (`:8500`) — backend-blind reads (dashboard) + ballot ingest (voter app;
  *   the former standalone gateway, now merged into this service).

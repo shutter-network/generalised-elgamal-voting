@@ -16,19 +16,19 @@ import pytest
 import requests
 from werkzeug.serving import make_server
 
-from geg.adapters.eligibility_stub import StubEligibilityService
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.authz import Signer
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import ballot as ballot_crypto
-from geg.crypto import schnorr
-from geg.crypto.points import g1_to_compressed, g2_from_compressed
-from geg.envelopes.types import BallotEnvelope, Ciphertext
-from geg.ports.eligibility import AttestationRequest
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services import tally_aggregator as agg
-from geg.services.gateway import submit_ballot
-from geg.services.keyper import build_keyper_app
+from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.crypto import ballot as ballot_crypto
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed, g2_from_compressed
+from shutter_governance_protocol.envelopes.types import BallotEnvelope, Ciphertext
+from shutter_governance_protocol.ports.eligibility import AttestationRequest
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services import tally_aggregator as agg
+from shutter_governance_protocol.services.gateway import submit_ballot
+from shutter_governance_protocol.services.keyper import build_keyper_app
 
 from conftest import ManualClock
 
@@ -261,7 +261,7 @@ def test_coordinator_driven_dkg_never_publishes_a_key_for_a_rogue_dealer(world, 
     """
     import logging
 
-    from geg.crypto.dkg import KeyperDKGState
+    from shutter_governance_protocol.crypto.dkg import KeyperDKGState
 
     orig = KeyperDKGState.round1
     rogue_id = 2
@@ -303,7 +303,7 @@ def test_aggregate_returns_immediately_and_never_starts_a_second_worker(world, m
     """
     import time as _t
 
-    from geg.services.keyper.keyper import KeyperService
+    from shutter_governance_protocol.services.keyper.keyper import KeyperService
 
     w = world
     api_tokens = _bootstrap_and_dkg(w)
@@ -356,7 +356,7 @@ def test_recompute_forces_a_fresh_derivation_after_submitting(world, monkeypatch
     """
     import time as _t
 
-    from geg.services.keyper.keyper import KeyperService
+    from shutter_governance_protocol.services.keyper.keyper import KeyperService
 
     w = world
     api_tokens = _bootstrap_and_dkg(w)

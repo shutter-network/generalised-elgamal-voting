@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from geg.adapters.eligibility_wallet import WalletEligibilityService
-from geg.crypto import schnorr
-from geg.crypto.points import g1_to_compressed
-from geg.ports.eligibility import verify_attestation
+from shutter_governance_protocol.adapters.eligibility_wallet import WalletEligibilityService
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed
+from shutter_governance_protocol.ports.eligibility import verify_attestation
 
 from test_adapter_chain import ANVIL_KEYS
 
@@ -63,7 +63,7 @@ def anvil_w3():
 
 
 def _deploy_mock_token(w3, account):
-    from geg.adapters.chain.deploy import send_tx
+    from shutter_governance_protocol.adapters.chain.deploy import send_tx
 
     art = json.loads((_OUT / "MockVotingToken.sol" / "MockVotingToken.json").read_text())
     contract = w3.eth.contract(abi=art["abi"], bytecode=art["bytecode"]["object"])
@@ -74,8 +74,8 @@ def _deploy_mock_token(w3, account):
 def test_chain_voting_power_reads_balance(anvil_w3):
     from eth_account import Account
 
-    from geg.adapters.chain.deploy import send_tx
-    from geg.adapters.voting_power import chain_voting_power
+    from shutter_governance_protocol.adapters.chain.deploy import send_tx
+    from shutter_governance_protocol.adapters.voting_power import chain_voting_power
 
     deployer = Account.from_key(ANVIL_KEYS[0])
     voter = Account.from_key(ANVIL_KEYS[1])
@@ -97,8 +97,8 @@ def test_chain_voting_power_reads_balance(anvil_w3):
 def test_wallet_adapter_weight_from_chain_voting_power(anvil_w3):
     from eth_account import Account
 
-    from geg.adapters.chain.deploy import send_tx
-    from geg.adapters.voting_power import chain_voting_power
+    from shutter_governance_protocol.adapters.chain.deploy import send_tx
+    from shutter_governance_protocol.adapters.voting_power import chain_voting_power
 
     deployer = Account.from_key(ANVIL_KEYS[0])
     voter = Account.from_key(ANVIL_KEYS[3])

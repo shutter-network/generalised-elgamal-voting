@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from geg.services.common.token_store import TokenStore, derive_fernet
+from shutter_governance_protocol.services.common.token_store import TokenStore, derive_fernet
 
 SK = 0x1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF
 OTHER_SK = 0x0FEDCBA0987654321FEDCBA0987654321FEDCBA0987654321FEDCBA098765432
@@ -104,7 +104,7 @@ def test_recovers_by_re_minting_after_a_key_change(tmp_path):
 def test_a_keyper_key_cannot_decrypt_a_coordinator_store(tmp_path):
     """Same construction, different label — so the two file families stay disjoint
     even if two services were somehow configured with the same signing key."""
-    from geg.services.keyper.keyper_persistence import derive_fernet as keyper_fernet
+    from shutter_governance_protocol.services.keyper.keyper_persistence import derive_fernet as keyper_fernet
     from cryptography.fernet import InvalidToken
 
     TokenStore(tmp_path / "s", SK).put(URL, "api-aaa", "peer-bbb")
@@ -114,7 +114,7 @@ def test_a_keyper_key_cannot_decrypt_a_coordinator_store(tmp_path):
 
 
 def test_the_two_derivations_differ_for_one_key():
-    from geg.services.keyper.keyper_persistence import derive_fernet as keyper_fernet
+    from shutter_governance_protocol.services.keyper.keyper_persistence import derive_fernet as keyper_fernet
 
     probe = b"same plaintext"
     coordinator_ct = derive_fernet(SK).encrypt(probe)

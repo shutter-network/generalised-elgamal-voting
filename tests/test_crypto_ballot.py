@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import make_attestation
-from geg.crypto.points import g1_to_compressed
-from geg.crypto import ballot, schnorr
-from geg.crypto.ballot import _pre_v1_ballot_message
-from geg.crypto.params import CURVE_ORDER
-from geg.crypto.points import G2, mul, random_scalar
+from shutter_governance_protocol.crypto.points import g1_to_compressed
+from shutter_governance_protocol.crypto import ballot, schnorr
+from shutter_governance_protocol.crypto.ballot import _pre_v1_ballot_message
+from shutter_governance_protocol.crypto.params import CURVE_ORDER
+from shutter_governance_protocol.crypto.points import G2, mul, random_scalar
 
 
 def _mpk():
@@ -202,7 +202,7 @@ def test_ballot_labels_are_three_distinct_domains():
     meant two unrelated things and bumping the apparently-stale "v1" silently
     invalidated every proof. That is the mistake this test exists to catch.
     """
-    from geg.crypto.params import BALLOT_MESSAGE_LABEL, BALLOT_PROOF_TRANSCRIPT_LABEL
+    from shutter_governance_protocol.crypto.params import BALLOT_MESSAGE_LABEL, BALLOT_PROOF_TRANSCRIPT_LABEL
 
     v1_diagnostic = "SHUTTER-VOTE-BALLOT-v1"
     labels = [BALLOT_MESSAGE_LABEL, BALLOT_PROOF_TRANSCRIPT_LABEL, v1_diagnostic]

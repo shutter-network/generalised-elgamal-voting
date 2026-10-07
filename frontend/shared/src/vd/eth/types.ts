@@ -65,7 +65,7 @@ export type DecryptionShare = {
   submittedAt: bigint;
   shares: Hex[];
   proofs: { e: bigint; z: bigint }[];
-  /** geg extension: the raw per-candidate DLEQ proof bytes (geg packs the proof as one
+  /** shutter_governance_protocol extension: the raw per-candidate DLEQ proof bytes (shutter_governance_protocol packs the proof as one
    * hex blob rather than {e,z}); shown in the shares view while live verify is deferred. */
   rawProofs?: Hex[];
 };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cancelDigest, canonicalize, lowercaseHex, registerDigest } from "./adminSign";
 
-// Fixtures generated from Python (geg.core.authz). If the wire config shape or the
+// Fixtures generated from Python (shutter_governance_protocol.core.authz). If the wire config shape or the
 // digest scheme changes, regenerate these from register_digest / request_digest.
 const CONFIG = {
   electionId: "0x1111111111111111111111111111111111111111111111111111111111111111",
@@ -32,10 +32,10 @@ const CONFIG = {
 const EXPECTED_CANON =
   '{"adminKey":"0xabababababababababababababababababababab","budget":3,"duplicatePolicy":"last-wins","electionId":"0x1111111111111111111111111111111111111111111111111111111111111111","eligibilityKey":"0xe1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1","gatewayKeys":["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],"keypers":[{"signingKey":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","url":"http://k1:8101"},{"signingKey":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","url":"http://k2:8102"},{"signingKey":"0xcccccccccccccccccccccccccccccccccccccccc","url":"http://k3:8103"}],"mode":"exact","numCandidates":3,"protocolVersion":"v1","resultPublisherKey":"0xdddddddddddddddddddddddddddddddddddddddd","scale":1,"selfSubmitFee":"0","threshold":{"n":3,"t":2},"variant":"A","votingEnd":2000,"votingStart":1000,"weighted":true}';
 const EXPECTED_REGISTER = "0x8536550a834b1758270a909fdf80fa18a10d08ea391abfb00132d62f586e52e7";
-const EXPECTED_CANCEL = "0x565f20982cb67ac495bf11fd0bba3020cab421e17ce0e8ae697d42f8f06ecce3";
+const EXPECTED_CANCEL = "0xb6fcd4128e28fa3ad25b85b21ae2ffd9d586e9b0d67a419a3cdb7e4c85cd985f";
 const EID_7 = ("0x" + (7).toString(16).padStart(64, "0")) as `0x${string}`;
 
-describe("admin digests match geg.core.authz (byte-exact)", () => {
+describe("admin digests match shutter_governance_protocol.core.authz (byte-exact)", () => {
   it("canonicalize == Python canonical JSON (electionId included)", () => {
     expect(canonicalize(CONFIG)).toBe(EXPECTED_CANON);
   });

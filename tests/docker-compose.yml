@@ -1,22 +1,22 @@
-# Test-only Postgres for the geg database data-layer adapter (test_adapter_db.py,
+# Test-only Postgres for the shutter_governance_protocol database data-layer adapter (test_adapter_db.py,
 # test_services_db_e2e.py). NOT a deployment stack — those live in deploy/.
 # Isolated from any other local Postgres: non-default port 5433, throwaway creds.
 #   docker compose -f tests/docker-compose.yml up -d      # start
 #   docker compose -f tests/docker-compose.yml down -v    # stop + wipe
-name: geg-test-db
+name: shutter-governance-protocol-test-db
 
 services:
-  geg-postgres:
+  shutter-governance-protocol-postgres:
     image: postgres:16-alpine
-    container_name: geg-postgres
+    container_name: shutter-governance-protocol-postgres
     environment:
-      POSTGRES_USER: geg
-      POSTGRES_PASSWORD: geg
-      POSTGRES_DB: geg
+      POSTGRES_USER: shutter_governance_protocol
+      POSTGRES_PASSWORD: shutter_governance_protocol
+      POSTGRES_DB: shutter_governance_protocol
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U geg -d geg"]
+      test: ["CMD-SHELL", "pg_isready -U shutter_governance_protocol -d shutter_governance_protocol"]
       interval: 2s
       timeout: 3s
       retries: 20

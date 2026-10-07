@@ -27,7 +27,7 @@ export function VerifyAggregatePanel({ aggregate, onDownloadFixture, downloading
     `// weight packed at att[1..33] (32-byte BE) — the aggregate is Σ weightᵢ·ctᵢ.`,
     `const attWeight = (attHex) => { const a = fromHex(attHex); let w = 0n; for (let i = 1; i < 33; i++) w = (w << 8n) + BigInt(a[i]); return w; };`,
     `// att packs scheme(1) ‖ weight(32 BE) ‖ nonce(32 BE) ‖ R(48) ‖ s(32). Dispatches on scheme`,
-    `// like geg's verify_attestation: 1=ATTESTATION_V1 (transcript), 0=LEGACY (weightless, weight 1).`,
+    `// like shutter_governance_protocol's verify_attestation: 1=ATTESTATION_V1 (transcript), 0=LEGACY (weightless, weight 1).`,
     `const u32be = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };`,
     `const scalar32 = (w) => { const b = Buffer.alloc(32); let x = BigInt(w); for (let i = 31; i >= 0 && x > 0n; i--) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };`,
     `const tlv = (p, tag, v) => { const tb = Buffer.from(tag, "utf8"); p.push(u32be(tb.length), tb, u32be(v.length), Buffer.from(v)); };`,

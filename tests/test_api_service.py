@@ -1,4 +1,4 @@
-"""Public read-only API service (``geg.services.api``) — e2e over the in-memory
+"""Public read-only API service (``shutter_governance_protocol.services.api``) — e2e over the in-memory
 backend via the Flask test client.
 
 The API is backend-blind (it takes any ``ElectionDataLayer``); driving it over the
@@ -13,8 +13,8 @@ import pytest
 
 from conftest import ManualClock, build_full_env
 
-from geg.adapters.memory import InMemoryDataLayer
-from geg.services.api import build_api_app
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.services.api import build_api_app
 
 
 @pytest.fixture

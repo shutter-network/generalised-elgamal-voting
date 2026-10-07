@@ -21,15 +21,15 @@ import pytest
 import requests
 from werkzeug.serving import make_server
 
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.authz import Signer
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services.common.token_store import TokenStore
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services.common.token_store import TokenStore
 
 # Any fixed key: the store derives its encryption key from it, and these
 # tests care about token scoping rather than about which key was used.
 _SK = 0x1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF
-from geg.services.keyper import build_keyper_app
+from shutter_governance_protocol.services.keyper import build_keyper_app
 
 from conftest import ManualClock
 

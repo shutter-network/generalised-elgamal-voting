@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from geg.envelopes import codecs
-from geg.envelopes.codecs import CodecError
-from geg.envelopes.types import (
+from shutter_governance_protocol.envelopes import codecs
+from shutter_governance_protocol.envelopes.codecs import CodecError
+from shutter_governance_protocol.envelopes.types import (
     BYTES32,
     DLEQ_BYTES,
     G1_BYTES,

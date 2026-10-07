@@ -51,7 +51,7 @@ export function VerifyBallotPanel({ ballot, globalIndex, overview, selectedElect
     `const g2FromHex = (h) => G2Point.fromBytes(fromHex(h));`,
     `const electionId32 = (id) => fromHex(BigInt(id).toString(16).padStart(64, "0"));`,
     `// att packs scheme(1) ‖ weight(32 BE) ‖ nonce(32 BE) ‖ R(48) ‖ s(32). The verifier`,
-    `// dispatches on scheme like geg's verify_attestation: 1=ATTESTATION_V1 (domain-separated`,
+    `// dispatches on scheme like shutter_governance_protocol's verify_attestation: 1=ATTESTATION_V1 (domain-separated`,
     `// transcript over electionId,pseudonym,vk,weight,nonce), 0=LEGACY (weightless, weight 1).`,
     `const u32be = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };`,
     `const scalar32 = (w) => { const b = Buffer.alloc(32); let x = BigInt(w); for (let i = 31; i >= 0 && x > 0n; i--) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };`,

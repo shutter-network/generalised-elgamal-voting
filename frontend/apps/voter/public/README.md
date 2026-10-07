@@ -6,7 +6,7 @@
 These are **copied here automatically** by the voter app's `postinstall` script (a
 plain `cp` from the SDK's own `dist/`, see `package.json`), so `npm install` sets them
 up. They are generated (git-ignored), not source. If they go missing, re-run
-`npm install` (or `npm run postinstall -w @geg/voter`).
+`npm install` (or `npm --prefix frontend run postinstall -w @shutter-governance-protocol/voter` from the repository root).
 
 > This project has prior history of a *nondeterministic ballot-verification* bug rooted
 > in a two-layer WASM memory issue. If ballots intermittently fail the gateway filter,

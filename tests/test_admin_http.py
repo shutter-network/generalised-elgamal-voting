@@ -7,13 +7,13 @@ Driven over the in-memory data layer via the Flask test client.
 """
 
 from __future__ import annotations
-from geg.core import authz
+from shutter_governance_protocol.core import authz
 
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.authz import Signer
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.envelopes import codecs
-from geg.services.admin import build_admin_app
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.envelopes import codecs
+from shutter_governance_protocol.services.admin import build_admin_app
 
 from conftest import ManualClock
 

@@ -19,7 +19,7 @@ abstract contract ElectionTally is ElectionBase {
     /// @notice Aggregate submission authorized by an embedded keyper signature (meta-tx).
     /// @dev A relayer submits and pays gas; the vote is attributed to the
     ///      ``ecrecover``ed keyper. The signature is an EIP-191 personal-sign over
-    ///      ``keccak256("GEG-AGGREGATE-v1" ‖ electionId ‖ abi.encode(aggregate))``.
+    ///      ``keccak256("SHUTTER-GOVERNANCE-PROTOCOL-AGGREGATE-v1" ‖ electionId ‖ abi.encode(aggregate))``.
     function submitAggregateSigned(VotingTypes.EncryptedTally calldata aggregate, bytes calldata keyperSig) external {
         bytes32 digest = _aggregateDigest(aggregate);
         address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(digest), keyperSig);
@@ -34,7 +34,8 @@ abstract contract ElectionTally is ElectionBase {
     /// @dev Digest that both (a) the keyper signs and (b) groups byte-identical
     ///      submissions for the quorum count. Byte-identical for honest keypers.
     function _aggregateDigest(VotingTypes.EncryptedTally calldata aggregate) private view returns (bytes32) {
-        return keccak256(abi.encodePacked("GEG-AGGREGATE-v1", electionId, abi.encode(aggregate)));
+        return
+            keccak256(abi.encodePacked("SHUTTER-GOVERNANCE-PROTOCOL-AGGREGATE-v1", electionId, abi.encode(aggregate)));
     }
 
     function _registerAggregate(address voter, bytes32 resultDigest, VotingTypes.EncryptedTally calldata aggregate)
@@ -94,7 +95,7 @@ abstract contract ElectionTally is ElectionBase {
     function markTallyStalled() external onlyRole(RESULT_PUBLISHER_ROLE) {
         _requireNotCancelled();
         if (block.timestamp < votingEnd) revert VotingStillOpen(block.timestamp);
-        if (resultFinalized) revert AlreadyFinalized();  // result wins; nothing to stall
+        if (resultFinalized) revert AlreadyFinalized(); // result wins; nothing to stall
         tallyStalled = true;
         emit TallyStalledSet(true);
     }

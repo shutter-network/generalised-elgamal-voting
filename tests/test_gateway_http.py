@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from geg.envelopes import codecs
-from geg.services import admin
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services.api import build_api_app
+from shutter_governance_protocol.envelopes import codecs
+from shutter_governance_protocol.services import admin
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services.api import build_api_app
 
 EID_HEX = (1).to_bytes(32, "big").hex()  # registry-assigned first id
 
@@ -73,7 +73,7 @@ def test_gateway_maps_backend_voting_window_error_to_400(full_env):
     """A lifecycle-enforcing backend (chain) can reject a ballot the gateway's own
     clock thinks is in-window (boundary race). The gateway must surface that backend
     ``VotingWindowError`` as a clean 400, not a 500."""
-    from geg.ports.data_layer import VotingWindowError
+    from shutter_governance_protocol.ports.data_layer import VotingWindowError
 
     fe = full_env
     _ready(fe)

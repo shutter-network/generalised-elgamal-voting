@@ -1,4 +1,4 @@
-/** `0x`-hex <-> bytes helpers (the SDK exports none). Matches geg's `enc_bytes`. */
+/** `0x`-hex <-> bytes helpers (the SDK exports none). Matches shutter_governance_protocol's `enc_bytes`. */
 
 export type Hex = string; // 0x-prefixed lowercase hex
 

@@ -7,7 +7,7 @@ proof randomness never leave here), issues each an attestation with the eligibil
 secret, and POSTs the ballot envelope to the gateway. Backend-agnostic — it
 only speaks HTTP to the data-layer + gateway services.
 
-    GEG_API_URL=http://127.0.0.1:8500 API_URL=http://127.0.0.1:8500 \
+    SHUTTER_GOVERNANCE_PROTOCOL_API_URL=http://127.0.0.1:8500 API_URL=http://127.0.0.1:8500 \
       ELIGIBILITY_PRIVATE_KEY=0x... python scripts/vote_sample.py
 
 Submits two ballots: [3,0,0] weight 2 and [0,3,0] weight 5 → expected tally
@@ -25,18 +25,18 @@ import requests
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "src"))
 
-from geg.adapters.eligibility_stub import StubEligibilityService  # noqa: E402
-from geg.crypto import ballot as ballot_crypto  # noqa: E402
-from geg.crypto import schnorr  # noqa: E402
-from geg.crypto.points import g1_to_compressed, g2_from_compressed  # noqa: E402
-from geg.envelopes import codecs  # noqa: E402
-from geg.envelopes.types import BallotEnvelope, Ciphertext  # noqa: E402
-from geg.ports.eligibility import AttestationRequest  # noqa: E402
+from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService  # noqa: E402
+from shutter_governance_protocol.crypto import ballot as ballot_crypto  # noqa: E402
+from shutter_governance_protocol.crypto import schnorr  # noqa: E402
+from shutter_governance_protocol.crypto.points import g1_to_compressed, g2_from_compressed  # noqa: E402
+from shutter_governance_protocol.envelopes import codecs  # noqa: E402
+from shutter_governance_protocol.envelopes.types import BallotEnvelope, Ciphertext  # noqa: E402
+from shutter_governance_protocol.ports.eligibility import AttestationRequest  # noqa: E402
 
 def _discover_election(dl_url: str) -> bytes:
-    """Election id (registry-assigned). Use GEG_ELECTION_ID if set, else the most
+    """Election id (registry-assigned). Use SHUTTER_GOVERNANCE_PROTOCOL_ELECTION_ID if set, else the most
     recent election reported by the data-layer service."""
-    override = os.environ.get("GEG_ELECTION_ID")
+    override = os.environ.get("SHUTTER_GOVERNANCE_PROTOCOL_ELECTION_ID")
     if override:
         return bytes.fromhex(override.removeprefix("0x"))
     ids = requests.get(f"{dl_url}/elections").json()["electionIds"]
@@ -47,7 +47,7 @@ def _discover_election(dl_url: str) -> bytes:
 
 def main() -> None:
     # Reads via the api's port surface (the data-layer service is internal-only).
-    dl_url = os.environ.get("GEG_API_URL", "http://127.0.0.1:8500").rstrip("/") + "/port"
+    dl_url = os.environ.get("SHUTTER_GOVERNANCE_PROTOCOL_API_URL", "http://127.0.0.1:8500").rstrip("/") + "/port"
     # Ballot ingest now lives on the public API (formerly the standalone gateway).
     gw_url = os.environ.get("API_URL", os.environ.get("GATEWAY_URL", "http://127.0.0.1:8500")).rstrip("/")
     elig = StubEligibilityService(int(os.environ["ELIGIBILITY_PRIVATE_KEY"], 16))

@@ -15,7 +15,7 @@
 #                          The keyper pins it — only the coordinator may bootstrap it.
 #                          This is the ONLY secret you pre-share (the relay bearer
 #                          token is pushed over /auth/bootstrap, not configured here).
-#   GEG_API_URL            the admin's public API base URL (reads). Base only — no
+#   SHUTTER_GOVERNANCE_PROTOCOL_API_URL            the admin's public API base URL (reads). Base only — no
 #                          path; the keyper appends its read-surface path itself.
 #   COORDINATOR_URL        the admin's public coordinator URL (write relay).
 # Optional:
@@ -57,12 +57,12 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: geg-app
-    command: ["python", "-m", "geg.services.keyper"]
+    image: shutter-governance-protocol-app
+    command: ["python", "-m", "shutter_governance_protocol.services.keyper"]
     environment:
       KEYPER_SIGNING_KEY: ${KEYPER_SIGNING_KEY:?set KEYPER_SIGNING_KEY (your keyper private key)}
       COORDINATOR_IDENTITY: ${COORDINATOR_IDENTITY:?set COORDINATOR_IDENTITY (coordinator address from the admin)}
-      GEG_API_URL: ${GEG_API_URL:-http://host.docker.internal:8500}
+      SHUTTER_GOVERNANCE_PROTOCOL_API_URL: ${SHUTTER_GOVERNANCE_PROTOCOL_API_URL:-http://host.docker.internal:8500}
       COORDINATOR_URL: ${COORDINATOR_URL:-http://host.docker.internal:8400}
       KEYPER_PORT: ${KEYPER_PORT:-8100}
       KEYPER_STATE_DIR: /keyper-state

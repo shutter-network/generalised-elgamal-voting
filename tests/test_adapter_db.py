@@ -17,16 +17,16 @@ import pytest
 
 from conformance import DataLayerConformance, ManualClock, SignatureBackend
 
-from geg.adapters.db import DEFAULT_DSN
+from shutter_governance_protocol.adapters.db import DEFAULT_DSN
 
-DSN = os.environ.get("GEG_TEST_DSN", DEFAULT_DSN)
+DSN = os.environ.get("SHUTTER_GOVERNANCE_PROTOCOL_TEST_DSN", DEFAULT_DSN)
 
 
 @pytest.fixture(scope="module")
 def _pg_ready():
     """Connect once and create the schema; skip the whole module if unreachable."""
     psycopg = pytest.importorskip("psycopg")
-    from geg.adapters.db.store import PostgresStore
+    from shutter_governance_protocol.adapters.db.store import PostgresStore
 
     try:
         store = PostgresStore(DSN)
@@ -41,9 +41,9 @@ class TestPostgresConformance(DataLayerConformance):
     def backend(self, _pg_ready):
         from werkzeug.serving import make_server
 
-        from geg.adapters.db.client import HttpDataLayerClient
-        from geg.adapters.db.server import build_app
-        from geg.adapters.db.store import PostgresStore
+        from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
+        from shutter_governance_protocol.adapters.db.server import build_app
+        from shutter_governance_protocol.adapters.db.store import PostgresStore
 
         clock = ManualClock(0)
         store = PostgresStore(_pg_ready, clock=clock)

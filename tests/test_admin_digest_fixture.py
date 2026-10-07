@@ -11,11 +11,11 @@ from __future__ import annotations
 import pytest
 from eth_utils import keccak
 
-from geg.core import authz
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.core import authz
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
 
 _EXPECTED_REGISTER = "0x8536550a834b1758270a909fdf80fa18a10d08ea391abfb00132d62f586e52e7"
-_EXPECTED_CANCEL = "0x565f20982cb67ac495bf11fd0bba3020cab421e17ce0e8ae697d42f8f06ecce3"
+_EXPECTED_CANCEL = "0xb6fcd4128e28fa3ad25b85b21ae2ffd9d586e9b0d67a419a3cdb7e4c85cd985f"
 
 _CONFIG = ElectionConfig(
     election_id=b"\x11" * 32,  # bound by the signature (the asserted next id)
@@ -83,4 +83,4 @@ def test_request_digest_is_domain_separated():
         + (0).to_bytes(4, "big")
     )
     assert authz.request_digest(op, eid) != unprefixed
-    assert authz.REQUEST_DST == b"GEG-REQUEST-v1"
+    assert authz.REQUEST_DST == b"SHUTTER-GOVERNANCE-PROTOCOL-REQUEST-v1"

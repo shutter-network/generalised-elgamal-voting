@@ -9,7 +9,7 @@ export default defineConfig({
   define: { global: "globalThis" },
   resolve: {
     alias: {
-      "@geg/shared": fileURLToPath(new URL("../../shared/src", import.meta.url)),
+      "@shutter-governance-protocol/shared": fileURLToPath(new URL("../../shared/src", import.meta.url)),
       buffer: "buffer/",
     },
   },

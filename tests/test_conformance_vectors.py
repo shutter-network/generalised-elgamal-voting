@@ -1,6 +1,6 @@
 """Cross-language conformance vectors.
 
-Verifies that geg's crypto reproduces every cross-implementation vector — the
+Verifies that shutter_governance_protocol's crypto reproduces every cross-implementation vector — the
 same JSON files an independent re-verifier (the TS SDK, a future port) consumes.
 Vectors follow the shared schema: compressed-hex points, decimal-string scalars,
 hex byte blobs. Adopted from the reference SDK suite and extended here; this is
@@ -8,7 +8,7 @@ the protocol conformance gate (single command: ``pytest tests/test_conformance_v
 
 Categories: encrypt, dleq, or, budget (exact+atMost), schnorr, decrypt-share,
 ballot, tally. Variant-B / atMost *ballots* are conformance level 2 (specified,
-not implemented in the reference) and are skipped with a reason.
+not implemented in the reference); adding one here fails until it is supported.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from geg.crypto import schnorr
-from geg.crypto.ballot import verify_ballot_crypto
-from geg.crypto.elgamal import encrypt
-from geg.crypto.points import Z2, add, g1_from_compressed, g2_from_compressed, g2_to_compressed, mul, neg
-from geg.crypto.proofs import (
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.ballot import verify_ballot_crypto
+from shutter_governance_protocol.crypto.elgamal import encrypt
+from shutter_governance_protocol.crypto.points import Z2, add, g1_from_compressed, g2_from_compressed, g2_to_compressed, mul, neg
+from shutter_governance_protocol.crypto.proofs import (
     ORBranch,
     decode_dleq,
     verify_budget_at_most,
@@ -31,8 +31,8 @@ from geg.crypto.proofs import (
     verify_dleq,
     verify_or,
 )
-from geg.crypto.recovery import baby_step_giant_step, combine_shares
-from geg.crypto.transcript import Transcript
+from shutter_governance_protocol.crypto.recovery import baby_step_giant_step, combine_shares
+from shutter_governance_protocol.crypto.transcript import Transcript
 
 VECTORS = Path(__file__).parent / "vectors"
 
@@ -121,9 +121,8 @@ def test_budget_vector(name, v):
 @pytest.mark.parametrize("name,v", _load("schnorr"), ids=_ids(_load("schnorr")))
 def test_schnorr_vector(name, v):
     i = v["inputs"]
-    if "sig" not in i:
-        pytest.skip("build-style fixture — covered by test_parity_vectors")
-    R, s = schnorr.decode(_hx(i["sig"]))
+    # Pinned build fixtures store the encoded signature alongside their inputs.
+    R, s = schnorr.decode(_hx(i["sig"] if "sig" in i else i["sig_encoded"]))
     assert schnorr.verify(_g1(i["vk"]), _hx(i["message"]), R, s) is v["expected"]["verify"]
 
 
@@ -148,11 +147,19 @@ def test_decrypt_share_vector(name, v):
 def test_ballot_vector(name, v):
     i = v["inputs"]
     if "zkProof" not in i:
-        pytest.skip("build-style fixture — covered by test_parity_vectors")
+        # Verify the pinned build output as well as checking its byte parity elsewhere.
+        out = v["outputs"]
+        i = {
+            **i,
+            "election_id": i["electionId"],
+            "ciphertexts": [{"c1": c1, "c2": c2} for c1, c2 in out["ciphertexts"]],
+            "zkProof": out["zkProof"],
+            "signature": out["voterSignature"],
+        }
     params = i["params"]
     if params["mode"] != "exact" or params["variant"] != "A":
-        pytest.skip("variant B / atMost ballot is conformance level 2 (not implemented)")
-    from geg.envelopes.types import Attestation, AttestationScheme
+        pytest.fail("variant B / atMost ballot is conformance level 2 (not implemented)")
+    from shutter_governance_protocol.envelopes.types import Attestation, AttestationScheme
     a = i["attestation"]
     attestation = Attestation(
         election_id=_hx(a["electionId"]), pseudonym=_hx(a["pseudonym"]),
@@ -171,7 +178,8 @@ def test_ballot_vector(name, v):
         num_candidates=params["numCandidates"],
         budget=params["budget"],
     )
-    assert ok is v["expected"]["verify"]
+    expected = v["expected"]
+    assert ok is (expected["verify"] if "verify" in expected else expected["verifyBallot"])
 
 
 # --------------------------------------------------------------------------- #
@@ -191,13 +199,13 @@ def test_tally_vector(name, v):
 
 
 # --------------------------------------------------------------------------- #
-#  attestation (geg-native: ATTESTATION_V1 + legacy, positive + negative)
+#  attestation (shutter-governance-protocol-native: ATTESTATION_V1 + legacy, positive + negative)
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("name,v", _load("attestation"), ids=_ids(_load("attestation")))
 def test_attestation_vector(name, v):
-    from geg.envelopes.types import Attestation, AttestationScheme
-    from geg.ports.eligibility import verify_attestation
+    from shutter_governance_protocol.envelopes.types import Attestation, AttestationScheme
+    from shutter_governance_protocol.ports.eligibility import verify_attestation
 
     i = v["inputs"]
     att = Attestation(
@@ -214,9 +222,9 @@ def test_attestation_vector(name, v):
 # --------------------------------------------------------------------------- #
 
 def test_full_election_flow_replay():
-    from geg.core.admission import StoredBallot, admit
-    from geg.core.aggregation import build_aggregate_artifact, check_result, recover_result
-    from geg.envelopes import codecs
+    from shutter_governance_protocol.core.admission import StoredBallot, admit
+    from shutter_governance_protocol.core.aggregation import build_aggregate_artifact, check_result, recover_result
+    from shutter_governance_protocol.envelopes import codecs
 
     fx = json.loads((VECTORS / "flow" / "full_election_level1.json").read_text())
     config = codecs.dec_config(fx["config"])
@@ -246,7 +254,7 @@ def test_full_election_flow_replay():
     #
     # This is the cross-implementation half of the guarantee: the SDK drives this
     # very file through `verifyTallyAgainstTotals`
-    # (sx-monorepo `packages/geg-parity/tests/geg-parity.test.ts`), so the two must
+    # (sx-monorepo `packages/shutter-governance-protocol-parity/tests/shutter-governance-protocol-parity.test.ts`), so the two must
     # agree on what "this tally verifies" means against identical bytes. Tested
     # against the vector rather than only against locally generated data, because a
     # divergence here would surface as a committee and a browser disagreeing about
@@ -300,14 +308,14 @@ def test_scaled_weight_vector():
 
     Python's `round` is half-to-even and JavaScript's `Math.round` is half-up, so a
     float implementation of this agrees everywhere except at exactly `.5` — and there
-    it makes geg and the browser build different aggregates from identical ballots.
+    it makes shutter_governance_protocol and the browser build different aggregates from identical ballots.
     The failure surfaces as an honest committee appearing to publish a false
     aggregate, with nothing in the error pointing at rounding, which is why this is
     pinned to a shared vector rather than to each side's own arithmetic.
 
-    sx replays this same file in `packages/geg-parity`.
+    sx replays this same file in `packages/shutter-governance-protocol-parity`.
     """
-    from geg.core.aggregation import scaled_weight
+    from shutter_governance_protocol.core.aggregation import scaled_weight
 
     fx = json.loads((VECTORS / "scale" / "scaled_weight_boundary.json").read_text())
     assert fx["cases"], "empty vector"

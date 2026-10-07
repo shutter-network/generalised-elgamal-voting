@@ -11,15 +11,15 @@ import threading
 
 from werkzeug.serving import make_server
 
-from geg.core import write_auth
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.authz import Signer
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.envelopes import codecs
-from geg.envelopes.types import AggregateArtifact, Ciphertext, DecryptionShareEntry, DecryptionShareEnvelope
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services.coordinator import CoordinatorClient, build_coordinator_app
-from geg.services.keyper import build_keyper_app
+from shutter_governance_protocol.core import write_auth
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.envelopes import codecs
+from shutter_governance_protocol.envelopes.types import AggregateArtifact, Ciphertext, DecryptionShareEntry, DecryptionShareEnvelope
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services.coordinator import CoordinatorClient, build_coordinator_app
+from shutter_governance_protocol.services.keyper import build_keyper_app
 
 from conftest import ManualClock
 
@@ -229,7 +229,7 @@ def test_relay_rejects_premature_decryption_share_with_log(caplog):
     dl, eid, keypers, _clock = _world()  # clock=0 < voting_end=2000
     c = _client(dl)
     hdr = {"Authorization": f"Bearer {TOKEN}"}
-    with caplog.at_level("WARNING", logger="geg.coordinator"):
+    with caplog.at_level("WARNING", logger="shutter_governance_protocol.coordinator"):
         r = c.post("/decryption-share", json=_share_body(eid, keypers[0], _share(eid, 1)), headers=hdr)
     assert r.status_code == 422
     assert any("op=relay status=rejected" in m.getMessage() and "VotingWindowError" in m.getMessage()

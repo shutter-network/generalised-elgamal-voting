@@ -10,12 +10,12 @@ import json
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
-from geg.adapters.eligibility_stub import StubEligibilityService
-from geg.crypto import schnorr
-from geg.crypto.points import g1_to_compressed
-from geg.envelopes import codecs
-from geg.ports.eligibility import verify_attestation
-from geg.services.eligibility.eligibility import build_eligibility_app, challenge_message
+from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed
+from shutter_governance_protocol.envelopes import codecs
+from shutter_governance_protocol.ports.eligibility import verify_attestation
+from shutter_governance_protocol.services.eligibility.eligibility import build_eligibility_app, challenge_message
 
 ELIG_SK = 0x5772000000000000000000000000000000000000000000000000000000000001
 SECRET = b"\xab" * 32
@@ -166,7 +166,7 @@ def test_nonce_increments_per_wallet_and_election():
 def test_revote_attestation_verifies_with_its_nonce():
     """A re-vote's attestation (nonce 2) verifies under the normative verifier — proving the
     issuer signs the bound nonce, so the tally can trust the ordering."""
-    from geg.ports.eligibility import verify_attestation
+    from shutter_governance_protocol.ports.eligibility import verify_attestation
     c = _client(weight=1)
     acct = Account.create()
     _post(c, acct, EID, _vk())               # nonce 1
@@ -180,7 +180,7 @@ def test_revote_attestation_verifies_with_its_nonce():
 def test_sqlite_nonce_store_is_monotonic_and_durable(tmp_path):
     """The durable store hands out 1,2,3… per (election, pseudonym) and survives reopen
     (so a restart cannot regress a voter's nonce and let a stale ballot win)."""
-    from geg.services.eligibility.eligibility import SqliteNonceStore
+    from shutter_governance_protocol.services.eligibility.eligibility import SqliteNonceStore
     path = str(tmp_path / "nonces.db")
     store = SqliteNonceStore(path)
     assert store.next(EID, b"\x01" * 32) == 1
@@ -198,8 +198,8 @@ def test_challenge_message_fixture():
     eid = (1).to_bytes(32, "big")
     vk = bytes.fromhex("ab" * 48)
     sig = bytes.fromhex(
-        "6095900a3840d0fb149f73cda9d07944005415ae6ba6cc0fd035030357e16a87"
-        "5e4fd6d174cb3f47b61c15f04107d5eb020d04bc9b5be8e2cb1166406a49f1c61c")
+        "73a3d985a6689ecec6c51423b78083973d40a13551b25dc7f4ad7026b2b80d76"
+        "60bd09c9826035423afc7d3a8b64f693e16b58b221be8890afaf914d41ce3c4c1b")
     recovered = Account.recover_message(
         encode_defunct(text=challenge_message(eid, vk)), signature=sig)
     assert recovered == "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"

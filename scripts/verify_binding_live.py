@@ -28,17 +28,17 @@ def main() -> int:
     ap.add_argument("--election", required=True, help="0x-prefixed 32-byte election id")
     args = ap.parse_args()
 
-    from geg.adapters.db.client import HttpDataLayerClient
-    from geg.core.admission import validate_ballot
+    from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
+    from shutter_governance_protocol.core.admission import validate_ballot
     # The paging + completeness read the committee itself uses, rather than a
     # hand-rolled loop that could disagree with it about what "all ballots" means.
-    from geg.services.common.reads import read_all_ballots
-    from geg.crypto.binding import (
+    from shutter_governance_protocol.services.common.reads import read_all_ballots
+    from shutter_governance_protocol.crypto.binding import (
         ballot_message_digest,
         envelope_binding_message,
         verify_binding_sig,
     )
-    from geg.crypto.points import g2_from_compressed
+    from shutter_governance_protocol.crypto.points import g2_from_compressed
 
     eid = bytes.fromhex(args.election.removeprefix("0x"))
     dl = HttpDataLayerClient(args.url)

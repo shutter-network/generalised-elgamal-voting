@@ -1,4 +1,4 @@
-/** Derived election lifecycle — a faithful TS mirror of `geg.core.state.derive_state`.
+/** Derived election lifecycle — a faithful TS mirror of `shutter_governance_protocol.core.state.derive_state`.
  *
  * The public API exposes no derived state, so the dashboard computes it from the
  * config timings + the facts it can read (cancelled, finalized key, result). The

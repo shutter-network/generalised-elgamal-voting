@@ -7,15 +7,15 @@ from __future__ import annotations
 import threading
 
 import pytest
-from geg.core import authz
+from shutter_governance_protocol.core import authz
 import requests
 from werkzeug.serving import make_server
 
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.authz import Signer
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.services.coordinator import AutoDKG
-from geg.services.keyper import build_keyper_app
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.services.coordinator import AutoDKG
+from shutter_governance_protocol.services.keyper import build_keyper_app
 
 from conftest import ManualClock
 
@@ -112,7 +112,7 @@ def test_watcher_marks_dkg_failed_past_voting_start(kw):
 
 
 def test_watcher_drives_nearest_voting_start_first(kw, monkeypatch):
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     # Registered out of order; expect drive order sorted by voting_start ascending.
     e_far = kw.register(voting_start=3000, voting_end=4000)
@@ -145,7 +145,7 @@ def test_watcher_halts_and_fails_on_dkg_complaint(kw, monkeypatch):
     """A Feldman-VSS complaint during round2 is terminal: the coordinator halts before
     publishing, marks the election failed, and does not retry it. (run_dkg_http raising
     DKGComplaint is covered in test_dkg_security; here we pin AutoDKG's reaction.)"""
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register()
     watcher = kw.watcher()
@@ -164,7 +164,7 @@ def test_watcher_halts_and_fails_on_dkg_complaint(kw, monkeypatch):
 def test_watcher_abandons_tally_when_aggregate_never_reaches_quorum(kw, monkeypatch):
     """Tally has no natural deadline, so an under-quorum aggregate is bounded by
     max_tally_attempts polls, then abandoned (terminal + alert), not retriggered forever."""
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register(voting_start=1000, voting_end=2000)
     watcher = kw.watcher()
@@ -185,7 +185,7 @@ def test_stall_survives_restart_and_resumes_only_on_admin_clear(kw, monkeypatch)
     """The persisted flag is authoritative: a coordinator restart does NOT resurrect a
     stalled tally (it skips). Only the admin's clear (the retry) resumes it — with a fresh
     attempt budget."""
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register(voting_start=1000, voting_end=2000)
     w1 = kw.watcher()
@@ -212,7 +212,7 @@ def test_stall_survives_restart_and_resumes_only_on_admin_clear(kw, monkeypatch)
 def test_watcher_abandons_tally_when_decryption_never_finalizes(kw, monkeypatch):
     """A canonical aggregate forms but decryption shares never reach t+1 → the decrypt
     phase is also bounded by max_tally_attempts, then abandoned."""
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register(voting_start=1000, voting_end=2000)
     watcher = kw.watcher()
@@ -234,7 +234,7 @@ def test_working_keypers_are_not_counted_as_failed_attempts(kw, monkeypatch):
     coordinator timed out, read that as a failed attempt, and marked TallyStalled after
     five polls — on a committee that was working perfectly.
     """
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register(voting_start=1000, voting_end=2000)
     watcher = kw.watcher()
@@ -257,7 +257,7 @@ def test_divergent_keypers_are_asked_to_re_derive_then_bounded(kw, monkeypatch):
     so honest keypers can re-converge. So each attempt must actually ask them to re-derive
     — and the whole thing is still bounded, in case the divergence is permanent.
     """
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register(voting_start=1000, voting_end=2000)
     watcher = kw.watcher()
@@ -283,7 +283,7 @@ def test_divergent_keypers_are_asked_to_re_derive_then_bounded(kw, monkeypatch):
 def test_tally_phase_deadline_is_the_backstop(kw, monkeypatch):
     """Keypers claim to be working forever → the wall-clock budget ends it. Measured from
     voting_end, so it is derived and survives a coordinator restart."""
-    from geg.services.coordinator import dkg_coordinator as coord
+    from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
 
     eid = kw.register(voting_start=1000, voting_end=2000)
     watcher = kw.watcher()

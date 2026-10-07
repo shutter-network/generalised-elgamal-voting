@@ -1,6 +1,6 @@
-# Shutter Voting Contracts
+# Shutter Governance Protocol contracts
 
-This directory contains the Foundry contracts for the Shutter ElGamal voting bulletin board.
+This directory contains the Foundry contracts for the Shutter Governance Protocol voting bulletin board.
 
 The contract scope covers:
 
@@ -10,7 +10,7 @@ The contract scope covers:
 - ballot submission with full on-chain proof storage
 - decryption share submission
 - tally finalization
-- post-completion fee withdrawal
+- admin fee withdrawal
 - stable interfaces for integration
 - deployment script and test coverage
 
@@ -22,10 +22,10 @@ files, so fetch them before building:
 
 ```shell
 # when cloning the repo:
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules https://github.com/shutter-network/shutter-governance-protocol.git
 
 # or, if you already cloned without submodules:
-git submodule update --init
+git submodule update --init --recursive
 ```
 
 `foundry.toml` sets `offline = true`, so once the submodules are checked out the
@@ -37,6 +37,7 @@ build does no further network access.
 
 - `src/KeyperSet.sol`
 - `src/ElectionRegistry.sol`
+- `src/ElectionDeployer.sol`
 - `src/Election.sol`
 - `src/election/ElectionBase.sol`
 - `src/election/ElectionDKG.sol`
@@ -78,10 +79,11 @@ build does no further network access.
 Implemented behavior:
 
 - constructor-time member, per-member **URL**, and threshold configuration
-- URLs are **required** and 1:1 with members (reverts `URLsLengthMismatch` otherwise)
+- the URL array must have one entry per member (`URLsLengthMismatch` otherwise);
+  empty strings are accepted by the contract but cannot be used by the coordinator
 - duplicate member rejection
 - zero-address rejection
-- threshold validation
+- threshold validation: `1 <= t <= n` and `t > n/2`; `t` is the number of keypers required
 - getters and membership checks
 
 Available read methods include:
@@ -113,7 +115,9 @@ Implemented behavior:
 
 ### `Election`
 
-`Election` is the per-election bulletin board contract.
+`Election` is the per-election bulletin board contract. Curve-point validation
+in these contracts checks byte lengths only, not curve membership or proofs.
+The Python and TypeScript verification code performs the cryptographic checks.
 
 Immutable election configuration (generalised — beyond the original Munich set):
 
@@ -124,12 +128,12 @@ Immutable election configuration (generalised — beyond the original Munich set
 - `numCandidates`, `budget`
 - `mode`, `variant`, `weighted`, `scale`, `duplicatePolicy`, `protocolVersion`
 - `pkWR` (eligibility public key)
-- `adminAddr`, `tallyAggregator`, `voteProxy`
+- `adminAddr`, `resultPublisher`, `voteProxy`
 
 Configured roles:
 
 - `DEFAULT_ADMIN_ROLE`
-- `TALLY_AGGREGATOR_ROLE`
+- `RESULT_PUBLISHER_ROLE`
 - `VOTE_PROXY_ROLE`
 
 #### DKG result publication
@@ -226,6 +230,7 @@ Validation:
 - voting must already be closed
 - caller must be a keyper
 - caller may only submit once
+- a canonical aggregate must already be published
 - `shares.length` must equal `numCandidates`
 - `proofs.length` must equal `numCandidates`
 - each share must be a 96-byte compressed G2 point
@@ -234,10 +239,12 @@ Validation:
 
 Implemented behavior:
 
-- `publishAggregate(EncryptedTally)`
-- restricted to `TALLY_AGGREGATOR_ROLE`
-- aggregate ciphertext storage
-- aggregate proof blob storage
+- `submitAggregate(EncryptedTally)` — the transaction sender must be a keyper
+- `submitAggregateSigned(EncryptedTally, bytes keyperSig)` — a relayer submits a keyper-signed aggregate
+- each keyper can replace its submission until a quorum finalises
+- `t` identical submissions finalise the aggregate; later direct contract submissions revert
+- storage of candidate ciphertexts, admitted ballot indices, exclusion indices and reasons,
+  total admitted weight and total scaled weight
 
 Read helpers:
 
@@ -248,14 +255,15 @@ Validation:
 - DKG must be finalized
 - voting must already be closed
 - aggregate ciphertext count must equal `numCandidates`
-- each aggregate ciphertext point must be 96-byte compressed G2 bytes
+- the contract does not check aggregate point lengths or cryptographic proofs;
+  off-chain code must validate them
 
 #### Final result publication
 
 Implemented behavior:
 
 - `publishResult(uint256[] totals, uint8[] keyperIndices)`
-- restricted to `TALLY_AGGREGATOR_ROLE`
+- restricted to `RESULT_PUBLISHER_ROLE`
 - storage of final totals
 - storage of the keyper indices used for the tally
 - later publications overwrite the stored result
@@ -271,6 +279,12 @@ Validation:
 - voting must already be closed
 - totals length must match `numCandidates`
 - `keyperIndices` must be non-empty
+
+#### Tally stall and retry
+
+- `markTallyStalled()` — result publisher only, after voting ends and before a result exists
+- `clearTallyStalled()` — admin only; allows the coordinator to retry
+- `tallyStalled()` — reads the flag
 
 #### Admin: cancellation + fee withdrawal
 
@@ -333,7 +347,7 @@ The following decisions are already encoded in the contract implementation:
 - the fee waiver applies to the contract fee, not gas costs
 - revotes are appended as new ballots
 - one decryption-share bundle is stored per keyper, with one share and one proof per candidate
-- fees are withdrawable only after election completion
+- the admin can withdraw fees at any time; `withdrawFees` has no completion check
 - no on-chain pairing verification is performed
 
 ## Deployment Scripts
@@ -353,12 +367,16 @@ It does **not** publish an election. Use `script/PublishElection.s.sol` to creat
 Supported environment variables:
 
 - `VOTE_MANAGER`
-- `PRIVATE_KEY` fallback for deriving `VOTE_MANAGER` if `VOTE_MANAGER` is unset
+- `PRIVATE_KEY` (required for broadcast; also derives `VOTE_MANAGER` when unset)
 - `KEYPERS` as a comma-separated list of keyper addresses
 - or `KEYPER_COUNT` plus `KEYPER_1`, `KEYPER_2`, ... `KEYPER_N`
 - `KEYPER_THRESHOLD`
 
 If `KEYPER_THRESHOLD` is unset, it defaults to the full keyper count.
+The constructor requires a strict majority. This script supplies empty URL
+strings, so its `KeyperSet` is not ready for the HTTP coordinator. For the full
+service deployment, register through the admin app/API, which supplies keyper
+URLs, or deploy a `KeyperSet` with usable URLs yourself.
 
 Example:
 
@@ -386,14 +404,19 @@ Required environment variables (suitable for a `.env` file):
 - `KEYPER_SET`: deployed `KeyperSet` address
 - `VOTING_START`: unix timestamp (seconds)
 - `VOTING_END`: unix timestamp (seconds)
-- `SELF_SUBMIT_FEE`: fee in wei for direct `submitVote` (set `0` if unused)
 - `NUM_CANDIDATES`: number of candidates
 - `BUDGET`: max selections / per-ballot budget parameter
 - `PK_WR`: WR public key bytes (typically **48 bytes**, e.g. `0x...`)
-- `TALLY_AGGREGATOR`: address that will hold `TALLY_AGGREGATOR_ROLE`
+- `RESULT_PUBLISHER`: address that will hold `RESULT_PUBLISHER_ROLE`
 - `VOTE_PROXY`: address that will hold `VOTE_PROXY_ROLE`
 
-Example `.env`:
+Optional variables and defaults: `SELF_SUBMIT_FEE=0`, `MODE=0` (exact),
+`VARIANT=0` (A), `WEIGHTED=false`, `SCALE=1`, `DUPLICATE_POLICY=1` (last-wins),
+and `PROTOCOL_VERSION=SHUTTER-VOTE-v1`. The current Python ballot implementation
+supports A/exact; the contract stores the other settings without implementing
+their cryptographic verification.
+
+Example `.env` (replace the timestamps with a future voting window):
 
 ```shell
 PRIVATE_KEY=0x...
@@ -406,7 +429,7 @@ SELF_SUBMIT_FEE=0
 NUM_CANDIDATES=2
 BUDGET=1
 PK_WR=0x...
-TALLY_AGGREGATOR=0x...
+RESULT_PUBLISHER=0x...
 VOTE_PROXY=0x...
 ```
 
@@ -430,7 +453,10 @@ It deploys and publishes in one run:
 - `ElectionRegistry`
 - an initial `Election` via `ElectionRegistry.publishElection` (with quick defaults)
 
-This script is meant for local demo flows only. For real deployments, use:
+Set two distinct keyper addresses: both default to the admin, and duplicate
+members cause deployment to revert. This helper also stores empty keyper URLs.
+It is a contract demo, not a complete HTTP voting deployment. For separate
+contract deployment and election publication, use:
 
 - `script/Deploy.s.sol` (deploy once)
 - `script/PublishElection.s.sol` (publish elections many times)
@@ -458,14 +484,16 @@ forge build
 forge test
 ```
 
-At the time of writing, the full suite passes.
+Run these commands against your checkout to check its current status.
 
 ## Notes
 
-- `getPhase()` currently returns `0`, `2`, `3`, and `4` (never `1` or `5`): `0` DKG phase, `2` DKG finalized / pre-voting, `3` voting open, `4` voting closed. There is no separate on-chain phase `1` (no distinct registration boundary), and result-finalization is read via `isResultFinalized()`, not a phase-5 return.
+- `getPhase()` currently returns `0`, `2`, `3`, and `4` (never `1` or `5`): `0` DKG phase, `2` DKG finalized / pre-voting, `3` the voting time interval, `4` past voting end. Phase `3` alone does not establish that voting is allowed: cancellation and missing DKG finalisation can still block ballots. There is no separate on-chain phase `1` (no distinct registration boundary), and result-finalization is read via `isResultFinalized()`, not a phase-5 return.
 - `forge build` uses `via_ir = true` in `foundry.toml` because `getElection()` returns nested structs and otherwise hits Solidity stack-depth limits.
 
 ## Quick Commands
+
+Run these commands from `contracts/`.
 
 ```shell
 forge build

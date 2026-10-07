@@ -13,17 +13,17 @@ import threading
 import pytest
 from werkzeug.serving import make_server
 
-from geg.adapters.eligibility_stub import StubEligibilityService
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core.authz import Signer
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import ballot as ballot_crypto, schnorr
-from geg.crypto.points import g1_to_compressed, g2_from_compressed
-from geg.envelopes.types import BallotEnvelope, Ciphertext
-from geg.ports.eligibility import AttestationRequest
-from geg.services import gateway
-from geg.services.coordinator import AutoDKG
-from geg.services.keyper import build_keyper_app
+from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.crypto import ballot as ballot_crypto, schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed, g2_from_compressed
+from shutter_governance_protocol.envelopes.types import BallotEnvelope, Ciphertext
+from shutter_governance_protocol.ports.eligibility import AttestationRequest
+from shutter_governance_protocol.services import gateway
+from shutter_governance_protocol.services.coordinator import AutoDKG
+from shutter_governance_protocol.services.keyper import build_keyper_app
 
 from conftest import ManualClock
 

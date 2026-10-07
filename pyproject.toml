@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "geg"
+name = "shutter-governance-protocol"
 version = "0.1.0"
-description = "Generalised Threshold ElGamal Voting — storage-agnostic protocol (ports, adapters, services)"
+description = "Shutter Governance Protocol — storage-agnostic protocol (ports, adapters, services)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -27,7 +27,7 @@ chain = ["web3>=7.0"]
 keyper = ["flask>=3.0", "requests>=2.31", "cryptography>=42.0"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/geg"]
+packages = ["src/shutter_governance_protocol"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

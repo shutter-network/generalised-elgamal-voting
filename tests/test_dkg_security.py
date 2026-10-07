@@ -2,7 +2,7 @@
 signature digests, signed+sealed share exchange, the accusation-gated reveal, and
 the coordinator halt-on-complaint.
 
-Ports the reference thresholdELGamal `fix/dkg-security-hardening` guarantees to geg.
+Ports the reference thresholdELGamal `fix/dkg-security-hardening` guarantees to shutter_governance_protocol.
 Phase 1 here covers the primitives; later phases extend this module.
 """
 
@@ -13,10 +13,10 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
-from geg.core import write_auth
-from geg.core.authz import Signer
-from geg.crypto.params import CURVE_ORDER
-from geg.services.keyper import keyper_bootstrap as boot
+from shutter_governance_protocol.core import write_auth
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.crypto.params import CURVE_ORDER
+from shutter_governance_protocol.services.keyper import keyper_bootstrap as boot
 
 
 # --- share sealing (Leg A primitive) ----------------------------------- #
@@ -133,14 +133,14 @@ import threading  # noqa: E402
 import requests  # noqa: E402
 from werkzeug.serving import make_server  # noqa: E402
 
-from geg.adapters.memory import InMemoryDataLayer  # noqa: E402
-from geg.core.config import (  # noqa: E402
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer  # noqa: E402
+from shutter_governance_protocol.core.config import (  # noqa: E402
     DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant,
 )
-from geg.crypto.dkg import KeyperDKGState  # noqa: E402
-from geg.crypto.points import g2_to_compressed  # noqa: E402
-from geg.services.coordinator import dkg_coordinator as coord  # noqa: E402
-from geg.services.keyper import build_keyper_app  # noqa: E402
+from shutter_governance_protocol.crypto.dkg import KeyperDKGState  # noqa: E402
+from shutter_governance_protocol.crypto.points import g2_to_compressed  # noqa: E402
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord  # noqa: E402
+from shutter_governance_protocol.services.keyper import build_keyper_app  # noqa: E402
 
 from conftest import ManualClock  # noqa: E402
 
@@ -466,7 +466,7 @@ def test_run_dkg_http_raises_when_the_quorum_cannot_publish(monkeypatch):
 def test_reveal_share_logs_disclosure(cluster, caplog):
     """A genuine share reveal is a security-significant disclosure — it must be logged."""
     assert cluster.call(1, "round1").status_code == 200
-    with caplog.at_level("WARNING", logger="geg.keyper"):
+    with caplog.at_level("WARNING", logger="shutter_governance_protocol.keyper"):
         assert cluster.reveal(1, cluster.accusation(accused_dealer=1, recipient=2)).status_code == 200
     assert any("phase=reveal_share status=revealed" in r.getMessage() for r in caplog.records)
 
@@ -474,7 +474,7 @@ def test_reveal_share_logs_disclosure(cluster, caplog):
 def test_reveal_share_logs_denial_reason(cluster, caplog):
     """A denied reveal logs the specific reason server-side (client still gets a uniform 401)."""
     assert cluster.call(1, "round1").status_code == 200
-    with caplog.at_level("WARNING", logger="geg.keyper"):
+    with caplog.at_level("WARNING", logger="shutter_governance_protocol.keyper"):
         # Valid accusation against dealer 2, presented to dealer 1 → denied (wrong dealer).
         assert cluster.reveal(1, cluster.accusation(accused_dealer=2, recipient=3)).status_code == 401
     msgs = [r.getMessage() for r in caplog.records]
@@ -543,7 +543,7 @@ def _dealer_deals_one_bad_share(dealer, victim, monkeypatch):
     Returns a handle so the test can restore the correct value, modelling a dealer that
     re-deals honestly once accused.
     """
-    from geg.crypto.dkg import KeyperDKGState
+    from shutter_governance_protocol.crypto.dkg import KeyperDKGState
 
     holder = {}
     real_round1 = KeyperDKGState.round1

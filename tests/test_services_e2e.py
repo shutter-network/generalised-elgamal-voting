@@ -12,15 +12,15 @@ from dataclasses import replace
 
 import pytest
 
-from geg.core import write_auth
-from geg.core.aggregation import check_result
-from geg.envelopes.types import ExclusionReason, StoredBallot
-from geg.ports.data_layer import VotingWindowError
-from geg.services import admin, auditor
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services import tally_aggregator as agg
-from geg.services.gateway import GatewayRejection, submit_ballot
-from geg.services.keyper import KeyperRefusal
+from shutter_governance_protocol.core import write_auth
+from shutter_governance_protocol.core.aggregation import check_result
+from shutter_governance_protocol.envelopes.types import ExclusionReason, StoredBallot
+from shutter_governance_protocol.ports.data_layer import VotingWindowError
+from shutter_governance_protocol.services import admin, auditor
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services import tally_aggregator as agg
+from shutter_governance_protocol.services.gateway import GatewayRejection, submit_ballot
+from shutter_governance_protocol.services.keyper import KeyperRefusal
 
 DKG_LEAD_TIME = 100
 

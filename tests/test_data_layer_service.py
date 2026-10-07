@@ -1,11 +1,11 @@
 """Run the shared conformance suite against the uniform data-layer HTTP service
 wrapping the in-memory backend.
 
-The same :func:`geg.services.data_layer.build_app` that fronts Postgres in
-production also fronts :class:`~geg.adapters.memory.InMemoryDataLayer` here,
+The same :func:`shutter_governance_protocol.services.data_layer.build_app` that fronts Postgres in
+production also fronts :class:`~shutter_governance_protocol.adapters.memory.InMemoryDataLayer` here,
 driven through the exact ``HttpDataLayerClient`` services hold. Passing the full
 conformance suite over HTTP + memory proves the service is genuinely
-backend-agnostic — the ``GEG_DATA_LAYER`` selector swaps the backend and nothing
+backend-agnostic — the ``SHUTTER_GOVERNANCE_PROTOCOL_DATA_LAYER`` selector swaps the backend and nothing
 above the port changes. No external infra required (unlike the Postgres run), so
 this is the always-on proof of the uniform service.
 """
@@ -18,11 +18,11 @@ import pytest
 
 from conformance import DataLayerConformance, ManualClock, SignatureBackend
 
-from geg.adapters.db.client import HttpDataLayerClient
-from geg.adapters.memory import InMemoryDataLayer
-from geg.envelopes.types import Attestation, BallotEnvelope, Ciphertext
-from geg.ports.data_layer import VotingWindowError
-from geg.services.data_layer import build_app
+from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.envelopes.types import Attestation, BallotEnvelope, Ciphertext
+from shutter_governance_protocol.ports.data_layer import VotingWindowError
+from shutter_governance_protocol.services.data_layer import build_app
 
 
 def test_voting_window_error_round_trips_over_http():

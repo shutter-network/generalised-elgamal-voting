@@ -1,10 +1,10 @@
 /* On-demand, in-browser cryptographic verification of the four public artifacts —
  * ballot, aggregate, decryption shares, result. A faithful port of the logic validated
- * end-to-end against live geg data (weighted + weight-1), using the same SDK the voter's
+ * end-to-end against live shutter_governance_protocol data (weighted + weight-1), using the same SDK the voter's
  * ballot builder uses (`@shutter-network/urban-verified-crypto`). The SDK (+ blst.wasm) is
  * loaded lazily on first use so it stays out of the main bundle.
  *
- * geg-specific adaptations over the stock Munich verification:
+ * shutter-governance-protocol-specific adaptations over the stock Munich verification:
  *   - WR attestation is scheme-directed: ATTESTATION_V1 (domain-separated transcript over
  *     electionId,pseudonym,vk,weight,nonce) or LEGACY (weightless keccak, weight 1). The
  *     adapter packs `scheme(1)‖weight(32 BE)‖nonce(32 BE)‖R(48)‖s(32)` into `wrAttestation`.
@@ -31,7 +31,7 @@ const electionId32 = (id: bigint | number | string) => fromHex(BigInt(id).toStri
 const u32be = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n >>> 0); return b; };
 const scalar32 = (w: bigint) => { const b = Buffer.alloc(32); let x = BigInt(w); for (let i = 31; i >= 0 && x > 0n; i--) { b[i] = Number(x & 0xffn); x >>= 8n; } return b; };
 
-// ── WR attestation: scheme-directed verifier (mirrors geg core verify_attestation) ──
+// ── WR attestation: scheme-directed verifier (mirrors shutter_governance_protocol core verify_attestation) ──
 function tlv(parts: Buffer[], tag: string, val: Uint8Array) {
   const tb = Buffer.from(tag, "utf8");
   parts.push(u32be(tb.length), tb, u32be(val.length), Buffer.from(val));
@@ -126,7 +126,7 @@ export async function verifySharesLocal(electionId: bigint, numCandidates: numbe
   const verdicts: ShareVerdict[] = [];
   let ok = true;
   for (const s of shares) {
-    const member = s.keyperIndex - 1; // geg keyperIndex is 1-based; committee is 0-based
+    const member = s.keyperIndex - 1; // shutter_governance_protocol keyperIndex is 1-based; committee is 0-based
     const pk = g2(committeePks[member]);
     for (let j = 0; j < numCandidates; j++) {
       const ct = { c1: g2(aggregate[j].c1), c2: g2(aggregate[j].c2) };

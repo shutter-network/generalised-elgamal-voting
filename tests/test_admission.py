@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from geg.core.admission import StoredBallot, admit
-from geg.core.config import DuplicatePolicy
-from geg.envelopes.types import Attestation, AttestationScheme, ExclusionReason
+from shutter_governance_protocol.core.admission import StoredBallot, admit
+from shutter_governance_protocol.core.config import DuplicatePolicy
+from shutter_governance_protocol.envelopes.types import Attestation, AttestationScheme, ExclusionReason
 
 P1 = b"\xa1" * 32
 P2 = b"\xa2" * 32

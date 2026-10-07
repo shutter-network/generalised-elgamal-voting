@@ -19,14 +19,18 @@ abstract contract ElectionDKG is ElectionBase {
     ///      attributed on-chain to the ``ecrecover``ed keyper, not the tx sender —
     ///      so keypers never touch the chain yet authorship is theirs and
     ///      unforgeable. The signature is an EIP-191 personal-sign over
-    ///      ``keccak256("GEG-DKG-RESULT-v1" ‖ electionId ‖ pkElection ‖ abi.encode(committeePKs))``.
+    ///      ``keccak256("SHUTTER-GOVERNANCE-PROTOCOL-DKG-RESULT-v1" ‖ electionId ‖ pkElection ‖ abi.encode(committeePKs))``.
     // forge-lint: disable-next-line(mixed-case-function)
     function voteDKGResultSigned(bytes calldata pkElection, bytes[] calldata committeePKs, bytes calldata keyperSig)
         external
     {
         _requireNotCancelled();
         if (dkgFinalized) revert AlreadyFinalized();
-        bytes32 digest = keccak256(abi.encodePacked("GEG-DKG-RESULT-v1", electionId, pkElection, abi.encode(committeePKs)));
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "SHUTTER-GOVERNANCE-PROTOCOL-DKG-RESULT-v1", electionId, pkElection, abi.encode(committeePKs)
+            )
+        );
         address signer = ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(digest), keyperSig);
         _registerDKGVote(signer, pkElection, committeePKs);
     }

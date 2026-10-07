@@ -23,10 +23,10 @@ import os
 
 import pytest
 
-from geg.adapters.memory import InMemoryDataLayer
-from geg.core import write_auth
-from geg.core.authz import Signer
-from geg.core.config import (
+from shutter_governance_protocol.adapters.memory import InMemoryDataLayer
+from shutter_governance_protocol.core import write_auth
+from shutter_governance_protocol.core.authz import Signer
+from shutter_governance_protocol.core.config import (
     DuplicatePolicy,
     ElectionConfig,
     KeyperIdentity,
@@ -34,8 +34,8 @@ from geg.core.config import (
     Threshold,
     Variant,
 )
-from geg.envelopes.types import AggregateArtifact, Ciphertext
-from geg.ports.data_layer import QuorumConflictError
+from shutter_governance_protocol.envelopes.types import AggregateArtifact, Ciphertext
+from shutter_governance_protocol.ports.data_layer import QuorumConflictError
 
 from conftest import ManualClock
 
@@ -155,7 +155,7 @@ def test_aggregate_freeze_structurally_prevents_a_second_quorum(w):
     uniqueness check still guards `get_aggregate` as defence in depth, since the freeze is
     an invariant of this adapter rather than of the port contract.
     """
-    from geg.ports.data_layer import ImmutabilityError
+    from shutter_governance_protocol.ports.data_layer import ImmutabilityError
 
     w.clock.set(2_500)
     agg_a, agg_b = w.aggregate(0x11), w.aggregate(0x33)
@@ -174,26 +174,26 @@ def test_aggregate_freeze_structurally_prevents_a_second_quorum(w):
 # stops that state arising through the API.
 
 def test_resolve_unique_returns_none_below_quorum():
-    from geg.core.quorum import resolve_unique
+    from shutter_governance_protocol.core.quorum import resolve_unique
     groups = [("A", {1}), ("B", {2})]
     assert resolve_unique(groups, 2, artifact="aggregate", election_id=ELECTION_ID) is None
 
 
 def test_resolve_unique_returns_the_single_winner():
-    from geg.core.quorum import resolve_unique
+    from shutter_governance_protocol.core.quorum import resolve_unique
     groups = [("A", {1, 2}), ("B", {3})]
     assert resolve_unique(groups, 2, artifact="aggregate", election_id=ELECTION_ID) == "A"
 
 
 def test_resolve_unique_raises_on_two_winners_regardless_of_order():
-    from geg.core.quorum import resolve_unique
+    from shutter_governance_protocol.core.quorum import resolve_unique
     for groups in ([("A", {1, 2}), ("B", {3, 4})], [("B", {3, 4}), ("A", {1, 2})]):
         with pytest.raises(QuorumConflictError, match="quorum of 2"):
             resolve_unique(groups, 2, artifact="aggregate", election_id=ELECTION_ID)
 
 
 def test_resolve_unique_raises_on_three_winners():
-    from geg.core.quorum import resolve_unique
+    from shutter_governance_protocol.core.quorum import resolve_unique
     groups = [("A", {1, 2}), ("B", {3, 4}), ("C", {5, 6})]
     with pytest.raises(QuorumConflictError, match="3 distinct artifacts"):
         resolve_unique(groups, 2, artifact="dkg result", election_id=ELECTION_ID)
@@ -217,7 +217,7 @@ def _register(dl, admin, rp, gw, keypers, eid_int):
 def test_a_conflicted_election_does_not_break_the_others():
     """A split committee must fail *that election only* — the listing and every other
     election stay readable, and the HTTP surface reports 409 rather than a 500."""
-    from geg.services.api.api import build_api_app
+    from shutter_governance_protocol.services.api.api import build_api_app
 
     clock = ManualClock(0)
     dl = InMemoryDataLayer(clock=clock)

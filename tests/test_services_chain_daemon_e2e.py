@@ -31,15 +31,15 @@ import time
 import pytest
 from werkzeug.serving import make_server
 
-from geg.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
-from geg.crypto import ballot as ballot_crypto
-from geg.crypto import schnorr
-from geg.crypto.points import g1_to_compressed, g2_from_compressed
-from geg.envelopes.types import BallotEnvelope, Ciphertext
-from geg.ports.eligibility import AttestationRequest
-from geg.services.coordinator import dkg_coordinator as coord
-from geg.services import tally_aggregator as agg
-from geg.services.gateway import submit_ballot
+from shutter_governance_protocol.core.config import DuplicatePolicy, ElectionConfig, KeyperIdentity, Mode, Threshold, Variant
+from shutter_governance_protocol.crypto import ballot as ballot_crypto
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed, g2_from_compressed
+from shutter_governance_protocol.envelopes.types import BallotEnvelope, Ciphertext
+from shutter_governance_protocol.ports.eligibility import AttestationRequest
+from shutter_governance_protocol.services.coordinator import dkg_coordinator as coord
+from shutter_governance_protocol.services import tally_aggregator as agg
+from shutter_governance_protocol.services.gateway import submit_ballot
 
 from test_adapter_chain import ANVIL_KEYS  # reuse dev keys (7 funded accounts)
 
@@ -85,14 +85,14 @@ class ChainDaemonWorld:
     def __init__(self, w3, tmp_path):
         from eth_account import Account
 
-        from geg.adapters.chain.client import BlockchainDataLayer
-        from geg.adapters.chain.deploy import chain_now, deploy_registry
-        from geg.adapters.db.client import HttpDataLayerClient
-        from geg.adapters.eligibility_stub import StubEligibilityService
-        from geg.core.authz import Signer
-        from geg.services.coordinator import CoordinatorClient, build_coordinator_app
-        from geg.services.data_layer import build_app
-        from geg.services.keyper import build_keyper_app
+        from shutter_governance_protocol.adapters.chain.client import BlockchainDataLayer
+        from shutter_governance_protocol.adapters.chain.deploy import chain_now, deploy_registry
+        from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
+        from shutter_governance_protocol.adapters.eligibility_stub import StubEligibilityService
+        from shutter_governance_protocol.core.authz import Signer
+        from shutter_governance_protocol.services.coordinator import CoordinatorClient, build_coordinator_app
+        from shutter_governance_protocol.services.data_layer import build_app
+        from shutter_governance_protocol.services.keyper import build_keyper_app
 
         self.w3 = w3
         # Accounts: admin/result_publisher/gateway submit their own txs; relayer pays gas
@@ -158,7 +158,7 @@ class ChainDaemonWorld:
             srv.shutdown()
 
     def warp(self, offset):
-        from geg.adapters.chain.deploy import anvil_set_time
+        from shutter_governance_protocol.adapters.chain.deploy import anvil_set_time
 
         anvil_set_time(self.w3, self.base + offset)
 
@@ -186,7 +186,7 @@ def world(anvil_w3, tmp_path):
 
 
 def test_full_election_over_chain_daemons(world):
-    from geg.adapters.db.client import HttpDataLayerClient
+    from shutter_governance_protocol.adapters.db.client import HttpDataLayerClient
 
     w = world
 
@@ -222,7 +222,7 @@ def test_full_election_over_chain_daemons(world):
     assert list(result.totals) == [6, 15, 0]  # [2*3, 5*3, 0]
 
     # Durable on chain: a fresh reader sees the result.
-    from geg.adapters.chain.client import BlockchainDataLayer
+    from shutter_governance_protocol.adapters.chain.client import BlockchainDataLayer
 
     fresh = BlockchainDataLayer(w.w3, w.registry, w.admin.account)
     assert list(fresh.get_result(ELECTION_ID).totals) == [6, 15, 0]

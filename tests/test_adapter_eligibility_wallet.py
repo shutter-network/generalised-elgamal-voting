@@ -6,15 +6,15 @@ import pytest
 from eth_account import Account
 from eth_utils import keccak
 
-from geg.adapters.eligibility_wallet import (
+from shutter_governance_protocol.adapters.eligibility_wallet import (
     EligibilityError,
     NotEligible,
     WalletAttestationRequest,
     WalletEligibilityService,
 )
-from geg.crypto import schnorr
-from geg.crypto.points import g1_to_compressed
-from geg.ports.eligibility import verify_attestation
+from shutter_governance_protocol.crypto import schnorr
+from shutter_governance_protocol.crypto.points import g1_to_compressed
+from shutter_governance_protocol.ports.eligibility import verify_attestation
 
 from conftest import ELECTION_ID as ELECTION  # keep in sync with env.config()'s id
 CHAIN_ID = 100
@@ -121,7 +121,7 @@ def test_double_issuance_prevented():
 
 
 def test_issue_attestation_requires_wallet_request():
-    from geg.ports.eligibility import AttestationRequest
+    from shutter_governance_protocol.ports.eligibility import AttestationRequest
 
     _, addr = _voter()
     svc = _service({addr: 3})
@@ -140,9 +140,9 @@ def test_issue_attestation_via_wallet_request():
 
 def test_wallet_attestation_flows_through_admission(env):
     """A wallet-issued credential drives a real weighted admission end-to-end."""
-    from geg.core.admission import StoredBallot, admit
-    from geg.crypto import ballot as ballot_crypto
-    from geg.envelopes.types import BallotEnvelope, Ciphertext
+    from shutter_governance_protocol.core.admission import StoredBallot, admit
+    from shutter_governance_protocol.crypto import ballot as ballot_crypto
+    from shutter_governance_protocol.envelopes.types import BallotEnvelope, Ciphertext
 
     acct, addr = _voter()
     svc = _service({addr: 3})

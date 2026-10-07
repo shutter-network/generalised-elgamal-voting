@@ -3,7 +3,9 @@
 How much machine the tally needs, and what that machine buys you in voting power. Read this before
 choosing a coordinator host, and before setting an election's `scale`.
 
-All figures measured against `py_arkworks_bls12381`, this repository's curve backend.
+The timings below are previously recorded measurements for `py_arkworks_bls12381`,
+this repository's curve backend. They have not been rerun for this documentation
+update. Use `benchmarks/scale_tally_cost.py` to measure on your target machine.
 
 ---
 
@@ -17,8 +19,9 @@ Three stages have very different cost profiles, and only one of them cares about
 | Aggregation — `Σ_i weight_i · ct_i` | **every keyper** | ~418 µs per (ballot, candidate): 2 decompressions at 161 µs, 2 mults at 45.8 µs, 2 adds | **No** — a mult by 1e18 costs the same as by 3 |
 | **Recovery — Lagrange + baby-step giant-step** | **coordinator only** (`services/tally_aggregator`) | `O(√bound)` time **and** memory | **Yes. This is the only stage that scales with voting power.** |
 
-Keypers never run BSGS; nothing under `services/keyper/` calls it. `services/auditor` does, because it
-re-derives the result independently.
+Keypers never run BSGS; nothing under `services/keyper/` calls it. The Python
+auditor uses `check_result` to verify published totals against verified shares
+without BSGS. The dashboard's result verifier still runs BSGS in the browser.
 
 ---
 
@@ -35,7 +38,7 @@ table memory  ≈ 218 B × m
 ```
 
 **11 µs per inner-loop operation** (G2 add + compress + hash-map op), stable from `m = 3e5` to
-`m = 5e6` — no cache cliff. The model predicts measured runs within 5%:
+`m = 5e6` — no cache cliff. The model approximates the recorded runs (within about 6% in this table):
 
 | Bound | `m` | Predicted | Measured |
 | --- | --- | --- | --- |
@@ -59,9 +62,10 @@ predicts. Pre-hoist, the 1e12 row would have been ~64 s.
 compressed G2 point (a `bytes` object, pymalloc-rounded), 32 B for the integer value (`j > 256`, so
 outside CPython's small-int cache), 42 B of `dict` slot.
 
-**Candidate count does not change tally cost.** The giant-step total is `≈ m` across *all*
+**The leading BSGS search cost is shared across candidates.** The giant-step total is `≈ m` across *all*
 candidates, not per candidate: in `mode: exact` the per-candidate totals sum to
-`budget × Σw = m²`, so all the walks share one budget.
+`budget × Σw = m²`, so all the walks share one budget. Share verification, aggregation and ballot
+admission still grow with candidate count.
 
 ---
 
@@ -70,15 +74,15 @@ candidates, not per candidate: in `mode: exact` the per-candidate totals sum to
 Sized at ~300 B per entry of machine RAM — the 218 B table plus the `dict` resize transient,
 interpreter, ballots and aggregate.
 
-| Coordinator RAM | `m` | Search bound `budget × Σw` | Max Σ weight, budget 1 | Max Σ weight, budget 100 | Tally wall-clock |
+| Coordinator RAM (GiB) | `m` | Search bound `budget × Σw` | Max Σ weight, budget 1 | Max Σ weight, budget 100 | Tally wall-clock |
 | --- | --- | --- | --- | --- | --- |
-| 1 GB | 3.6e6 | 1.3e13 | 1.3e13 | 1.3e11 | 1.3 min |
-| **2 GB** | 7.2e6 | **5.1e13** | **5.1e13** | **5.1e11** | **2.6 min** |
-| 4 GB | 1.4e7 | 2.0e14 | 2.0e14 | 2.0e12 | 5.3 min |
-| 8 GB | 2.9e7 | 8.2e14 | 8.2e14 | 8.2e12 | 11 min |
-| 16 GB | 5.7e7 | 3.3e15 | 3.3e15 | 3.3e13 | 21 min |
-| 32 GB | 1.1e8 | 1.3e16 | 1.3e16 | 1.3e14 | 42 min |
-| 64 GB | 2.3e8 | 5.2e16 | 5.2e16 | 5.2e14 | 84 min |
+| 1 GiB | 3.6e6 | 1.3e13 | 1.3e13 | 1.3e11 | 1.3 min |
+| **2 GiB** | 7.2e6 | **5.1e13** | **5.1e13** | **5.1e11** | **2.6 min** |
+| 4 GiB | 1.4e7 | 2.0e14 | 2.0e14 | 2.0e12 | 5.3 min |
+| 8 GiB | 2.9e7 | 8.2e14 | 8.2e14 | 8.2e12 | 11 min |
+| 16 GiB | 5.7e7 | 3.3e15 | 3.3e15 | 3.3e13 | 21 min |
+| 32 GiB | 1.1e8 | 1.3e16 | 1.3e16 | 1.3e14 | 42 min |
+| 64 GiB | 2.3e8 | 5.2e16 | 5.2e16 | 5.2e14 | 84 min |
 
 `Σ weight` is the sum of attested weights over ballots actually admitted, not over the eligible
 electorate. When `scale > 1`, read it as the sum of *scaled* weights. Cost scales as `√`, so
@@ -94,11 +98,11 @@ electorate. When `scale > 1`, read it as the sum of *scaled* weights. Cost scale
    not per candidate. It used to rebuild per candidate, which cost about `(ℓ+1)/2` times as much
    (roughly 3× at 5 candidates) for an identical answer. `tests/test_aggregation.py` asserts the
    build count directly rather than inferring it from timing, so a regression names itself.
-3. **Exceeding a row is not fatal.** The bound is derived at tally time from public data, so
-   overshooting the machine you planned for means a slower tally, not an impossible one — until it
-   exceeds what the machine can ever hold, at which point BSGS dies in the allocator. Leave headroom,
-   and assert the derived bound before entering BSGS so an infeasible election reports rather than
-   hangs.
+3. **Leave memory headroom.** A larger bound increases both runtime and memory;
+   exceeding available memory can terminate recovery. `recover_result` accepts an
+   optional `solver_ceiling` and raises `TallyInfeasible` before allocating a table
+   when that ceiling is exceeded. The deployed `finalize` path does not currently
+   pass a ceiling, so this guard is not enabled by the standard coordinator.
 
 ---
 
@@ -108,24 +112,26 @@ electorate. When `scale > 1`, read it as the sum of *scaled* weights. Cost scale
 
 **What `scale` does.** At aggregation, every attested weight is divided by `scale` and rounded half
 up: `(weight + scale // 2) // scale` (`scaled_weight` in `core/aggregation.py`). The tally then
-counts in units of `scale` instead of single tokens. Dividing every weight by the same number keeps
-the ratios between voters, so it changes the tally cost without favouring anyone. Capping the
-largest holders instead would change outcomes.
+counts in units of `scale` instead of single tokens. Integer rounding can change
+relative voting power and potentially the outcome. Scaling is therefore a voting
+rule that must be disclosed, as well as a way to reduce recovery cost.
 
 **When to change it.** Leave `scale = 1` unless the election cannot be tallied otherwise. Work it
 out like this:
 
 1. Estimate the total weight that will be admitted. Over-estimating is safe.
 2. Multiply by `budget` to get the bound.
-3. If the bound is above the search bound your coordinator's RAM allows (see the machine table),
-   pick the smallest `scale` that brings `bound / scale` under it.
+3. If the bound exceeds what the coordinator can hold, estimate a suitable `scale`
+   using `bound / scale`, then check `budget × Σ((weight + scale // 2) // scale)`
+   using the expected weight distribution. Rounding each weight can make this
+   larger than simply dividing the original bound. Include headroom for uncertainty.
 
 Example: a budget-100 election where up to 1e15 tokens may vote has a bound of 1e17, which no row
-in the table covers. With `scale = 1e4` the bound becomes 1e13, which fits a 1 GB coordinator.
+in the table covers. With `scale = 1e4` the bound becomes 1e13, which is near the table's 1 GiB estimate. Verify the rounded bound and leave memory headroom.
 
 **What it costs voters.** A weight below `scale / 2` rounds to 0. That ballot is still admitted but
 adds nothing to the tally. In the example above, any voter holding fewer than 5,000 tokens would
-count for nothing. Larger weights lose up to half a unit to rounding.
+count for nothing. Each scaled weight can round up or down by up to half a unit.
 
 **When it is set.** `scale` is part of the signed election config. The deployment chooses it, it is
 fixed before voting opens, and voters must be told about it, because it changes what each ballot is
@@ -135,7 +141,9 @@ worth.
 
 ## What actually limits an election
 
-Not voting power. Admission does, and it is entirely independent of weight:
+Ballot admission can dominate runtime, especially with many candidates or a large
+vote budget. Recovery can instead dominate for large scaled weights. Admission
+cost is independent of weight magnitude:
 
 | Proposal shape | Branches/ballot | Proof size | Verify/ballot |
 | --- | --- | --- | --- |
@@ -153,6 +161,9 @@ Per keyper, and again for any auditor:
 | 24 candidates, budget 100 | 1.8 hours | 18 hours |
 
 For a 5-candidate weighted proposal with 1,000 ballots: **22 minutes of admission, 2 seconds of
-aggregation, 23 seconds of tally.** `MAX_PROOF_BRANCHES = 2500` (`core/config.py:203`) is the ceiling
-that matters, and it is correctly placed — but total admission cost is `ballots × branches`, which
-registration cannot know, so it stays bounded at run time by the coordinator's tally-phase deadline.
+aggregation, about 23 seconds of recovery at a search bound of 1e12.**
+`MAX_PROOF_BRANCHES = 2500` in `src/shutter_governance_protocol/core/config.py` limits work per ballot.
+Total admission work also grows with ballot count. The coordinator checks a
+six-hour limit from voting end while waiting for keyper work or shares, but this
+does not cancel work already running in a keyper or interrupt synchronous BSGS
+recovery. It is not a hard runtime or memory limit.

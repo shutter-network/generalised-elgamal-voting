@@ -2,6 +2,7 @@
   "name": "shutter-governance-protocol-frontend",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "description": "Admin + Voter browser apps and a shared multi-election dashboard for shutter-governance-protocol.",
   "workspaces": [
     "apps/*"
